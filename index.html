@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Planning Soins Intensifs — Connexion</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="container">
+
+    <!-- ============================================= -->
+    <!-- VUE 1 : page de connexion                     -->
+    <!-- ============================================= -->
+    <section id="login-view" class="card">
+      <h1>Planning Soins Intensifs</h1>
+      <p class="subtitle">Connectez-vous pour accéder à votre espace</p>
+
+      <form id="login-form">
+        <label for="email">Email</label>
+        <input type="email" id="email" autocomplete="username" required />
+
+        <label for="password">Mot de passe</label>
+        <input type="password" id="password" autocomplete="current-password" required />
+
+        <button type="submit" id="login-btn">Se connecter</button>
+      </form>
+
+      <!-- Zone de message (erreurs / infos) -->
+      <p id="login-message" class="message" role="alert"></p>
+    </section>
+
+    <!-- ============================================= -->
+    <!-- VUE 2 : espace connecté (placeholder Module 1)-->
+    <!-- Les modules suivants rempliront ces zones.    -->
+    <!-- ============================================= -->
+    <section id="app-view" class="card hidden">
+      <h1>Bienvenue</h1>
+      <p id="welcome-text"></p>
+      <p>Rôle détecté : <strong id="role-text"></strong></p>
+
+      <!-- Contenu spécifique au rôle (rempli aux modules suivants) -->
+      <div id="admin-zone" class="hidden">
+        <p class="zone-info">Espace administrateur (chef de service) — à construire au Module 2.</p>
+      </div>
+      <div id="doctor-zone" class="hidden">
+        <p class="zone-info">Espace médecin — à construire au Module 3.</p>
+      </div>
+
+      <button id="logout-btn" class="secondary">Se déconnecter</button>
+    </section>
+
+  </main>
+
+  <!-- Client Supabase officiel (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Notre logique applicative -->
+  <script src="app.js"></script>
+</body>
+</html>
