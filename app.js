@@ -742,7 +742,10 @@ const SHIFT_CONFIG = {
   // Absences / repos posables par l'admin (0 h, sans station, affichées en
   // pastille « journée entière »). Les congés posés ici ne décomptent pas les
   // quotas (ceux-ci restent gérés via les préférences du médecin).
-  recup:              { label: "Repos de garde",      court: "Repos", couleur: "#6e5494", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
+  // 'repos_garde' = repos obligatoire post-garde (auto, NON comptabilisé) ;
+  // 'recup' = repos / récupération posé manuellement (COMPTABILISÉ).
+  repos_garde:        { label: "Repos de garde",      court: "Repos g.", couleur: "#6e5494", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
+  recup:              { label: "Repos",               court: "Repos", couleur: "#57606a", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
   off:                { label: "Off-clinique",        court: "Off",   couleur: "#9a6700", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
   conge_annuel:       { label: "Congé annuel",        court: "Congé", couleur: "#1a7f37", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
   conge_scientifique: { label: "Congé scientifique",  court: "Sci.",  couleur: "#0b6b63", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
@@ -1257,7 +1260,8 @@ const XL = {
   garde:    "FFC6E0B4", // vert : gardes / tour
   congeA:   "FFFCE4D6", // orange clair : congé annuel
   congeS:   "FFF8CBAD", // orange : congé scientifique
-  repos:    "FFE4DFEC", // mauve clair : repos
+  repos_garde: "FFE4DFEC", // mauve clair : repos de garde (auto)
+  repos:    "FFEDEDED", // gris clair : repos manuel
   off:      "FFFFE699", // jaune : off-clinic
   autre:    "FFF2F2F2", // gris très clair : indispo / autre
   auto:     "FFF7F7F7", // fond des cellules auto-remplies (vs vides éditables)
@@ -1340,7 +1344,8 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
   lignes.push({ label: "Garde de nuit (17h–9h)", fill: XL.garde, get: (d) => nomsShift(shifts, d, P(["garde_nuit"]), nomFn) });
   lignes.push({ label: "Garde 24h", fill: XL.garde, get: (d) => nomsShift(shifts, d, P(["garde_24h"]), nomFn) });
   lignes.push({ label: "Tour (TWE)", fill: XL.garde, get: (d) => nomsShift(shifts, d, P(["twe"]), nomFn) });
-  lignes.push({ label: "Repos de garde", fill: XL.repos, get: (d) => nomsShift(shifts, d, P(["recup"]), nomFn) });
+  lignes.push({ label: "Repos de garde", fill: XL.repos_garde, get: (d) => nomsShift(shifts, d, P(["repos_garde"]), nomFn) });
+  lignes.push({ label: "Repos", fill: XL.repos, get: (d) => nomsShift(shifts, d, P(["recup"]), nomFn) });
   lignes.push({ label: "Off-clinic", fill: XL.off, get: (d) => nomsShift(shifts, d, P(["off"]), nomFn) });
   lignes.push({ label: "Congé annuel", fill: XL.congeA,
     get: (d) => nomsShift(shifts, d, P(["conge_annuel", "conge_extralegal"]), nomFn)
@@ -1411,7 +1416,7 @@ async function exporterExcelPlanning() {
 /* EXPORT 2 — Récapitulatif individuel : lignes = médecins, colonnes = jours,
    uniquement gardes / tours / congés / repos (pas la couverture des unités). */
 const CODE_SHIFT = {
-  garde_24h: "G24", garde_nuit: "GN", twe: "TWE", recup: "Repos", off: "Off",
+  garde_24h: "G24", garde_nuit: "GN", twe: "TWE", repos_garde: "RG", recup: "Repos", off: "Off",
   conge_annuel: "CA", conge_scientifique: "Sci", conge_extralegal: "EL",
 };
 const CODE_PREF = {

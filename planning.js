@@ -39,9 +39,12 @@ const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
    (équivalent d'une journée), mais sans station ni repos généré. */
 const PL_HEURES_OFFCLINIC = 10.5;
 
-/* Types d'« absence / repos » posables manuellement (0 h, sans station).
-   Doivent coller aux types absence de SHIFT_CONFIG (app.js). */
-const PL_ABSENCES = ["recup", "off", "conge_annuel", "conge_scientifique", "conge_extralegal"];
+/* Types d'« absence / repos » (0 h, sans station). Doivent coller aux types
+   absence de SHIFT_CONFIG (app.js).
+   - 'repos_garde' : repos OBLIGATOIRE post-garde, matérialisé automatiquement,
+     affiché dans le planning mais NON comptabilisé dans les totaux.
+   - 'recup'       : repos / récupération posé manuellement, COMPTABILISÉ. */
+const PL_ABSENCES = ["recup", "repos_garde", "off", "conge_annuel", "conge_scientifique", "conge_extralegal"];
 function plEstAbsence(type) { return PL_ABSENCES.indexOf(type) !== -1; }
 
 
@@ -422,7 +425,7 @@ function genererPlanning(opts) {
     else plGenererSemaine(date, medecins, etat, sortie, conflits);
   }
 
-  // Matérialise les repos de garde (visibles + comptés comme absence).
+  // Matérialise les repos de garde (visibles, non comptabilisés).
   const bM = plBornesMois(annee, mois);
   materialiserRepos(sortie, (d) => d >= bM.debut && d <= bM.fin).forEach((r) => sortie.push(r));
 
@@ -630,8 +633,9 @@ function genererOffClinic(opts) {
 }
 
 
-/* Matérialise les REPOS DE GARDE comme shifts « recup » pour qu'ils
-   apparaissent au calendrier / dans la grille / à l'export. Repos = lendemain
+/* Matérialise les REPOS DE GARDE comme shifts « repos_garde » pour qu'ils
+   apparaissent au calendrier / dans la grille / à l'export, SANS être
+   comptabilisés (distinct du repos manuel « recup »). Repos = lendemain
    de toute garde (+ lundi/mardi selon la garde 24h de week-end). On ne pose
    un repos que dans la période et si le médecin n'a pas déjà un shift ce jour.
    dansPeriode(date) -> bool. Renvoie les shifts repos à AJOUTER. */
@@ -649,7 +653,7 @@ function materialiserRepos(shifts, dansPeriode) {
       const cle = s.doctor_id + "|" + d;
       if (occupe.has(cle) || ajoutes.has(cle)) return;
       ajoutes.add(cle);
-      out.push({ date: d, shift_type: "recup", poste: null, doctor_id: s.doctor_id });
+      out.push({ date: d, shift_type: "repos_garde", poste: null, doctor_id: s.doctor_id });
     });
   });
   return out;
@@ -894,7 +898,9 @@ function compterParMedecin(shifts) {
     if (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h") st.gardes++;
     // Tour de week-end (TWE) : on en compte le total.
     if (s.shift_type === "twe") st.tours++;
-    // Repos de garde (récupération) posés.
+    // Repos / récupération posé manuellement (comptabilisé). Le repos de garde
+    // automatique ('repos_garde') est volontairement EXCLU des totaux : il est
+    // seulement affiché dans le planning.
     if (s.shift_type === "recup") st.repos++;
     // Week-end travaillé = garde 24h ou tour un SAMEDI/DIMANCHE (spec §7).
     // Un férié en semaine ne compte pas.
