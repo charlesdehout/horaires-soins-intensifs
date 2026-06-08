@@ -288,9 +288,71 @@ button.mini.danger:hover { background: #fdeaea; }
   box-shadow: 0 0 0 2px #1f2328 inset;
 }
 
+/* =====================================================================
+   Module 6 — Admin : actions planning, statut, compteurs, conflits, modale
+   ===================================================================== */
+
+.sous-titre { font-size: 1.02rem; margin: 0; }
+
+/* Badge de statut du planning (brouillon / publié / aucun) */
+.statut-badge {
+  display: inline-block;
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.statut-aucun     { background: #eaeef2; color: #57606a; }
+.statut-draft     { background: #fff3cd; color: #8a6d00; }
+.statut-published { background: #ddf4e4; color: var(--vert); }
+
+/* Barre des boutons d'action du planning */
+.planning-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 0.8rem;
+}
+.planning-actions button { width: auto; padding: 0.5rem 1rem; margin: 0; }
+
+/* Compteurs par médecin */
+.compteurs-table td.depasse { color: var(--rouge); font-weight: 600; }
+.compteurs-table td.ok      { color: var(--vert); }
+
+/* Liste des conflits */
+#conflits-zone.conflits-ok { border-color: #b7e0c2; color: var(--vert); }
+#conflits-zone .conflit-ligne { margin: 0.15rem 0; }
+#conflits-zone .conflit-date { font-weight: 700; }
+
+/* Modale (overlay sombre + carte centrée) */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 1000;
+}
+.modal-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 1.5rem;
+  width: 100%;
+  max-width: 460px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+}
+.modal-card h3 { margin: 0 0 1rem; font-size: 1.15rem; }
+.modal-card .form-actions { margin-top: 0.8rem; align-items: center; }
+.modal-card .form-actions .mini.danger { margin-left: auto; }
+
 /* Sur petit écran : formulaire en une colonne */
 @media (max-width: 600px) {
   .form-grid { grid-template-columns: 1fr; }
   .data-table { font-size: 0.8rem; }
   .fc .fc-toolbar { flex-direction: column; gap: 0.5rem; }
+  .planning-actions button { flex: 1 1 100%; }
 }

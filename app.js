@@ -749,18 +749,53 @@ async function construireEvenements(debutISO, finISO) {
       const med = carteMedecins[s.doctor_id] || {};
       const nom = med.name || "?";
       const estMien = medecinCourant && medecinCourant.id === s.doctor_id;
-      const dateFin = cfg.lendemain ? lendemainDe(s.date) : s.date;
       const station = s.poste ? (POSTE_LABELS[s.poste] || s.poste) : "";
-      const suffixe = station ? " · " + station : "";
 
+      // Données du shift, attachées à chaque événement pour l'édition (Module 6).
+      const propsBase = {
+        estShift: true, shiftId: s.id, shiftType: s.shift_type,
+        doctorId: s.doctor_id, poste: s.poste || null, dateStr: s.date,
+      };
+      const cls = estMien ? ["shift-mien"] : [];
+
+      // Cas particulier : garde 24h de SEMAINE qui occupe une station.
+      // On l'affiche sur DEUX lignes — une pour la station occupée le jour,
+      // une pour la garde 24h — pour plus de clarté. Les deux pointent vers
+      // le même shift (clic d'édition → même formulaire).
+      if (s.shift_type === "garde_24h" && s.poste) {
+        const jour = SHIFT_CONFIG.jour;
+        events.push({
+          title: nom + " · " + station,
+          start: s.date + "T" + jour.debut + ":00",
+          end: s.date + "T" + jour.fin + ":00",
+          backgroundColor: jour.couleur,
+          borderColor: estMien ? "#1f2328" : jour.couleur,
+          classNames: cls,
+          extendedProps: Object.assign({ tooltip: nom + " · " + station + " (garde 24h)" }, propsBase),
+        });
+        events.push({
+          title: nom + " · " + cfg.court,
+          start: s.date + "T" + cfg.debut + ":00",
+          end: lendemainDe(s.date) + "T" + cfg.fin + ":00",
+          backgroundColor: cfg.couleur,
+          borderColor: estMien ? "#1f2328" : cfg.couleur,
+          classNames: cls,
+          extendedProps: Object.assign({ tooltip: nom + " - " + cfg.label }, propsBase),
+        });
+        return;
+      }
+
+      // Cas général : un seul événement.
+      const dateFin = cfg.lendemain ? lendemainDe(s.date) : s.date;
+      const suffixe = station ? " · " + station : "";
       events.push({
         title: nom + " - " + cfg.court + suffixe,
         start: s.date + "T" + cfg.debut + ":00",
         end: dateFin + "T" + cfg.fin + ":00",
         backgroundColor: cfg.couleur,
         borderColor: estMien ? "#1f2328" : cfg.couleur,
-        classNames: estMien ? ["shift-mien"] : [],
-        extendedProps: { tooltip: nom + " - " + cfg.label + suffixe },
+        classNames: cls,
+        extendedProps: Object.assign({ tooltip: nom + " - " + cfg.label + suffixe }, propsBase),
       });
     });
   }
@@ -838,6 +873,22 @@ async function initCalendrier() {
         const t = info.event.extendedProps.tooltip;
         if (t) info.el.setAttribute("title", t);
       },
+      // Clic sur un shift → édition (admin uniquement, Module 6).
+      eventClick: (info) => {
+        const p = info.event.extendedProps;
+        if (!p.estShift) return; // ignore les fonds de préférences
+        if (!medecinCourant || medecinCourant.role !== "admin") return;
+        ouvrirEditionShift({
+          id: p.shiftId, date: p.dateStr,
+          shift_type: p.shiftType, doctor_id: p.doctorId, poste: p.poste,
+        });
+      },
+      // À chaque changement de mois/vue : rafraîchit le panneau admin.
+      datesSet: () => {
+        if (medecinCourant && medecinCourant.role === "admin") {
+          rafraichirPanneauAdmin();
+        }
+      },
     });
     calendrier.render();
   } else {
@@ -869,6 +920,12 @@ function messageGeneration(html, type = "info") {
 /* Génère un brouillon de planning pour le mois actuellement affiché. */
 async function genererPlanningPourMoisAffiche() {
   if (!calendrier || typeof genererPlanning !== "function") return;
+
+  // Verrou : un planning publié ne se régénère pas sans repasser en brouillon.
+  if (planningVerrouille) {
+    return messageGeneration(
+      "Planning publié (lecture seule). Repasse-le en brouillon pour le régénérer.", "error");
+  }
 
   const dateVue = calendrier.getDate();
   const annee = dateVue.getFullYear();
@@ -932,9 +989,385 @@ async function genererPlanningPourMoisAffiche() {
       (nbConf > 8 ? "<br>…" : ""), "error");
   }
   calendrier.refetchEvents();
+  rafraichirPanneauAdmin(); // met à jour statut, compteurs et conflits
 }
 
 if (genererBtn) genererBtn.addEventListener("click", genererPlanningPourMoisAffiche);
+
+
+/* ===================================================================== */
+/* MODULE 6 — Admin : ajustements manuels, publication, compteurs        */
+/* ===================================================================== */
+
+/* Références DOM (Module 6). */
+const planningStatut  = document.getElementById("planning-statut");
+const ajouterShiftBtn = document.getElementById("ajouter-shift-btn");
+const publierBtn      = document.getElementById("publier-btn");
+const depublierBtn    = document.getElementById("depublier-btn");
+const compteursTbody  = document.getElementById("compteurs-tbody");
+const compteursTable  = document.getElementById("compteurs-table");
+const compteursEmpty  = document.getElementById("compteurs-empty");
+const conflitsZone    = document.getElementById("conflits-zone");
+
+/* Modale d'édition / d'ajout de shift. */
+const shiftModal     = document.getElementById("shift-modal");
+const shiftModalTit  = document.getElementById("shift-modal-titre");
+const shiftForm      = document.getElementById("shift-form");
+const sDate          = document.getElementById("s-date");
+const sType          = document.getElementById("s-type");
+const sDoctor        = document.getElementById("s-doctor");
+const sPoste         = document.getElementById("s-poste");
+const shiftFormMsg   = document.getElementById("shift-form-msg");
+const deleteShiftBtn = document.getElementById("delete-shift-btn");
+const cancelShiftBtn = document.getElementById("cancel-shift-btn");
+
+/* État du planning du mois affiché (rempli par rafraichirPanneauAdmin). */
+let planningMois = { annee: null, mois: null, schedule: null,
+                     shifts: [], medecins: [], preferences: [] };
+let planningVerrouille = false; // vrai si le planning du mois est publié
+let shiftEnEdition = null;      // shift en cours d'édition (null = mode ajout)
+
+/* Bornes ISO du mois affiché dans le calendrier. */
+function bornesMoisAffiche() {
+  const d = calendrier.getDate();
+  const annee = d.getFullYear();
+  const mois = d.getMonth() + 1;
+  const ms = String(mois).padStart(2, "0");
+  return {
+    annee, mois,
+    debut: annee + "-" + ms + "-01",
+    fin: annee + "-" + ms + "-" + new Date(annee, mois, 0).getDate(),
+  };
+}
+
+/* Recharge statut + données + compteurs + conflits du mois affiché. */
+async function rafraichirPanneauAdmin() {
+  if (!medecinCourant || medecinCourant.role !== "admin" || !calendrier) return;
+
+  const b = bornesMoisAffiche();
+  planningMois.annee = b.annee;
+  planningMois.mois = b.mois;
+
+  // 1) Planning (schedule) du mois.
+  const { data: sched } = await sb.from("schedules")
+    .select("id, year, month, status, published_at")
+    .eq("year", b.annee).eq("month", b.mois).maybeSingle();
+  planningMois.schedule = sched || null;
+  planningVerrouille = !!(sched && sched.status === "published");
+
+  // 2) Shifts du mois.
+  const { data: shifts } = await sb.from("shifts")
+    .select("id, date, shift_type, doctor_id, schedule_id, poste")
+    .gte("date", b.debut).lte("date", b.fin);
+  planningMois.shifts = shifts || [];
+
+  // 3) Médecins planifiables (hors admin) + 4) préférences du mois.
+  const { data: meds } = await sb.from("doctors")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles")
+    .neq("role", "admin").order("name", { ascending: true });
+  planningMois.medecins = meds || [];
+
+  const { data: prefs } = await sb.from("preferences")
+    .select("doctor_id, start_date, end_date, pref_type")
+    .lte("start_date", b.fin).gte("end_date", b.debut);
+  planningMois.preferences = prefs || [];
+
+  majStatutEtBoutons();
+  majCompteurs();
+  majConflits();
+}
+
+/* Affiche le badge de statut et active/désactive les boutons. */
+function majStatutEtBoutons() {
+  const sched = planningMois.schedule;
+  if (!sched) {
+    planningStatut.textContent = "Aucun planning";
+    planningStatut.className = "statut-badge statut-aucun";
+  } else if (sched.status === "published") {
+    planningStatut.textContent = "Publié";
+    planningStatut.className = "statut-badge statut-published";
+  } else {
+    planningStatut.textContent = "Brouillon";
+    planningStatut.className = "statut-badge statut-draft";
+  }
+
+  // Verrouillage : si publié, on bloque génération / ajout / publication.
+  if (genererBtn) genererBtn.disabled = planningVerrouille;
+  if (ajouterShiftBtn) ajouterShiftBtn.disabled = planningVerrouille;
+  if (publierBtn) publierBtn.disabled = planningVerrouille || !sched || planningMois.shifts.length === 0;
+  if (depublierBtn) depublierBtn.disabled = !planningVerrouille;
+}
+
+/* Tableau des compteurs heures / gardes / week-ends par médecin. */
+function majCompteurs() {
+  const stats = compterParMedecin(planningMois.shifts);
+  const meds = planningMois.medecins;
+  compteursTbody.innerHTML = "";
+
+  const vide = planningMois.shifts.length === 0;
+  compteursTable.classList.toggle("hidden", vide);
+  compteursEmpty.classList.toggle("hidden", !vide);
+  if (vide) return;
+
+  // Nombre de semaines (approx.) du mois pour estimer la cible mensuelle.
+  const nbJours = new Date(planningMois.annee, planningMois.mois, 0).getDate();
+  const semaines = nbJours / 7;
+
+  meds.forEach((m) => {
+    const st = stats[m.id] || { heures: 0, gardes: 0, weekends: 0 };
+    const cibleMois = Math.round((m.weekly_hours_target || 52) * semaines);
+    const tr = document.createElement("tr");
+
+    const tdNom = document.createElement("td"); tdNom.textContent = m.name; tr.appendChild(tdNom);
+    const tdGrade = document.createElement("td");
+    tdGrade.textContent = GRADE_LABELS[m.grade] || m.grade; tr.appendChild(tdGrade);
+
+    const tdH = document.createElement("td");
+    tdH.textContent = st.heures + " h";
+    tdH.className = st.heures > cibleMois ? "depasse" : "ok";
+    tr.appendChild(tdH);
+
+    const tdCible = document.createElement("td"); tdCible.textContent = cibleMois + " h"; tr.appendChild(tdCible);
+    const tdG = document.createElement("td"); tdG.textContent = st.gardes; tr.appendChild(tdG);
+    const tdW = document.createElement("td"); tdW.textContent = st.weekends; tr.appendChild(tdW);
+
+    compteursTbody.appendChild(tr);
+  });
+}
+
+/* Liste des conflits du mois (via la fonction pure validerPlanning). */
+function calculerConflitsMois(shifts) {
+  return validerPlanning({
+    annee: planningMois.annee, mois: planningMois.mois,
+    shifts, medecins: planningMois.medecins, preferences: planningMois.preferences,
+  });
+}
+
+function majConflits() {
+  const conflits = calculerConflitsMois(planningMois.shifts);
+  if (planningMois.shifts.length === 0) {
+    conflitsZone.textContent = "Aucun planning chargé pour ce mois.";
+    conflitsZone.className = "zone-info";
+    return;
+  }
+  if (conflits.length === 0) {
+    conflitsZone.textContent = "Aucun conflit. ✅";
+    conflitsZone.className = "zone-info conflits-ok";
+    return;
+  }
+  conflitsZone.className = "zone-info";
+  conflitsZone.innerHTML = "";
+  conflits.forEach((c) => {
+    const div = document.createElement("div");
+    div.className = "conflit-ligne";
+    const sp = document.createElement("span");
+    sp.className = "conflit-date"; sp.textContent = c.date + " — ";
+    div.appendChild(sp);
+    div.appendChild(document.createTextNode(c.message));
+    conflitsZone.appendChild(div);
+  });
+}
+
+/* --- Modale d'édition / d'ajout de shift --- */
+
+/* Remplit la liste déroulante des médecins planifiables. */
+function remplirSelectMedecins(selectionId) {
+  sDoctor.innerHTML = "";
+  planningMois.medecins.forEach((m) => {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    opt.textContent = m.name + " (" + (GRADE_LABELS[m.grade] || m.grade) + ")";
+    if (m.id === selectionId) opt.selected = true;
+    sDoctor.appendChild(opt);
+  });
+}
+
+/* Remplit la liste déroulante des stations (+ « aucune »). */
+function remplirSelectPostes(selectionCode) {
+  sPoste.innerHTML = "";
+  const aucun = document.createElement("option");
+  aucun.value = ""; aucun.textContent = "— Aucune station —";
+  sPoste.appendChild(aucun);
+  (typeof POSTES_JOUR !== "undefined" ? POSTES_JOUR : []).forEach((p) => {
+    const opt = document.createElement("option");
+    opt.value = p.code; opt.textContent = p.label;
+    if (p.code === selectionCode) opt.selected = true;
+    sPoste.appendChild(opt);
+  });
+  if (!selectionCode) aucun.selected = true;
+}
+
+function ouvrirModaleShift() {
+  shiftFormMsg.textContent = "";
+  shiftModal.classList.remove("hidden");
+}
+function fermerModaleShift() {
+  shiftModal.classList.add("hidden");
+  shiftEnEdition = null;
+}
+
+/* Ouvre la modale en mode édition pour un shift existant. */
+function ouvrirEditionShift(shift) {
+  if (planningVerrouille) {
+    window.alert("Planning publié (lecture seule). Repasse-le en brouillon pour le modifier.");
+    return;
+  }
+  shiftEnEdition = shift;
+  shiftModalTit.textContent = "Modifier le shift";
+  sDate.value = shift.date;
+  sDate.disabled = true; // on ne déplace pas un shift via la date ici
+  sType.value = shift.shift_type;
+  remplirSelectMedecins(shift.doctor_id);
+  remplirSelectPostes(shift.poste);
+  deleteShiftBtn.classList.remove("hidden");
+  ouvrirModaleShift();
+}
+
+/* Ouvre la modale en mode ajout (nouveau shift). */
+function ouvrirAjoutShift() {
+  if (planningVerrouille) return;
+  shiftEnEdition = null;
+  shiftModalTit.textContent = "Ajouter un shift";
+  const b = bornesMoisAffiche();
+  sDate.value = b.debut;
+  sDate.disabled = false;
+  sDate.min = b.debut; sDate.max = b.fin;
+  sType.value = "jour";
+  remplirSelectMedecins(null);
+  remplirSelectPostes(null);
+  deleteShiftBtn.classList.add("hidden");
+  ouvrirModaleShift();
+}
+
+/* Quand le type change : suggère une station cohérente. */
+sType.addEventListener("change", () => {
+  if (sType.value === "garde_nuit" || sType.value === "twe") {
+    remplirSelectPostes(null); // pas de station
+  } else if (sType.value === "jour" && !sPoste.value) {
+    const premier = (typeof POSTES_JOUR !== "undefined" && POSTES_JOUR[0]) ? POSTES_JOUR[0].code : null;
+    remplirSelectPostes(premier);
+  }
+});
+
+/* Garantit qu'un schedule (brouillon) existe pour le mois ; renvoie son id. */
+async function assurerScheduleMois() {
+  if (planningMois.schedule) return planningMois.schedule.id;
+  const { data, error } = await sb.from("schedules")
+    .insert({ year: planningMois.annee, month: planningMois.mois, status: "draft" })
+    .select("id").single();
+  if (error) throw error;
+  planningMois.schedule = { id: data.id, year: planningMois.annee, month: planningMois.mois, status: "draft" };
+  return data.id;
+}
+
+/* Enregistre le shift (ajout ou modification) avec avertissement non bloquant. */
+shiftForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  shiftFormMsg.textContent = "";
+
+  const propose = {
+    id: shiftEnEdition ? shiftEnEdition.id : null,
+    date: sDate.value,
+    shift_type: sType.value,
+    doctor_id: sDoctor.value,
+    poste: sPoste.value || null,
+  };
+  if (!propose.date || !propose.doctor_id) {
+    shiftFormMsg.textContent = "Date et médecin obligatoires."; shiftFormMsg.className = "message error";
+    return;
+  }
+
+  // Avertissement non bloquant : on compare les conflits avant / après.
+  const avant = calculerConflitsMois(planningMois.shifts);
+  const apres = (() => {
+    const liste = planningMois.shifts.filter((s) => s.id !== propose.id);
+    liste.push({ date: propose.date, shift_type: propose.shift_type, doctor_id: propose.doctor_id, poste: propose.poste });
+    return calculerConflitsMois(liste);
+  })();
+  const cleSet = (arr) => new Set(arr.map((c) => c.date + "|" + c.message));
+  const avantSet = cleSet(avant);
+  const nouveaux = apres.filter((c) => !avantSet.has(c.date + "|" + c.message));
+  if (nouveaux.length > 0) {
+    const txt = nouveaux.slice(0, 8).map((c) => "• " + c.date + " — " + c.message).join("\n");
+    const ok = window.confirm(
+      "Cette modification introduit " + nouveaux.length + " conflit(s) :\n\n" + txt +
+      (nouveaux.length > 8 ? "\n…" : "") + "\n\nEnregistrer quand même ?");
+    if (!ok) return;
+  }
+
+  try {
+    const scheduleId = await assurerScheduleMois();
+    if (propose.id) {
+      const { error } = await sb.from("shifts").update({
+        date: propose.date, shift_type: propose.shift_type,
+        doctor_id: propose.doctor_id, poste: propose.poste,
+      }).eq("id", propose.id);
+      if (error) throw error;
+    } else {
+      const { error } = await sb.from("shifts").insert({
+        date: propose.date, shift_type: propose.shift_type,
+        doctor_id: propose.doctor_id, poste: propose.poste, schedule_id: scheduleId,
+      });
+      if (error) throw error;
+    }
+  } catch (err) {
+    console.error("Erreur enregistrement shift :", err);
+    shiftFormMsg.textContent = "Erreur : " + (err.message || err); shiftFormMsg.className = "message error";
+    return;
+  }
+
+  fermerModaleShift();
+  calendrier.refetchEvents();
+  rafraichirPanneauAdmin();
+});
+
+/* Supprime le shift en cours d'édition. */
+deleteShiftBtn.addEventListener("click", async () => {
+  if (!shiftEnEdition) return;
+  if (!window.confirm("Supprimer ce shift ?")) return;
+  const { error } = await sb.from("shifts").delete().eq("id", shiftEnEdition.id);
+  if (error) {
+    shiftFormMsg.textContent = "Erreur : " + error.message; shiftFormMsg.className = "message error";
+    return;
+  }
+  fermerModaleShift();
+  calendrier.refetchEvents();
+  rafraichirPanneauAdmin();
+});
+
+cancelShiftBtn.addEventListener("click", fermerModaleShift);
+shiftModal.addEventListener("click", (e) => { if (e.target === shiftModal) fermerModaleShift(); });
+if (ajouterShiftBtn) ajouterShiftBtn.addEventListener("click", ouvrirAjoutShift);
+
+/* Publication : brouillon → publié (verrouille l'édition). */
+if (publierBtn) publierBtn.addEventListener("click", async () => {
+  if (!planningMois.schedule) return;
+  const conflits = calculerConflitsMois(planningMois.shifts);
+  if (conflits.length > 0) {
+    const ok = window.confirm(
+      "Ce planning comporte " + conflits.length + " conflit(s) non résolu(s).\n" +
+      "Publier quand même ?");
+    if (!ok) return;
+  }
+  const { error } = await sb.from("schedules")
+    .update({ status: "published", published_at: new Date().toISOString() })
+    .eq("id", planningMois.schedule.id);
+  if (error) { messageGeneration("Erreur de publication : " + error.message, "error"); return; }
+  messageGeneration("Planning " + planningMois.mois + "/" + planningMois.annee + " publié. ✅", "info");
+  rafraichirPanneauAdmin();
+});
+
+/* Dé-publication : publié → brouillon (rouvre l'édition). */
+if (depublierBtn) depublierBtn.addEventListener("click", async () => {
+  if (!planningMois.schedule) return;
+  if (!window.confirm("Repasser ce planning en brouillon ? Il ne sera plus marqué comme publié.")) return;
+  const { error } = await sb.from("schedules")
+    .update({ status: "draft", published_at: null })
+    .eq("id", planningMois.schedule.id);
+  if (error) { messageGeneration("Erreur : " + error.message, "error"); return; }
+  messageGeneration("Planning repassé en brouillon. Tu peux le modifier.", "info");
+  rafraichirPanneauAdmin();
+});
 
 
 /* --------------------------------------------------------------------- */

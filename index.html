@@ -68,18 +68,48 @@
         <div id="calendar"></div>
       </div>
 
-      <!-- ===== Espace ADMIN : génération du planning (Module 5) ===== -->
+      <!-- ===== Espace ADMIN : génération + ajustements + publication (Module 5/6) ===== -->
       <div id="admin-zone" class="hidden">
         <div class="zone-header">
-          <h2>Génération du planning</h2>
-          <button id="generer-planning-btn">⚙️ Générer le mois affiché</button>
+          <h2>Planning du mois affiché</h2>
+          <span id="planning-statut" class="statut-badge statut-aucun">—</span>
+        </div>
+
+        <!-- Barre d'actions sur le planning du mois affiché -->
+        <div id="planning-actions" class="planning-actions">
+          <button id="generer-planning-btn">⚙️ Générer (brouillon)</button>
+          <button id="ajouter-shift-btn" class="secondary">+ Ajouter un shift</button>
+          <button id="publier-btn" class="secondary">✓ Publier</button>
+          <button id="depublier-btn" class="secondary">↩ Repasser en brouillon</button>
         </div>
         <p class="zone-info">
-          Génère un brouillon (greedy v1) pour le mois actuellement affiché dans
-          le calendrier ci-dessus, à partir des médecins et de leurs préférences.
-          Remplace tout brouillon existant pour ce mois.
+          La génération crée un <strong>brouillon</strong> (greedy v1) pour le mois affiché ci-dessus,
+          à partir des médecins et de leurs préférences ; elle remplace tout brouillon existant.
+          Clique sur un shift du calendrier pour l'ajuster. Une fois <strong>publié</strong>, le
+          planning est en lecture seule (repasse-le en brouillon pour le modifier).
         </p>
         <p id="generer-msg" class="message"></p>
+
+        <!-- Compteurs par médecin (heures / gardes / week-ends) du mois affiché -->
+        <div class="zone-header"><h3 class="sous-titre">Compteurs du mois</h3></div>
+        <table id="compteurs-table" class="data-table compteurs-table">
+          <thead>
+            <tr>
+              <th>Médecin</th>
+              <th>Grade</th>
+              <th>Heures</th>
+              <th>Cible (mois)</th>
+              <th>Gardes</th>
+              <th>Week-ends</th>
+            </tr>
+          </thead>
+          <tbody id="compteurs-tbody"></tbody>
+        </table>
+        <p id="compteurs-empty" class="zone-info hidden">Aucun shift sur le mois affiché.</p>
+
+        <!-- Conflits détectés sur le mois affiché -->
+        <div class="zone-header"><h3 class="sous-titre">Conflits détectés</h3></div>
+        <div id="conflits-zone" class="zone-info">Aucun planning chargé.</div>
 
         <!-- ===== Espace ADMIN : gestion des médecins (Module 2) ===== -->
         <div class="zone-header">
@@ -246,6 +276,46 @@
 
       <button id="logout-btn" class="secondary">Se déconnecter</button>
     </section>
+
+    <!-- ============================================= -->
+    <!-- MODALE : édition / ajout d'un shift (Module 6)-->
+    <!-- ============================================= -->
+    <div id="shift-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <h3 id="shift-modal-titre">Modifier le shift</h3>
+        <form id="shift-form">
+          <div class="form-grid">
+            <div>
+              <label for="s-date">Date</label>
+              <input type="date" id="s-date" required />
+            </div>
+            <div>
+              <label for="s-type">Type de shift</label>
+              <select id="s-type">
+                <option value="jour">Journée (station)</option>
+                <option value="garde_24h">Garde 24h</option>
+                <option value="garde_nuit">Garde de nuit</option>
+                <option value="twe">Tour week-end (TWE)</option>
+              </select>
+            </div>
+            <div>
+              <label for="s-doctor">Médecin</label>
+              <select id="s-doctor"></select>
+            </div>
+            <div>
+              <label for="s-poste">Station</label>
+              <select id="s-poste"></select>
+            </div>
+          </div>
+          <p id="shift-form-msg" class="message"></p>
+          <div class="form-actions">
+            <button type="submit" id="save-shift-btn">Enregistrer</button>
+            <button type="button" id="delete-shift-btn" class="mini danger">Supprimer</button>
+            <button type="button" id="cancel-shift-btn" class="secondary">Annuler</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
   </main>
 

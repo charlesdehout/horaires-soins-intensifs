@@ -285,7 +285,177 @@ function genererPlanning(opts) {
 }
 
 
+/* ===================================================================== */
+/* MODULE 6 — Vérification d'un planning (fonction PURE)                  */
+/* --------------------------------------------------------------------- */
+/* Contrôle un ensemble de shifts (généré OU ajusté manuellement) au      */
+/* regard des contraintes DURES, et renvoie la liste des conflits. Sert   */
+/* à : (1) revalider après une retouche manuelle, (2) afficher le panneau */
+/* « conflits » de l'admin. Aucune dépendance DOM/Supabase.               */
+/*                                                                        */
+/* opts = { annee, mois (1-12), shifts:[{date,shift_type,doctor_id,poste}],*/
+/*          medecins:[...], preferences:[...] (optionnel) }               */
+/* Renvoie un tableau de conflits : [{ date, message }].                  */
+/* ===================================================================== */
+function validerPlanning(opts) {
+  const annee = opts.annee;
+  const mois = opts.mois;
+  const shifts = opts.shifts || [];
+  const medecins = opts.medecins || [];
+  const conflits = [];
+
+  const postesCodes = plPostes().map((p) => p.code);
+  const couv = plCouv();
+  const bloquantes = plBloq();
+
+  // Index médecins par id.
+  const medById = {};
+  medecins.forEach((m) => { medById[m.id] = m; });
+
+  // Index des dates bloquées par préférence (congé / indispo / off / récup).
+  const indispo = {};
+  (opts.preferences || []).forEach((p) => {
+    if (!bloquantes.includes(p.pref_type)) return;
+    if (!indispo[p.doctor_id]) indispo[p.doctor_id] = new Set();
+    let d = p.start_date;
+    while (d <= p.end_date) { indispo[p.doctor_id].add(d); d = plAdd(d, 1); }
+  });
+
+  // Regroupements.
+  const parDate = {};          // date -> [shift]
+  const datesParMed = {};      // doctorId -> { date -> [shift] }
+  shifts.forEach((s) => {
+    (parDate[s.date] = parDate[s.date] || []).push(s);
+    const dm = (datesParMed[s.doctor_id] = datesParMed[s.doctor_id] || {});
+    (dm[s.date] = dm[s.date] || []).push(s);
+  });
+
+  const estResident = (id) => medById[id] && medById[id].grade === "resident";
+  const nom = (id) => (medById[id] && medById[id].name) ? medById[id].name : "?";
+
+  // ---- 1) Couverture jour par jour (sur tout le mois) ----
+  const nbJours = new Date(Date.UTC(annee, mois, 0)).getUTCDate();
+  for (let j = 1; j <= nbJours; j++) {
+    const date = annee + "-" + String(mois).padStart(2, "0") + "-" + String(j).padStart(2, "0");
+    const duJour = parDate[date] || [];
+    const gardes = duJour.filter((s) => s.shift_type === "garde_nuit" || s.shift_type === "garde_24h");
+    const auMoinsUnResident = gardes.some((s) => estResident(s.doctor_id));
+
+    if (plEstWeekendOuFerie(date)) {
+      const g24 = duJour.filter((s) => s.shift_type === "garde_24h");
+      const twe = duJour.filter((s) => s.shift_type === "twe");
+      const auTour = g24.length + twe.length;
+      if (auTour < couv.twe_weekend) {
+        conflits.push({ date, message: `Week-end : ${auTour}/${couv.twe_weekend} médecin(s) au tour (TWE).` });
+      }
+      if (g24.length < couv.gardes_weekend) {
+        conflits.push({ date, message: `Week-end : ${g24.length}/${couv.gardes_weekend} garde(s) 24h.` });
+      }
+      if (g24.length > 0 && !g24.some((s) => estResident(s.doctor_id))) {
+        conflits.push({ date, message: "Week-end : aucun résident en garde 24h (≥1 requis)." });
+      }
+      duJour.filter((s) => s.shift_type === "jour").forEach((s) => {
+        conflits.push({ date, message: `Week-end : ${nom(s.doctor_id)} a un shift de jour (incohérent).` });
+      });
+    } else {
+      // Jour de semaine : 7 stations + nuit ≥2 dont ≥1 résident.
+      const occupants = {}; // code station -> [doctorId]
+      duJour.forEach((s) => {
+        if (s.poste) (occupants[s.poste] = occupants[s.poste] || []).push(s.doctor_id);
+      });
+      const pourvues = postesCodes.filter((c) => occupants[c] && occupants[c].length >= 1);
+      if (pourvues.length < postesCodes.length) {
+        conflits.push({ date, message: `Jour : ${pourvues.length}/${postesCodes.length} stations pourvues.` });
+      }
+      postesCodes.forEach((c) => {
+        if (occupants[c] && occupants[c].length > 1) {
+          conflits.push({ date, message: `Jour : station ${c} affectée à ${occupants[c].length} médecins.` });
+        }
+      });
+      if (gardes.length < couv.min_nuit) {
+        conflits.push({ date, message: `Nuit : ${gardes.length}/${couv.min_nuit} médecin(s) de garde.` });
+      }
+      if (gardes.length > 0 && !auMoinsUnResident) {
+        conflits.push({ date, message: "Nuit : aucun résident de garde (≥1 requis)." });
+      }
+    }
+  }
+
+  // ---- 2) Contrôles par médecin ----
+  Object.keys(datesParMed).forEach((id) => {
+    const dm = datesParMed[id];
+    const med = medById[id];
+    Object.keys(dm).forEach((date) => {
+      const duJour = dm[date];
+
+      // 2a) Double affectation le même jour.
+      if (duJour.length > 1) {
+        conflits.push({ date, message: `${nom(id)} : ${duJour.length} shifts le même jour (double affectation).` });
+      }
+
+      // 2b) Disponibilité (contrat / jours travaillables / préférence bloquante).
+      if (med) {
+        if (med.contract_start && date < med.contract_start) {
+          conflits.push({ date, message: `${nom(id)} : affecté hors contrat (avant le début).` });
+        }
+        if (med.contract_end && date > med.contract_end) {
+          conflits.push({ date, message: `${nom(id)} : affecté hors contrat (après la fin).` });
+        }
+        const jt = (med.jours_travailles && med.jours_travailles.length) ? med.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
+        if (!jt.includes(plJourSemaine(date))) {
+          conflits.push({ date, message: `${nom(id)} : affecté un jour non travaillable.` });
+        }
+      }
+      if (indispo[id] && indispo[id].has(date)) {
+        conflits.push({ date, message: `${nom(id)} : affecté pendant un congé / une indisponibilité.` });
+      }
+
+      // 2c) Repos 12h : aucune garde la veille d'un shift.
+      const veille = plAdd(date, -1);
+      if (dm[veille] && dm[veille].some((s) => s.shift_type === "garde_nuit" || s.shift_type === "garde_24h")) {
+        conflits.push({ date, message: `${nom(id)} : repos 12h non respecté (shift au lendemain d'une garde).` });
+      }
+
+      // 2d) Récup week-end : garde 24h le samedi → lundi off ;
+      //     le dimanche → lundi + mardi off.
+      const sam = plAdd(date, -2);
+      if (dm[sam] && plJourSemaine(sam) === 6 &&
+          dm[sam].some((s) => s.shift_type === "garde_24h") && plJourSemaine(date) === 1) {
+        conflits.push({ date, message: `${nom(id)} : récup non respectée (lundi après garde du samedi).` });
+      }
+      const dim1 = plAdd(date, -1);
+      const dim2 = plAdd(date, -2);
+      if (dm[dim1] && plJourSemaine(dim1) === 7 && dm[dim1].some((s) => s.shift_type === "garde_24h")) {
+        conflits.push({ date, message: `${nom(id)} : récup non respectée (lundi après garde du dimanche).` });
+      }
+      if (dm[dim2] && plJourSemaine(dim2) === 7 && dm[dim2].some((s) => s.shift_type === "garde_24h") && plJourSemaine(date) === 2) {
+        conflits.push({ date, message: `${nom(id)} : récup non respectée (mardi après garde du dimanche).` });
+      }
+    });
+  });
+
+  // Tri par date pour un affichage lisible.
+  conflits.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return conflits;
+}
+
+
+/* Compteurs par médecin (heures / gardes / week-ends) à partir d'une
+   liste de shifts. Pur, réutilisé par le panneau admin (Module 6). */
+function compterParMedecin(shifts) {
+  const stats = {}; // doctorId -> { heures, gardes, weekends }
+  (shifts || []).forEach((s) => {
+    const st = stats[s.doctor_id] || (stats[s.doctor_id] = { heures: 0, gardes: 0, weekends: 0 });
+    st.heures += PL_HEURES[s.shift_type] || 0;
+    if (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h") st.gardes++;
+    if (plEstWeekendOuFerie(s.date) && (s.shift_type === "garde_24h" || s.shift_type === "twe")) st.weekends++;
+  });
+  Object.keys(stats).forEach((id) => { stats[id].heures = Math.round(stats[id].heures * 10) / 10; });
+  return stats;
+}
+
+
 /* ------------- Export pour Node (tests). Sans effet en navigateur. ------ */
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { genererPlanning };
+  module.exports = { genererPlanning, validerPlanning, compterParMedecin };
 }
