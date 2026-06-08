@@ -559,7 +559,7 @@ function lendemainDe(dateStr) {
   return d.toISOString().slice(0, 10);
 }
 
-/* Charge une fois la correspondance id → médecin (pour nommer les shifts).
+/* Charge une fois la correspondance id -> médecin (pour nommer les shifts).
    La lecture de doctors est ouverte à tous les connectés (RLS). */
 async function chargerCarteMedecins() {
   const { data, error } = await sb.from("doctors").select("id, name, grade");
@@ -599,13 +599,13 @@ async function construireEvenements(debutISO, finISO) {
       const dateFin = cfg.lendemain ? lendemainDe(s.date) : s.date;
 
       events.push({
-        title: nom + " · " + cfg.court,
+        title: nom + " - " + cfg.court,
         start: s.date + "T" + cfg.debut + ":00",
         end: dateFin + "T" + cfg.fin + ":00",
         backgroundColor: cfg.couleur,
         borderColor: estMien ? "#1f2328" : cfg.couleur,
         classNames: estMien ? ["shift-mien"] : [],
-        extendedProps: { tooltip: nom + " — " + cfg.label },
+        extendedProps: { tooltip: nom + " - " + cfg.label },
       });
     });
   }
@@ -627,11 +627,11 @@ async function construireEvenements(debutISO, finISO) {
       const libelle = PREF_LABELS_FULL[p.pref_type] || p.pref_type;
       events.push({
         start: p.start_date,
-        end: lendemainDe(p.end_date), // fin exclusive → +1 jour pour inclure end_date
+        end: lendemainDe(p.end_date), // fin exclusive -> +1 jour pour inclure end_date
         display: "background",
         backgroundColor: PREF_BG[p.pref_type] || "rgba(0,0,0,0.06)",
         extendedProps: {
-          tooltip: (med.name ? med.name + " — " : "") + libelle +
+          tooltip: (med.name ? med.name + " - " : "") + libelle +
                    (p.note ? " (" + p.note + ")" : ""),
         },
       });
@@ -656,16 +656,15 @@ async function initCalendrier() {
       firstDay: 1,              // semaine commençant le lundi
       height: "auto",
       nowIndicator: true,
-      dayMaxEvents: true,       // regroupe en « +N » si la journée est chargée
+      dayMaxEvents: true,       // regroupe en "+N" si la journée est chargée
       headerToolbar: {
         left: "prev,next today",
         center: "title",
-        right: "dayGridMonth,timeGridWeek,listMonth",
+        right: "dayGridMonth,listMonth",
       },
       buttonText: {
         today: "Aujourd'hui",
         month: "Mois",
-        week: "Semaine",
         list: "Liste",
       },
       noEventsText: "Aucun shift sur cette période",
