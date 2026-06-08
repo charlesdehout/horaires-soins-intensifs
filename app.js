@@ -1312,7 +1312,7 @@ function nomsPref(prefs, date, types, nomFn) {
 
 /* Construit une feuille « semaine » au gabarit Erasme. */
 function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
-  ws.getColumn(1).width = 20;
+  ws.getColumn(1).width = 28; // assez large pour que les libellés tiennent sur 1 ligne
   for (let c = 2; c <= 8; c++) ws.getColumn(c).width = 16;
 
   // En-tête : col A vide + 7 dates.
@@ -1357,14 +1357,19 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
     const lab = row.getCell(1);
     lab.value = lg.label; lab.font = { bold: true };
     styleCellule(lab, lg.fill);
+    // Le libellé reste sur une seule ligne (pas de retour auto qui écraserait la ligne).
+    lab.alignment = { wrapText: false, vertical: "middle" };
+    let maxNoms = 1;
     jours.forEach((iso, i) => {
       const cell = row.getCell(2 + i);
       const noms = (lg.get(iso) || []).filter(Boolean);
+      maxNoms = Math.max(maxNoms, noms.length);
       cell.value = noms.length ? noms.join("\n") : null;
       // Cellule auto-remplie distinguée des cellules vides (éditables).
       styleCellule(cell, noms.length ? XL.auto : null);
     });
-    row.height = Math.max(18, 14 * Math.max(1, ...jours.map((iso) => (lg.get(iso) || []).filter(Boolean).length)));
+    // Hauteur ≈ 15 pt par nom empilé (≥ 20 pt). Le libellé tient sur 1 ligne.
+    row.height = Math.max(20, 15 * maxNoms);
   });
 }
 
