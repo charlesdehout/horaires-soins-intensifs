@@ -205,8 +205,66 @@ button.mini.danger:hover { background: #fdeaea; }
 .badge-indispo { background: #fdeaea; color: var(--rouge); }
 .badge-souhait { background: #e3eefe; color: var(--bleu); }
 
+/* =====================================================================
+   Module 4 — Calendrier (FullCalendar) + légende
+   ===================================================================== */
+
+#planning-zone { margin-bottom: 2rem; }
+
+#calendar {
+  background: #fff;
+  border: 1px solid var(--gris-bordure);
+  border-radius: 10px;
+  padding: 0.8rem;
+  font-size: 0.9rem;
+}
+
+/* Boutons natifs de FullCalendar : on les aligne sur le style de l'app. */
+.fc .fc-button-primary {
+  background: var(--bleu);
+  border-color: var(--bleu);
+  font-weight: 600;
+}
+.fc .fc-button-primary:hover { background: var(--bleu-fonce); border-color: var(--bleu-fonce); }
+.fc .fc-button-primary:not(:disabled).fc-button-active,
+.fc .fc-button-primary:not(:disabled):active {
+  background: var(--bleu-fonce);
+  border-color: var(--bleu-fonce);
+}
+.fc .fc-toolbar-title { font-size: 1.2rem; }
+
+/* Met en évidence les shifts du médecin connecté. */
+.fc-event.shift-mien {
+  font-weight: 700;
+  box-shadow: 0 0 0 2px #1f2328 inset;
+}
+
+/* Légende des couleurs */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 1rem;
+  margin: 0.5rem 0 1rem;
+  font-size: 0.82rem;
+  color: #57606a;
+}
+.legend-group { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 0.8rem; }
+.legend-item { display: inline-flex; align-items: center; gap: 0.35rem; }
+.legend .dot {
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 3px;
+  display: inline-block;
+}
+.legend .dot-mine {
+  background: #fff;
+  box-shadow: 0 0 0 2px #1f2328 inset;
+}
+
 /* Sur petit écran : formulaire en une colonne */
 @media (max-width: 600px) {
   .form-grid { grid-template-columns: 1fr; }
   .data-table { font-size: 0.8rem; }
+  .fc .fc-toolbar { flex-direction: column; gap: 0.5rem; }
 }
