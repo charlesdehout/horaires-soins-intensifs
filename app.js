@@ -1052,9 +1052,15 @@ async function genererTrimestrePourMoisAffiche() {
   const dateVue = calendrier.getDate();
   const annee = dateVue.getFullYear();
   const moisAffiche = dateVue.getMonth() + 1;          // 1-12
-  const trimestre = Math.floor((moisAffiche - 1) / 3) + 1; // 1-4
+  // Le regroupement par blocs de 3 mois civils [1-3][4-6][7-9][10-12] coïncide
+  // avec les trimestres ACADÉMIQUES (spec §1.1) ; seule l'étiquette change.
+  const trimestre = Math.floor((moisAffiche - 1) / 3) + 1; // param interne (round-trip)
   const moisTrim = [0, 1, 2].map((k) => (trimestre - 1) * 3 + 1 + k);
-  const libelleTrim = "T" + trimestre + " " + annee + " (" + moisTrim.join("/") + ")";
+  // Numéro académique : oct-déc=T1, jan-mars=T2, avr-juin=T3, juil-sept=T4.
+  const acadNum = { 10: 1, 1: 2, 4: 3, 7: 4 }[moisTrim[0]];
+  const acadDebut = (moisTrim[0] >= 10) ? annee : annee - 1; // année académique de début
+  const libelleTrim = "T" + acadNum + " " + acadDebut + "–" + (acadDebut + 1) +
+                      " (mois " + moisTrim.join("/") + ")";
 
   genererTrimBtn.disabled = true;
 

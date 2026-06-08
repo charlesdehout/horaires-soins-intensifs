@@ -61,6 +61,16 @@ function plNouvelEtat(medecins) {
   const e = {
     indispo: {}, souhait: {}, bloque: {}, assigneJour: {},
     nbGardes: {}, nbWeekend: {}, heures: {}, station: {},
+    // Gardes par semaine ISO (lundi) et par médecin : { id: { lundiISO: n } }.
+    // Sert à la contrainte DURE « max 3 gardes/semaine » (spec §6 N1).
+    gardesSemaine: {},
+    // Week-ends travaillés : { id: Set(clé week-end = samedi ISO) }. Un week-end
+    // compte une seule fois même si le médecin fait samedi ET dimanche (§7).
+    // Sert à la priorité N2 « max 2 week-ends/mois ».
+    weekendsTravailles: {},
+    // Binôme TWE de week-end : date du dimanche -> id du médecin imposé
+    // (celui qui a fait le TWE-seul du samedi doit refaire celui du dimanche).
+    tweForce: {},
     // Poids d'équité (Module 7) : remplis seulement en mode trimestriel.
     // null => plTrier reste en mode mensuel (compte brut). Sinon =>
     // tri par déficit relatif : compte / poids (proportionnel à la dispo).
@@ -73,6 +83,8 @@ function plNouvelEtat(medecins) {
     e.nbGardes[m.id] = 0;
     e.nbWeekend[m.id] = 0;
     e.heures[m.id] = 0;
+    e.gardesSemaine[m.id] = {};
+    e.weekendsTravailles[m.id] = new Set();
     e.station[m.id] = {}; // { lundiISO: codeStation }
   });
   return e;
@@ -147,6 +159,48 @@ function plMarquerAssigne(date, id, etat) {
   etat.assigneJour[date].add(id);
 }
 
+/* Contrainte DURE : maximum de gardes par semaine et par personne (spec §6 N1). */
+const PL_MAX_GARDES_SEMAINE = 3;
+
+/* Nombre de gardes déjà posées au médecin durant la semaine (lundi) de `date`. */
+function plGardesSemaine(id, date, etat) {
+  const lk = plLundiDe(date);
+  return (etat.gardesSemaine[id] && etat.gardesSemaine[id][lk]) || 0;
+}
+
+/* Plafond N2 : max 2 week-ends travaillés par mois et par personne (§6 N2). */
+const PL_MAX_WEEKENDS_MOIS = 2;
+
+/* Clé d'un week-end = samedi ISO. Samedi -> lui-même ; dimanche -> la veille.
+   Un jour de semaine (férié isolé) ne définit pas de clé (return null). */
+function plWeekendKey(date) {
+  const j = plJourSemaine(date);
+  if (j === 6) return date;
+  if (j === 7) return plAdd(date, -1);
+  return null;
+}
+
+/* Le médecin peut-il prendre CE week-end sans dépasser le plafond mensuel ?
+   Vrai s'il y travaille déjà (même clé) ou s'il a < 2 week-ends ce mois-ci. */
+function plPeutWeekend(id, date, etat) {
+  const key = plWeekendKey(date);
+  if (!key) return true;                 // férié en semaine : hors plafond week-end
+  const set = etat.weekendsTravailles[id];
+  if (set.has(key)) return true;         // déjà engagé sur ce week-end → pas un nouveau
+  const mois = date.slice(0, 7);
+  let n = 0;
+  set.forEach((k) => { if (k.slice(0, 7) === mois) n++; });
+  return n < PL_MAX_WEEKENDS_MOIS;
+}
+
+/* Choisit le meilleur candidat (critère 'weekend') en privilégiant ceux qui
+   respectent le plafond de 2 week-ends/mois ; repli sur toute la liste si
+   aucun ne le respecte (la règle N2 est violable en dernier recours). */
+function plChoisirWE(liste, date, etat) {
+  const ok = liste.filter((m) => plPeutWeekend(m.id, date, etat));
+  return plTrier(ok.length ? ok : liste, "weekend", etat)[0] || null;
+}
+
 /* Enregistre un shift et met à jour l'état (heures, gardes, repos 12 h). */
 function plAffecter(sortie, etat, date, type, doctorId, poste) {
   sortie.push({ date, shift_type: type, poste: poste || null, doctor_id: doctorId });
@@ -154,6 +208,8 @@ function plAffecter(sortie, etat, date, type, doctorId, poste) {
   etat.heures[doctorId] += PL_HEURES[type];
   if (type === "garde_nuit" || type === "garde_24h") {
     etat.nbGardes[doctorId]++;
+    const lk = plLundiDe(date);
+    etat.gardesSemaine[doctorId][lk] = (etat.gardesSemaine[doctorId][lk] || 0) + 1;
     etat.bloque[doctorId].add(plAdd(date, 1)); // repos 12 h → lendemain off
   }
 }
@@ -172,14 +228,19 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits) {
   const cle = plLundiDe(date);
   const postes = plPostes().map((p) => p.code);
   const libres = medecins.filter((m) => plDispo(m, date, etat));
-  const residents = libres.filter((m) => m.grade === "resident");
+  // Vivier pour les GARDES : on retire ceux qui ont déjà atteint le max
+  // hebdomadaire (contrainte DURE, spec §6 N1).
+  const libresG = libres.filter((m) => plGardesSemaine(m.id, date, etat) < PL_MAX_GARDES_SEMAINE);
+  const residents = libresG.filter((m) => m.grade === "resident");
 
-  // 1) NUIT : ≥2 dont ≥1 résident. Le résident démarre à 17 h (garde_nuit),
-  //    le 2e (AS de préférence) fait une garde 24 h qui occupe une station.
+  // 1) NUIT : ≥2 dont ≥1 résident, JAMAIS 2 A/S. Le résident démarre à 17 h
+  //    (garde_nuit), le 2e (A/S de préférence) fait une garde 24 h qui occupe
+  //    une station. Comme l'un des deux est toujours un résident, la règle
+  //    « jamais 2 A/S ensemble » est structurellement garantie.
   let resNuit = null, second = null;
   if (residents.length > 0) {
     resNuit = plTrier(residents, "garde", etat)[0];
-    const reste = libres.filter((m) => m.id !== resNuit.id);
+    const reste = libresG.filter((m) => m.id !== resNuit.id);
     const as = reste.filter((m) => m.grade === "assistant_specialiste");
     second = (as.length ? plTrier(as, "garde", etat) : plTrier(reste, "garde", etat))[0] || null;
   } else {
@@ -237,37 +298,64 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits) {
 /* --------------------- Jour de WEEK-END / FÉRIÉ ------------------------ */
 function plGenererWeekend(date, medecins, etat, sortie, conflits) {
   const couv = plCouv();
+  const j = plJourSemaine(date);
   const libres = medecins.filter((m) => plDispo(m, date, etat));
-  const residents = libres.filter((m) => m.grade === "resident");
 
   if (libres.length < couv.twe_weekend) {
     conflits.push({ date, message: `Week-end : ${libres.length} médecin(s) dispo (${couv.twe_weekend} requis).` });
   }
 
-  // 2 gardes 24 h dont ≥1 résident.
+  // RÈGLE BINÔME TWE : le médecin du TWE-seul du samedi doit refaire le TWE
+  // du dimanche, SANS garde (pour limiter le nombre de week-ends différents
+  // amenés à l'hôpital). S'il est dispo, on le réserve d'emblée au TWE et on
+  // l'exclut de la sélection des gardes 24 h.
+  let t1 = null;
+  const forceId = etat.tweForce[date];
+  if (forceId) {
+    t1 = libres.find((m) => m.id === forceId) || null;
+    if (!t1) conflits.push({ date, message: "Week-end : médecin du TWE de samedi indisponible le dimanche (règle binôme)." });
+  }
+
+  // Vivier pour les gardes : tout le monde sauf le TWE imposé (sans garde),
+  // et hors max hebdomadaire de gardes (contrainte DURE, spec §6 N1).
+  const libresGarde = (t1 ? libres.filter((m) => m.id !== t1.id) : libres)
+    .filter((m) => plGardesSemaine(m.id, date, etat) < PL_MAX_GARDES_SEMAINE);
+  const residentsG = libresGarde.filter((m) => m.grade === "resident");
+
+  // 2 gardes 24 h dont ≥1 résident. On privilégie ceux qui n'ont pas encore
+  // 2 week-ends ce mois-ci (priorité N2 « max 2 week-ends/mois »).
   let g1 = null, g2 = null;
-  if (residents.length > 0) {
-    g1 = plTrier(residents, "weekend", etat)[0];
-    const reste = libres.filter((m) => m.id !== g1.id);
+  if (residentsG.length > 0) {
+    g1 = plChoisirWE(residentsG, date, etat);
+    const reste = libresGarde.filter((m) => m.id !== g1.id);
     const as = reste.filter((m) => m.grade === "assistant_specialiste");
-    g2 = (as.length ? plTrier(as, "weekend", etat) : plTrier(reste, "weekend", etat))[0] || null;
+    g2 = plChoisirWE(as.length ? as : reste, date, etat);
   } else {
     conflits.push({ date, message: "Week-end nuit : aucun résident disponible (≥1 obligatoire)." });
   }
 
-  // 1 médecin au TWE seul.
-  const pris = new Set([g1 && g1.id, g2 && g2.id].filter(Boolean));
-  const t1 = plTrier(libres.filter((m) => !pris.has(m.id)), "weekend", etat)[0] || null;
+  // TWE-seul : l'imposé (binôme) sinon le plus prioritaire restant (même priorité N2).
+  const pris = new Set([g1 && g1.id, g2 && g2.id, t1 && t1.id].filter(Boolean));
+  if (!t1) t1 = plChoisirWE(libres.filter((m) => !pris.has(m.id)), date, etat);
+
+  // Samedi : on mémorise le binôme à imposer le dimanche.
+  if (j === 6 && t1) etat.tweForce[plAdd(date, 1)] = t1.id;
 
   if (g1 && !g2) conflits.push({ date, message: "Week-end : 2e garde 24 h indisponible." });
   if (!t1) conflits.push({ date, message: "Week-end : médecin du tour (TWE) manquant." });
 
+  // Un FÉRIÉ en semaine suit les règles de couverture du week-end mais NE
+  // compte PAS comme « week-end travaillé » (spec §7). Seuls les vrais
+  // samedis/dimanches incrémentent le compteur d'équité week-end.
+  const estVraiWeekend = (j === 6 || j === 7);
+
+  const wkey = plWeekendKey(date); // clé week-end (samedi) ou null si férié en semaine
+
   // Affectations + récupération après garde de week-end.
-  const j = plJourSemaine(date);
   [g1, g2].forEach((g) => {
     if (!g) return;
     plAffecter(sortie, etat, date, "garde_24h", g.id, null);
-    etat.nbWeekend[g.id]++;
+    if (estVraiWeekend) { etat.nbWeekend[g.id]++; if (wkey) etat.weekendsTravailles[g.id].add(wkey); }
     if (j === 6) {
       etat.bloque[g.id].add(plAdd(date, 2)); // samedi → lundi off (dimanche déjà repos 12 h)
     } else if (j === 7) {
@@ -275,7 +363,10 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits) {
       etat.bloque[g.id].add(plAdd(date, 2)); //          → mardi
     }
   });
-  if (t1) { plAffecter(sortie, etat, date, "twe", t1.id, null); etat.nbWeekend[t1.id]++; }
+  if (t1) {
+    plAffecter(sortie, etat, date, "twe", t1.id, null);
+    if (estVraiWeekend) { etat.nbWeekend[t1.id]++; if (wkey) etat.weekendsTravailles[t1.id].add(wkey); }
+  }
 }
 
 
@@ -375,7 +466,9 @@ function genererTrimestre(opts) {
       plDatesDuMois(annee, mois).forEach((date) => {
         if (!plDispoStatique(m, date, indispoSet)) return;
         dispoTotal++;
-        if (plEstWeekendOuFerie(date)) dispoWeekend++;
+        // Poids week-end aligné sur le comptage (§7) : samedis/dimanches réels.
+        const jr = plJourSemaine(date);
+        if (jr === 6 || jr === 7) dispoWeekend++;
       });
     });
     const fte = (typeof m.fte === "number" && m.fte > 0) ? m.fte : 1;
@@ -452,6 +545,7 @@ function validerPlanning(opts) {
   });
 
   const estResident = (id) => medById[id] && medById[id].grade === "resident";
+  const estAS = (id) => medById[id] && medById[id].grade === "assistant_specialiste";
   const nom = (id) => (medById[id] && medById[id].name) ? medById[id].name : "?";
 
   // ---- 1) Couverture jour par jour (sur tout le mois) ----
@@ -461,6 +555,12 @@ function validerPlanning(opts) {
     const duJour = parDate[date] || [];
     const gardes = duJour.filter((s) => s.shift_type === "garde_nuit" || s.shift_type === "garde_24h");
     const auMoinsUnResident = gardes.some((s) => estResident(s.doctor_id));
+
+    // Contrainte DURE (spec §6 N1) : jamais 2 A/S ensemble en garde.
+    const nbASgarde = gardes.filter((s) => estAS(s.doctor_id)).length;
+    if (nbASgarde >= 2) {
+      conflits.push({ date, message: "Garde : 2 A/S ensemble (interdit)." });
+    }
 
     if (plEstWeekendOuFerie(date)) {
       const g24 = duJour.filter((s) => s.shift_type === "garde_24h");
@@ -564,6 +664,44 @@ function validerPlanning(opts) {
     });
   });
 
+  // ---- 3) Max 3 gardes par semaine (lundi→dimanche) et par médecin (§6 N1) ----
+  const gardesParSemaine = {}; // id -> { lundiISO -> n }
+  shifts.forEach((s) => {
+    if (s.shift_type !== "garde_nuit" && s.shift_type !== "garde_24h") return;
+    const lk = plLundiDe(s.date);
+    const m = (gardesParSemaine[s.doctor_id] = gardesParSemaine[s.doctor_id] || {});
+    m[lk] = (m[lk] || 0) + 1;
+  });
+  Object.keys(gardesParSemaine).forEach((id) => {
+    Object.keys(gardesParSemaine[id]).forEach((lk) => {
+      const n = gardesParSemaine[id][lk];
+      if (n > 3) {
+        conflits.push({ date: lk, message: `${nom(id)} : ${n} gardes dans la semaine du ${lk} (max 3).` });
+      }
+    });
+  });
+
+  // ---- 4) Max 2 week-ends travaillés par mois et par médecin (§6 N2) ----
+  // Un week-end = clé samedi ISO ; sam OU dim travaillé en garde 24h/tour le compte.
+  const weekendsParMois = {}; // id -> { "YYYY-MM": Set(clé samedi) }
+  shifts.forEach((s) => {
+    if (s.shift_type !== "garde_24h" && s.shift_type !== "twe") return;
+    const jr = plJourSemaine(s.date);
+    if (jr !== 6 && jr !== 7) return; // férié en semaine : ne compte pas (§7)
+    const key = jr === 6 ? s.date : plAdd(s.date, -1);
+    const mois = s.date.slice(0, 7);
+    const parMois = (weekendsParMois[s.doctor_id] = weekendsParMois[s.doctor_id] || {});
+    (parMois[mois] = parMois[mois] || new Set()).add(key);
+  });
+  Object.keys(weekendsParMois).forEach((id) => {
+    Object.keys(weekendsParMois[id]).forEach((mois) => {
+      const n = weekendsParMois[id][mois].size;
+      if (n > 2) {
+        conflits.push({ date: mois + "-01", message: `${nom(id)} : ${n} week-ends travaillés en ${mois} (max 2, N2).` });
+      }
+    });
+  });
+
   // Tri par date pour un affichage lisible.
   conflits.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   return conflits;
@@ -578,7 +716,10 @@ function compterParMedecin(shifts) {
     const st = stats[s.doctor_id] || (stats[s.doctor_id] = { heures: 0, gardes: 0, weekends: 0 });
     st.heures += PL_HEURES[s.shift_type] || 0;
     if (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h") st.gardes++;
-    if (plEstWeekendOuFerie(s.date) && (s.shift_type === "garde_24h" || s.shift_type === "twe")) st.weekends++;
+    // Week-end travaillé = garde 24h ou tour un SAMEDI/DIMANCHE (spec §7).
+    // Un férié en semaine ne compte pas.
+    const jr = plJourSemaine(s.date);
+    if ((jr === 6 || jr === 7) && (s.shift_type === "garde_24h" || s.shift_type === "twe")) st.weekends++;
   });
   Object.keys(stats).forEach((id) => { stats[id].heures = Math.round(stats[id].heures * 10) / 10; });
   return stats;

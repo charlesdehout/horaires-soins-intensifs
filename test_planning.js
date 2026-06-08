@@ -160,5 +160,94 @@ test("proportionnalité : un mi-temps (fte 0.5) reçoit moins de gardes qu'un te
   assert(mi <= moyAutres, "mi-temps gardes=" + mi + " > moyenne temps plein=" + moyAutres.toFixed(1));
 });
 
+console.log("\n=== Module 8 — Règles dures (spec Calabro) ===");
+
+// Planning d'un mois contenant des week-ends (juin 2026).
+const medsR = equipe();
+const resR = genererPlanning({ annee: 2026, mois: 6, medecins: medsR, preferences: [] });
+
+function isoLundi(d) { // lundi de la semaine ISO d'une date "YYYY-MM-DD"
+  const x = new Date(d + "T00:00:00Z");
+  const j = x.getUTCDay() === 0 ? 7 : x.getUTCDay();
+  x.setUTCDate(x.getUTCDate() - (j - 1));
+  return x.toISOString().slice(0, 10);
+}
+
+test("aucun médecin ne dépasse 3 gardes par semaine", () => {
+  const parSem = {};
+  resR.shifts.forEach((s) => {
+    if (s.shift_type !== "garde_nuit" && s.shift_type !== "garde_24h") return;
+    const k = s.doctor_id + "|" + isoLundi(s.date);
+    parSem[k] = (parSem[k] || 0) + 1;
+  });
+  const max = Math.max(0, ...Object.values(parSem));
+  assert(max <= 3, "max gardes/semaine = " + max);
+});
+
+test("jamais 2 A/S ensemble en garde (généré)", () => {
+  const parDate = {};
+  resR.shifts.forEach((s) => { (parDate[s.date] = parDate[s.date] || []).push(s); });
+  let pire = 0;
+  Object.keys(parDate).forEach((d) => {
+    const as = parDate[d].filter((s) => (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h")
+      && /^assistant_specialiste/.test(s.doctor_id));
+    pire = Math.max(pire, as.length);
+  });
+  assert(pire < 2, "A/S simultanés en garde = " + pire);
+});
+
+test("binôme TWE : même médecin au tour samedi et dimanche", () => {
+  // 2026-06-13 = samedi, 2026-06-14 = dimanche.
+  const sam = resR.shifts.find((s) => s.date === "2026-06-13" && s.shift_type === "twe");
+  const dim = resR.shifts.find((s) => s.date === "2026-06-14" && s.shift_type === "twe");
+  assert(sam && dim, "tour manquant samedi ou dimanche");
+  assert.strictEqual(sam.doctor_id, dim.doctor_id, "TWE sam=" + sam.doctor_id + " dim=" + dim.doctor_id);
+});
+
+test("validerPlanning détecte 2 A/S injectés en garde", () => {
+  const shifts = [
+    { date: "2026-06-01", shift_type: "garde_24h", doctor_id: "assistant_specialiste1", poste: "usi1" },
+    { date: "2026-06-01", shift_type: "garde_nuit", doctor_id: "assistant_specialiste2", poste: null },
+  ];
+  const conflits = validerPlanning({ annee: 2026, mois: 6, shifts, medecins: medsR, preferences: [] });
+  assert(conflits.some((c) => /2 A\/S ensemble/.test(c.message)), "2 A/S non détecté");
+});
+
+test("validerPlanning détecte > 3 gardes dans une semaine", () => {
+  const shifts = [
+    { date: "2026-06-01", shift_type: "garde_nuit", doctor_id: "resident1", poste: null },
+    { date: "2026-06-02", shift_type: "garde_nuit", doctor_id: "resident1", poste: null },
+    { date: "2026-06-03", shift_type: "garde_nuit", doctor_id: "resident1", poste: null },
+    { date: "2026-06-04", shift_type: "garde_nuit", doctor_id: "resident1", poste: null },
+  ];
+  const conflits = validerPlanning({ annee: 2026, mois: 6, shifts, medecins: medsR, preferences: [] });
+  assert(conflits.some((c) => /max 3/.test(c.message)), "dépassement gardes/semaine non détecté");
+});
+
+test("aucun médecin ne dépasse 2 week-ends sur le mois généré", () => {
+  // Week-end = samedi/dimanche travaillé en garde 24h ou tour (clé = samedi).
+  const wkmois = {};
+  resR.shifts.forEach((s) => {
+    if (s.shift_type !== "garde_24h" && s.shift_type !== "twe") return;
+    const x = new Date(s.date + "T00:00:00Z");
+    const j = x.getUTCDay() === 0 ? 7 : x.getUTCDay();
+    if (j !== 6 && j !== 7) return;
+    const key = j === 6 ? s.date : (() => { x.setUTCDate(x.getUTCDate() - 1); return x.toISOString().slice(0, 10); })();
+    (wkmois[s.doctor_id] = wkmois[s.doctor_id] || new Set()).add(key);
+  });
+  const max = Math.max(0, ...Object.values(wkmois).map((set) => set.size));
+  assert(max <= 2, "max week-ends/mois = " + max);
+});
+
+test("validerPlanning signale > 2 week-ends dans le mois", () => {
+  const shifts = [
+    { date: "2026-06-06", shift_type: "garde_24h", doctor_id: "resident1", poste: null }, // we 1
+    { date: "2026-06-13", shift_type: "garde_24h", doctor_id: "resident1", poste: null }, // we 2
+    { date: "2026-06-20", shift_type: "twe", doctor_id: "resident1", poste: null },        // we 3
+  ];
+  const conflits = validerPlanning({ annee: 2026, mois: 6, shifts, medecins: medsR, preferences: [] });
+  assert(conflits.some((c) => /week-ends travaillés/.test(c.message)), "dépassement week-ends non signalé");
+});
+
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");
 process.exit(reussis === total ? 0 : 1);

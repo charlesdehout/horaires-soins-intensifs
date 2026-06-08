@@ -3,6 +3,21 @@
 > Document de référence pour tous les modules. À valider/corriger avant le Module 2.
 > Les points marqués **⚠️ À CONFIRMER** attendent ta validation.
 
+> **MISE À JOUR (2026-06) — Spécification Dr Calabro v1.0.** Le cahier des charges
+> détaillé `Specification_Planning_USI.docx` fait désormais référence. L'analyse
+> de conformité et la feuille de route sont dans `CONFORMITE.md`. Règles déjà
+> appliquées à l'algorithme (`planning.js`) issues de cette spec :
+> - **Jamais 2 A/S ensemble en garde** (semaine et week-end) — contrainte dure.
+> - **Max 3 gardes par semaine** (lundi→dimanche) et par personne — contrainte dure.
+> - **Binôme du tour week-end** : qui fait le TWE-seul du samedi refait celui du
+>   dimanche, sans garde (demande Charles ; la spec la classe en préférence N3).
+> - **Trimestres académiques** (oct-déc=T1, jan-mars=T2, avr-juin=T3, juil-sept=T4) :
+>   étiquetage académique côté UI (le regroupement des mois était déjà correct).
+> - **Comptage week-end** : un férié en semaine suit les règles de couverture du
+>   week-end mais ne compte pas comme « week-end travaillé » (max 2/mois).
+> - **Max 2 week-ends/mois** (priorité N2) : privilégié à la génération, signalé
+>   en cas de dépassement. Le binôme samedi+dimanche compte pour un seul week-end.
+
 ---
 
 ## 1. Grades de médecins
