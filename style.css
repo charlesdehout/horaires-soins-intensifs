@@ -193,6 +193,18 @@ button.mini:hover { background: var(--gris-clair); }
 button.mini.danger { color: var(--rouge); border-color: #f3c4c4; }
 button.mini.danger:hover { background: #fdeaea; }
 
+/* Pastilles de type de préférence (Module 3) */
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.badge-conge   { background: #ddf4e4; color: var(--vert); }
+.badge-indispo { background: #fdeaea; color: var(--rouge); }
+.badge-souhait { background: #e3eefe; color: var(--bleu); }
+
 /* Sur petit écran : formulaire en une colonne */
 @media (max-width: 600px) {
   .form-grid { grid-template-columns: 1fr; }

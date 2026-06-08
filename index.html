@@ -116,9 +116,60 @@
         <p id="doctors-empty" class="zone-info hidden">Aucun médecin enregistré pour l'instant.</p>
       </div>
 
-      <!-- ===== Espace MÉDECIN (Module 3) ===== -->
+      <!-- ===== Espace MÉDECIN : préférences (Module 3) ===== -->
       <div id="doctor-zone" class="hidden">
-        <p class="zone-info">Espace médecin — à construire au Module 3.</p>
+        <div class="zone-header">
+          <h2>Mes préférences</h2>
+        </div>
+        <p class="zone-info">
+          Encode tes congés, indisponibilités et souhaits. Le chef de service
+          en tiendra compte lors de la génération du planning.
+        </p>
+
+        <!-- Formulaire d'ajout d'une préférence -->
+        <form id="pref-form" class="doctor-form">
+          <div class="form-grid">
+            <div>
+              <label for="p-type">Type</label>
+              <select id="p-type">
+                <option value="conge">Congé (bloquant)</option>
+                <option value="indispo">Indisponibilité (bloquant)</option>
+                <option value="souhait">Souhait (préférence)</option>
+              </select>
+            </div>
+            <div>
+              <label for="p-start">Du</label>
+              <input type="date" id="p-start" required />
+            </div>
+            <div>
+              <label for="p-end">Au</label>
+              <input type="date" id="p-end" required />
+            </div>
+            <div>
+              <label for="p-note">Note (optionnel)</label>
+              <input type="text" id="p-note" maxlength="200" placeholder="ex. mariage, congrès…" />
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="submit" id="save-pref-btn">Ajouter</button>
+          </div>
+          <p id="pref-form-msg" class="message"></p>
+        </form>
+
+        <!-- Tableau des préférences encodées -->
+        <table id="prefs-table" class="data-table">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Du</th>
+              <th>Au</th>
+              <th>Note</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="prefs-tbody"></tbody>
+        </table>
+        <p id="prefs-empty" class="zone-info hidden">Aucune préférence encodée pour l'instant.</p>
       </div>
 
       <button id="logout-btn" class="secondary">Se déconnecter</button>

@@ -56,6 +56,20 @@ const doctorsTbody    = document.getElementById("doctors-tbody");
 const doctorsTable    = document.getElementById("doctors-table");
 const doctorsEmpty    = document.getElementById("doctors-empty");
 
+/* Références DOM — préférences médecin (Module 3) */
+const prefForm    = document.getElementById("pref-form");
+const pType       = document.getElementById("p-type");
+const pStart      = document.getElementById("p-start");
+const pEnd        = document.getElementById("p-end");
+const pNote       = document.getElementById("p-note");
+const prefFormMsg = document.getElementById("pref-form-msg");
+const prefsTbody  = document.getElementById("prefs-tbody");
+const prefsTable  = document.getElementById("prefs-table");
+const prefsEmpty  = document.getElementById("prefs-empty");
+
+/* Profil du médecin actuellement connecté (id, name, role). */
+let medecinCourant = null;
+
 
 /* --------------------------------------------------------------------- */
 /* Petites fonctions utilitaires d'affichage                             */
@@ -80,7 +94,7 @@ function basculerVue(connecte) {
 async function chargerProfil(user) {
   const { data, error } = await sb
     .from("doctors")
-    .select("name, role")
+    .select("id, name, role")
     .eq("email", user.email)
     .maybeSingle();
 
@@ -109,6 +123,7 @@ async function chargerProfil(user) {
 /* Affiche l'espace connecté en fonction du rôle                         */
 /* --------------------------------------------------------------------- */
 function afficherEspace(profil) {
+  medecinCourant = profil; // mémorise le médecin connecté
   const estAdmin = profil.role === "admin";
 
   welcomeText.textContent = "Connecté en tant que " + (profil.name || "");
@@ -120,8 +135,9 @@ function afficherEspace(profil) {
 
   basculerVue(true);
 
-  // Côté admin : on charge la liste des médecins.
+  // Côté admin : liste des médecins. Côté médecin : ses préférences.
   if (estAdmin) chargerMedecins();
+  else chargerPreferences();
 }
 
 
@@ -353,6 +369,141 @@ async function supprimerMedecin(med) {
     return;
   }
   chargerMedecins();
+}
+
+
+/* ===================================================================== */
+/* MODULE 3 — Préférences du médecin (congés / indispos / souhaits)      */
+/* ===================================================================== */
+
+// Libellés lisibles des types de préférence.
+const PREF_LABELS = {
+  conge: "Congé",
+  indispo: "Indisponibilité",
+  souhait: "Souhait",
+};
+
+/* Affiche un message dans le formulaire de préférences */
+function messageFormPref(texte, type = "error") {
+  prefFormMsg.textContent = texte;
+  prefFormMsg.className = "message " + type;
+}
+
+/* Charge les préférences du médecin connecté et les affiche */
+async function chargerPreferences() {
+  if (!medecinCourant) return;
+
+  const { data, error } = await sb
+    .from("preferences")
+    .select("*")
+    .eq("doctor_id", medecinCourant.id)
+    .order("start_date", { ascending: true });
+
+  if (error) {
+    console.error("Erreur chargement préférences :", error);
+    prefsTbody.innerHTML =
+      '<tr><td colspan="5">Erreur de chargement (vérifie les règles RLS).</td></tr>';
+    return;
+  }
+
+  rendrePreferences(data || []);
+}
+
+/* Construit les lignes du tableau de préférences */
+function rendrePreferences(prefs) {
+  prefsTbody.innerHTML = "";
+
+  const vide = prefs.length === 0;
+  prefsTable.classList.toggle("hidden", vide);
+  prefsEmpty.classList.toggle("hidden", !vide);
+
+  prefs.forEach((pref) => {
+    const tr = document.createElement("tr");
+
+    // Pastille colorée selon le type
+    const tdType = document.createElement("td");
+    const badge = document.createElement("span");
+    badge.className = "badge badge-" + pref.pref_type;
+    badge.textContent = PREF_LABELS[pref.pref_type] || pref.pref_type;
+    tdType.appendChild(badge);
+    tr.appendChild(tdType);
+
+    [pref.start_date, pref.end_date, pref.note || "—"].forEach((valeur) => {
+      const td = document.createElement("td");
+      td.textContent = valeur;
+      tr.appendChild(td);
+    });
+
+    // Bouton suppression
+    const tdActions = document.createElement("td");
+    tdActions.className = "actions-cell";
+    const btnDel = document.createElement("button");
+    btnDel.textContent = "Supprimer";
+    btnDel.className = "mini danger";
+    btnDel.addEventListener("click", () => supprimerPreference(pref));
+    tdActions.appendChild(btnDel);
+    tr.appendChild(tdActions);
+
+    prefsTbody.appendChild(tr);
+  });
+}
+
+/* Ajoute une préférence pour le médecin connecté */
+prefForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  messageFormPref("");
+
+  if (!medecinCourant) {
+    messageFormPref("Profil médecin introuvable.");
+    return;
+  }
+
+  const debut = pStart.value;
+  const fin = pEnd.value;
+
+  // Validation simple des dates.
+  if (fin < debut) {
+    messageFormPref("La date de fin doit être postérieure ou égale à la date de début.");
+    return;
+  }
+
+  const payload = {
+    doctor_id: medecinCourant.id,
+    pref_type: pType.value,
+    start_date: debut,
+    end_date: fin,
+    note: pNote.value.trim() || null,
+  };
+
+  const { error } = await sb.from("preferences").insert(payload);
+
+  if (error) {
+    console.error("Erreur ajout préférence :", error);
+    if (error.code === "42501" || /policy/i.test(error.message)) {
+      messageFormPref("Action refusée par les règles de sécurité (RLS).");
+    } else {
+      messageFormPref("Erreur : " + error.message);
+    }
+    return;
+  }
+
+  prefForm.reset();
+  messageFormPref("Préférence enregistrée.", "info");
+  chargerPreferences();
+});
+
+/* Supprime une préférence après confirmation */
+async function supprimerPreference(pref) {
+  const ok = window.confirm("Supprimer cette préférence ?");
+  if (!ok) return;
+
+  const { error } = await sb.from("preferences").delete().eq("id", pref.id);
+  if (error) {
+    console.error("Erreur suppression préférence :", error);
+    window.alert("Suppression impossible : " + error.message);
+    return;
+  }
+  chargerPreferences();
 }
 
 
