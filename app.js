@@ -679,8 +679,8 @@ const SHIFT_CONFIG = {
   // Absences / repos posables par l'admin (0 h, sans station, affichées en
   // pastille « journée entière »). Les congés posés ici ne décomptent pas les
   // quotas (ceux-ci restent gérés via les préférences du médecin).
-  recup:              { label: "Récupération",        court: "Récup", couleur: "#6e5494", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
-  off:                { label: "Off / clinic",        court: "Off",   couleur: "#9a6700", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
+  recup:              { label: "Repos de garde",      court: "Repos", couleur: "#6e5494", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
+  off:                { label: "Off-clinique",        court: "Off",   couleur: "#9a6700", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
   conge_annuel:       { label: "Congé annuel",        court: "Congé", couleur: "#1a7f37", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
   conge_scientifique: { label: "Congé scientifique",  court: "Sci.",  couleur: "#0b6b63", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
   conge_extralegal:   { label: "Congés extra-légaux", court: "E.L.",  couleur: "#0f5132", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
@@ -874,6 +874,11 @@ async function initCalendrier() {
       height: "auto",
       nowIndicator: true,
       dayMaxEvents: true,       // regroupe en "+N" si la journée est chargée
+      // Force les shifts horaires à s'afficher en BLOCS colorés (et non en
+      // mode "point" sur fond transparent) en vue Mois : sinon le texte blanc
+      // imposé par le CSS (.fc-daygrid-event) devient invisible sur la case
+      // blanche. Les préférences en display:"background" ne sont pas affectées.
+      eventDisplay: "block",
       headerToolbar: {
         left: "prev,next today",
         center: "title",
