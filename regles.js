@@ -21,6 +21,47 @@ const CONGE_TYPES = {
 
 
 /* ---------------------------------------------------------------------
+   Postes de jour (stations cliniques) — Module 5.
+   En SEMAINE, ces 7 stations doivent toutes être pourvues (= couverture
+   minimale de jour). L'ordre sert d'ordre de remplissage par défaut.
+   Toutes accessibles à tous les grades. Modifiable ici sans toucher au code.
+   --------------------------------------------------------------------- */
+const POSTES_JOUR = [
+  { code: "usi1",      label: "USI 1" },
+  { code: "usi2",      label: "USI 2" },
+  { code: "usi3",      label: "USI 3" },
+  { code: "usi4",      label: "USI 4" },
+  { code: "usi5",      label: "USI 5" },
+  { code: "bordet",    label: "USI Bordet" },
+  { code: "labo_choc", label: "Labo de choc" },
+];
+
+
+/* ---------------------------------------------------------------------
+   Paramètres de couverture (contraintes DURES) — Module 5.
+   - min_nuit       : médecins de garde la nuit en semaine (≥1 résident).
+   - twe_weekend    : médecins au tour le week-end / jour férié.
+   - gardes_weekend : combien de ces médecins enchaînent en garde 24h.
+   (La couverture de jour en semaine = nombre de POSTES_JOUR.)
+   --------------------------------------------------------------------- */
+const COUVERTURE = {
+  min_nuit:       2,
+  twe_weekend:    3,
+  gardes_weekend: 2,
+};
+
+
+/* ---------------------------------------------------------------------
+   Types de préférence qui rendent un médecin NON planifiable un jour
+   donné (contrainte dure). 'souhait' reste souple (non bloquant).
+   --------------------------------------------------------------------- */
+const PREF_BLOQUANTES = [
+  "conge", "conge_annuel", "conge_extralegal", "conge_scientifique",
+  "indispo", "off_clinic", "recuperation",
+];
+
+
+/* ---------------------------------------------------------------------
    Jours fériés légaux belges.
    Les fériés mobiles dépendent de Pâques : on les calcule automatiquement
    pour n'importe quelle année (aucune liste à maintenir à la main).
@@ -98,5 +139,6 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     CONGE_TYPES, calculerPaques, joursFeriesBE, estJourOuvre,
     dateEnISO, ajouterJours,
+    POSTES_JOUR, COUVERTURE, PREF_BLOQUANTES,
   };
 }

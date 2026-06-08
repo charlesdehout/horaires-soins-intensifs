@@ -149,6 +149,22 @@ button.secondary:hover { background: var(--gris-clair); }
 .form-grid input,
 .form-grid select { width: 100%; margin-bottom: 0.5rem; }
 
+/* Rangée occupant toute la largeur de la grille (jours travaillables). */
+.form-grid-full { grid-column: 1 / -1; }
+.jours-travailles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.9rem;
+  margin-bottom: 0.5rem;
+}
+.jours-travailles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-weight: normal;
+}
+.jours-travailles input { width: auto; margin: 0; }
+
 .form-actions {
   display: flex;
   gap: 0.7rem;

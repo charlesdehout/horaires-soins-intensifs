@@ -68,8 +68,20 @@
         <div id="calendar"></div>
       </div>
 
-      <!-- ===== Espace ADMIN : gestion des médecins (Module 2) ===== -->
+      <!-- ===== Espace ADMIN : génération du planning (Module 5) ===== -->
       <div id="admin-zone" class="hidden">
+        <div class="zone-header">
+          <h2>Génération du planning</h2>
+          <button id="generer-planning-btn">⚙️ Générer le mois affiché</button>
+        </div>
+        <p class="zone-info">
+          Génère un brouillon (greedy v1) pour le mois actuellement affiché dans
+          le calendrier ci-dessus, à partir des médecins et de leurs préférences.
+          Remplace tout brouillon existant pour ce mois.
+        </p>
+        <p id="generer-msg" class="message"></p>
+
+        <!-- ===== Espace ADMIN : gestion des médecins (Module 2) ===== -->
         <div class="zone-header">
           <h2>Médecins</h2>
           <button id="add-doctor-btn">+ Ajouter un médecin</button>
@@ -117,6 +129,18 @@
             <div>
               <label for="d-end">Fin de contrat</label>
               <input type="date" id="d-end" />
+            </div>
+            <div class="form-grid-full">
+              <label>Jours travaillables</label>
+              <div id="d-jours-travailles" class="jours-travailles">
+                <label><input type="checkbox" class="jt" value="1" checked /> Lun</label>
+                <label><input type="checkbox" class="jt" value="2" checked /> Mar</label>
+                <label><input type="checkbox" class="jt" value="3" checked /> Mer</label>
+                <label><input type="checkbox" class="jt" value="4" checked /> Jeu</label>
+                <label><input type="checkbox" class="jt" value="5" checked /> Ven</label>
+                <label><input type="checkbox" class="jt" value="6" checked /> Sam</label>
+                <label><input type="checkbox" class="jt" value="7" checked /> Dim</label>
+              </div>
             </div>
             <div>
               <label for="d-quota-annuel">Congé annuel (j/an)</label>
@@ -227,8 +251,10 @@
 
   <!-- Client Supabase officiel (CDN) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- Règles métier (config : quotas de congés, jours fériés…) -->
+  <!-- Règles métier (config : quotas de congés, jours fériés, postes…) -->
   <script src="regles.js"></script>
+  <!-- Algorithme de génération du planning (Module 5) -->
+  <script src="planning.js"></script>
   <!-- FullCalendar (Module 4) — bundle global (vues mois + liste) -->
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
   <!-- Notre logique applicative -->

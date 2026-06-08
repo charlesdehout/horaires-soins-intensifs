@@ -236,6 +236,18 @@ dFte.addEventListener("input", () => {
   if (!isNaN(fte)) dHours.value = Math.round(HEURES_BASE * fte * 10) / 10;
 });
 
+/* --- Jours travaillables (cases à cocher Lun→Dim, valeurs 1→7) --- */
+function casesJoursTravailles() {
+  return Array.from(document.querySelectorAll("#doctor-form .jt"));
+}
+function setJoursTravailles(jours) {
+  const ens = new Set(jours && jours.length ? jours : [1, 2, 3, 4, 5, 6, 7]);
+  casesJoursTravailles().forEach((c) => { c.checked = ens.has(parseInt(c.value, 10)); });
+}
+function getJoursTravailles() {
+  return casesJoursTravailles().filter((c) => c.checked).map((c) => parseInt(c.value, 10));
+}
+
 /* Ouvre le formulaire en mode "ajout" (champs vides) */
 function ouvrirAjout() {
   doctorForm.reset();
@@ -260,6 +272,7 @@ function ouvrirEdition(med) {
   dQuotaAnnuel.value = med.quota_conge_annuel ?? "";
   dQuotaExtra.value = med.quota_conge_extralegal ?? "";
   dQuotaScient.value = med.quota_conge_scientifique ?? "";
+  setJoursTravailles(med.jours_travailles);
   messageFormMedecin("");
   doctorForm.classList.remove("hidden");
   doctorForm.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -368,6 +381,8 @@ doctorForm.addEventListener("submit", async (e) => {
     quota_conge_annuel:       dQuotaAnnuel.value === "" ? null : parseInt(dQuotaAnnuel.value, 10),
     quota_conge_extralegal:   dQuotaExtra.value === ""  ? null : parseInt(dQuotaExtra.value, 10),
     quota_conge_scientifique: dQuotaScient.value === "" ? null : parseInt(dQuotaScient.value, 10),
+    // Jours de semaine travaillables (1=lundi … 7=dimanche), contrainte dure du planning.
+    jours_travailles: getJoursTravailles(),
   };
 
   let error;
@@ -719,7 +734,7 @@ async function construireEvenements(debutISO, finISO) {
   // --- 1) Shifts de la période (planning) ---
   const { data: shifts, error: errShifts } = await sb
     .from("shifts")
-    .select("id, date, shift_type, doctor_id, schedule_id")
+    .select("id, date, shift_type, doctor_id, schedule_id, poste")
     .gte("date", debut)
     .lt("date", fin);
 
@@ -735,15 +750,17 @@ async function construireEvenements(debutISO, finISO) {
       const nom = med.name || "?";
       const estMien = medecinCourant && medecinCourant.id === s.doctor_id;
       const dateFin = cfg.lendemain ? lendemainDe(s.date) : s.date;
+      const station = s.poste ? (POSTE_LABELS[s.poste] || s.poste) : "";
+      const suffixe = station ? " · " + station : "";
 
       events.push({
-        title: nom + " - " + cfg.court,
+        title: nom + " - " + cfg.court + suffixe,
         start: s.date + "T" + cfg.debut + ":00",
         end: dateFin + "T" + cfg.fin + ":00",
         backgroundColor: cfg.couleur,
         borderColor: estMien ? "#1f2328" : cfg.couleur,
         classNames: estMien ? ["shift-mien"] : [],
-        extendedProps: { tooltip: nom + " - " + cfg.label },
+        extendedProps: { tooltip: nom + " - " + cfg.label + suffixe },
       });
     });
   }
@@ -829,6 +846,96 @@ async function initCalendrier() {
     calendrier.refetchEvents();
   }
 }
+
+/* ===================================================================== */
+/* MODULE 5 — Génération du planning (déclencheur de test pour l'admin)   */
+/* ===================================================================== */
+
+/* Libellés des stations de jour (depuis regles.js). */
+const POSTE_LABELS = {};
+(typeof POSTES_JOUR !== "undefined" ? POSTES_JOUR : []).forEach((p) => {
+  POSTE_LABELS[p.code] = p.label;
+});
+
+const genererBtn = document.getElementById("generer-planning-btn");
+const genererMsg = document.getElementById("generer-msg");
+
+function messageGeneration(html, type = "info") {
+  if (!genererMsg) return;
+  genererMsg.innerHTML = html;
+  genererMsg.className = "message " + type;
+}
+
+/* Génère un brouillon de planning pour le mois actuellement affiché. */
+async function genererPlanningPourMoisAffiche() {
+  if (!calendrier || typeof genererPlanning !== "function") return;
+
+  const dateVue = calendrier.getDate();
+  const annee = dateVue.getFullYear();
+  const mois = dateVue.getMonth() + 1; // 1-12
+  const moisStr = String(mois).padStart(2, "0");
+  const debutMois = annee + "-" + moisStr + "-01";
+  const finMois = annee + "-" + moisStr + "-" + new Date(annee, mois, 0).getDate();
+
+  genererBtn.disabled = true;
+  messageGeneration("Génération de " + mois + "/" + annee + " en cours…", "info");
+
+  // 1) Médecins planifiables (l'admin / chef de service n'est pas dans le planning).
+  const { data: medecins, error: e1 } = await sb
+    .from("doctors")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles")
+    .neq("role", "admin");
+  if (e1) { genererBtn.disabled = false; return messageGeneration("Erreur lecture médecins : " + e1.message, "error"); }
+
+  // 2) Préférences chevauchant le mois.
+  const { data: prefs, error: e2 } = await sb
+    .from("preferences")
+    .select("doctor_id, start_date, end_date, pref_type")
+    .lte("start_date", finMois)
+    .gte("end_date", debutMois);
+  if (e2) { genererBtn.disabled = false; return messageGeneration("Erreur lecture préférences : " + e2.message, "error"); }
+
+  // 3) Génération (algorithme pur, planning.js).
+  const res = genererPlanning({ annee, mois, medecins: medecins || [], preferences: prefs || [] });
+
+  // 4) Remplace le brouillon du mois : on efface shifts du mois + schedules du mois.
+  await sb.from("shifts").delete().gte("date", debutMois).lte("date", finMois);
+  await sb.from("schedules").delete().eq("year", annee).eq("month", mois);
+
+  const { data: sched, error: e3 } = await sb
+    .from("schedules")
+    .insert({ year: annee, month: mois, status: "draft" })
+    .select("id")
+    .single();
+  if (e3) { genererBtn.disabled = false; return messageGeneration("Erreur création du planning : " + e3.message, "error"); }
+
+  // 5) Insertion des shifts générés.
+  const lignes = res.shifts.map((s) => ({
+    date: s.date, shift_type: s.shift_type, poste: s.poste,
+    doctor_id: s.doctor_id, schedule_id: sched.id,
+  }));
+  if (lignes.length) {
+    const { error: e4 } = await sb.from("shifts").insert(lignes);
+    if (e4) { genererBtn.disabled = false; return messageGeneration("Erreur insertion des shifts : " + e4.message, "error"); }
+  }
+
+  // 6) Résumé + rafraîchissement du calendrier.
+  genererBtn.disabled = false;
+  const nbConf = res.conflits.length;
+  if (nbConf === 0) {
+    messageGeneration("Planning " + mois + "/" + annee + " généré : " + lignes.length + " shifts. Aucun conflit. ✅", "info");
+  } else {
+    const apercu = res.conflits.slice(0, 8).map((c) => c.date + " — " + c.message).join("<br>");
+    messageGeneration(
+      "Planning " + mois + "/" + annee + " généré : " + lignes.length + " shifts. " +
+      "<strong>" + nbConf + " conflit(s)</strong> à arbitrer :<br>" + apercu +
+      (nbConf > 8 ? "<br>…" : ""), "error");
+  }
+  calendrier.refetchEvents();
+}
+
+if (genererBtn) genererBtn.addEventListener("click", genererPlanningPourMoisAffiche);
+
 
 /* --------------------------------------------------------------------- */
 /* Au chargement de la page : restaure la session si elle existe déjà    */
