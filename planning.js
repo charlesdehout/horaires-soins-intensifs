@@ -422,6 +422,10 @@ function genererPlanning(opts) {
     else plGenererSemaine(date, medecins, etat, sortie, conflits);
   }
 
+  // Matérialise les repos de garde (visibles + comptés comme absence).
+  const bM = plBornesMois(annee, mois);
+  materialiserRepos(sortie, (d) => d >= bM.debut && d <= bM.fin).forEach((r) => sortie.push(r));
+
   // Placement automatique des off-clinic (§9), une fois le planning posé.
   const offs = genererOffClinic({ annee, mois, medecins, shifts: sortie, preferences });
   offs.forEach((o) => { sortie.push(o); etat.heures[o.doctor_id] += PL_HEURES_OFFCLINIC; });
@@ -521,6 +525,11 @@ function genererTrimestre(opts) {
     });
   });
 
+  // Repos de garde matérialisés sur tout le trimestre (avant l'off-clinic).
+  const bDeb = plBornesMois(annee, moisTrim[0]).debut;
+  const bFin = plBornesMois(annee, moisTrim[2]).fin;
+  materialiserRepos(sortie, (d) => d >= bDeb && d <= bFin).forEach((r) => sortie.push(r));
+
   // Off-clinic (§9) : droit calculé par MOIS, posé après la génération.
   moisTrim.forEach((mois) => {
     const offs = genererOffClinic({ annee, mois, medecins, shifts: sortie, preferences });
@@ -618,6 +627,39 @@ function genererOffClinic(opts) {
   });
 
   return out;
+}
+
+
+/* Matérialise les REPOS DE GARDE comme shifts « recup » pour qu'ils
+   apparaissent au calendrier / dans la grille / à l'export. Repos = lendemain
+   de toute garde (+ lundi/mardi selon la garde 24h de week-end). On ne pose
+   un repos que dans la période et si le médecin n'a pas déjà un shift ce jour.
+   dansPeriode(date) -> bool. Renvoie les shifts repos à AJOUTER. */
+function materialiserRepos(shifts, dansPeriode) {
+  const occupe = new Set(shifts.map((s) => s.doctor_id + "|" + s.date));
+  const ajoutes = new Set();
+  const out = [];
+  shifts.forEach((s) => {
+    if (s.shift_type !== "garde_nuit" && s.shift_type !== "garde_24h") return;
+    const j = plJourSemaine(s.date);
+    const jours = [plAdd(s.date, 1)]; // repos 12 h le lendemain
+    if (s.shift_type === "garde_24h" && (j === 6 || j === 7)) jours.push(plAdd(s.date, 2));
+    jours.forEach((d) => {
+      if (dansPeriode && !dansPeriode(d)) return;
+      const cle = s.doctor_id + "|" + d;
+      if (occupe.has(cle) || ajoutes.has(cle)) return;
+      ajoutes.add(cle);
+      out.push({ date: d, shift_type: "recup", poste: null, doctor_id: s.doctor_id });
+    });
+  });
+  return out;
+}
+
+/* Bornes ISO (début, fin) d'un mois (1-12). */
+function plBornesMois(annee, mois) {
+  const ms = String(mois).padStart(2, "0");
+  const fin = new Date(Date.UTC(annee, mois, 0)).getUTCDate();
+  return { debut: annee + "-" + ms + "-01", fin: annee + "-" + ms + "-" + String(fin).padStart(2, "0") };
 }
 
 
@@ -839,16 +881,21 @@ function validerPlanning(opts) {
 }
 
 
-/* Compteurs par médecin (heures / gardes / week-ends) à partir d'une
-   liste de shifts. Pur, réutilisé par le panneau admin (Module 6). */
+/* Compteurs par médecin (heures / gardes / week-ends / tours / off) à partir
+   d'une liste de shifts. Pur, réutilisé par le panneau admin (Module 6). */
 function compterParMedecin(shifts) {
-  const stats = {}; // doctorId -> { heures, gardes, weekends }
+  const stats = {}; // doctorId -> { heures, gardes, weekends, tours, offs }
   (shifts || []).forEach((s) => {
-    const st = stats[s.doctor_id] || (stats[s.doctor_id] = { heures: 0, gardes: 0, weekends: 0 });
+    const st = stats[s.doctor_id] ||
+      (stats[s.doctor_id] = { heures: 0, gardes: 0, weekends: 0, tours: 0, offs: 0, repos: 0 });
     st.heures += PL_HEURES[s.shift_type] || 0;
     // Off-clinic crédité comme heures de travail (§9).
-    if (s.shift_type === "off") st.heures += PL_HEURES_OFFCLINIC;
+    if (s.shift_type === "off") { st.heures += PL_HEURES_OFFCLINIC; st.offs++; }
     if (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h") st.gardes++;
+    // Tour de week-end (TWE) : on en compte le total.
+    if (s.shift_type === "twe") st.tours++;
+    // Repos de garde (récupération) posés.
+    if (s.shift_type === "recup") st.repos++;
     // Week-end travaillé = garde 24h ou tour un SAMEDI/DIMANCHE (spec §7).
     // Un férié en semaine ne compte pas.
     const jr = plJourSemaine(s.date);

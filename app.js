@@ -1368,8 +1368,8 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
       // Cellule auto-remplie distinguée des cellules vides (éditables).
       styleCellule(cell, noms.length ? XL.auto : null);
     });
-    // Hauteur ≈ 15 pt par nom empilé (≥ 20 pt). Le libellé tient sur 1 ligne.
-    row.height = Math.max(20, 15 * maxNoms);
+    // Hauteur ≈ 16 pt par nom empilé (≥ 22 pt pour une ligne mono-nom lisible).
+    row.height = Math.max(22, 16 * maxNoms);
   });
 }
 
@@ -1435,7 +1435,7 @@ async function exporterExcelRecap() {
   const ws = wb.addWorksheet("Récap " + ms + "-" + b.annee);
   ws.getColumn(1).width = 22;
   for (let j = 1; j <= nbJours; j++) ws.getColumn(1 + j).width = 5;
-  ["Gardes", "Week-ends", "Heures"].forEach((_, k) => { ws.getColumn(1 + nbJours + 1 + k).width = 9; });
+  ["Gardes", "WE", "Tours", "Off", "Repos", "Heures"].forEach((_, k) => { ws.getColumn(1 + nbJours + 1 + k).width = 9; });
 
   // En-tête.
   const head = ws.getRow(1);
@@ -1445,7 +1445,7 @@ async function exporterExcelRecap() {
     const c = head.getCell(1 + j); c.value = j; c.font = { bold: true };
     styleCellule(c, XL.entete);
   }
-  ["Gardes", "WE", "Heures"].forEach((lib, k) => {
+  ["Gardes", "WE", "Tours", "Off", "Repos", "Heures"].forEach((lib, k) => {
     const c = head.getCell(1 + nbJours + 1 + k); c.value = lib; c.font = { bold: true };
     styleCellule(c, XL.entete);
   });
@@ -1472,8 +1472,8 @@ async function exporterExcelRecap() {
       c.alignment = { horizontal: "center" };
       styleCellule(c, code ? XL.auto : null);
     }
-    const st = stats[m.id] || { gardes: 0, weekends: 0, heures: 0 };
-    [st.gardes, st.weekends, st.heures].forEach((v, k) => {
+    const st = stats[m.id] || { gardes: 0, weekends: 0, tours: 0, offs: 0, repos: 0, heures: 0 };
+    [st.gardes, st.weekends, st.tours, st.offs, st.repos, st.heures].forEach((v, k) => {
       const c = row.getCell(1 + nbJours + 1 + k);
       c.value = v; c.alignment = { horizontal: "center" }; styleCellule(c, null);
     });
@@ -1692,7 +1692,7 @@ function majCompteurs() {
   const semaines = nbJours / 7;
 
   meds.forEach((m) => {
-    const st = stats[m.id] || { heures: 0, gardes: 0, weekends: 0 };
+    const st = stats[m.id] || { heures: 0, gardes: 0, weekends: 0, tours: 0, offs: 0, repos: 0 };
     const cibleMois = Math.round((m.weekly_hours_target || 52) * semaines);
     const tr = document.createElement("tr");
 
@@ -1706,8 +1706,9 @@ function majCompteurs() {
     tr.appendChild(tdH);
 
     const tdCible = document.createElement("td"); tdCible.textContent = cibleMois + " h"; tr.appendChild(tdCible);
-    const tdG = document.createElement("td"); tdG.textContent = st.gardes; tr.appendChild(tdG);
-    const tdW = document.createElement("td"); tdW.textContent = st.weekends; tr.appendChild(tdW);
+    [st.gardes, st.weekends, st.tours, st.offs, st.repos].forEach((v) => {
+      const td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
+    });
 
     compteursTbody.appendChild(tr);
   });

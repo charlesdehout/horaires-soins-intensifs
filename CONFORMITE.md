@@ -191,8 +191,15 @@ du plus structurant au plus cosmétique :
    lancement tant que « en attente ».
 4. **M11 — Moteur off-clinic** : calcul mensuel, placement auto, interdits,
    hiérarchie de suppression.
-5. **M12 — Équité fine N2** : max 2 weekends/mois, ±1 garde, max 60 h/mois,
+5. **M12 — Équité fine N2** : max 2 weekends/mois, ±1 garde, **max 60 h/semaine**,
    repos compensatoires couplés, concentration des gardes de nuit.
+   **À intégrer (demande Charles, 2026-06) :**
+   - **Plancher horaire** : un taux d'heures minimum par médecin pour garantir
+     l'équilibre (personne très en-dessous de la cible).
+   - **Équité des gardes entre grades** : les A/S doivent avoir ± le **même
+     nombre de gardes** que les Résidents (ne plus biaiser Résident→nuit /
+     A/S→24h pour le comptage). **2 Résidents peuvent être ensemble** en garde
+     (assouplit la préférence A/S+Résident ; seule reste dure : jamais 2 A/S).
 6. **M13 — Rotation trimestrielle des unités** + historique.
 7. **M14 — Exports Excel** (Export 1 + Export 2) selon §13.
 8. **M15 — Alertes absences simultanées** + pré-placement manuel.
