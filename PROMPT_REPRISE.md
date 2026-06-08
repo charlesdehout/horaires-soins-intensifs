@@ -42,17 +42,20 @@ réécris pas ce qui existe, étends-le.
 - `preferences` (id, doctor_id, start_date, end_date, pref_type, note text)
   pref_type ∈ {`conge` (ancien, compat.), `conge_annuel`, `conge_extralegal`, `conge_scientifique`,
   `indispo`, `souhait`, `off_clinic`, `recuperation`}
-- `schedules` (id, month, year, status 'draft'|'published', created_at)
-- `shifts` (id, date, shift_type, doctor_id, schedule_id, **poste**) — shift_type ∈ {`jour`,`twe`,`garde_nuit`,`garde_24h`} ;
+- `schedules` (id, month, year, status 'draft'|'published', created_at, **published_at** ; unique (year, month))
+- `shifts` (id, date, shift_type, doctor_id, schedule_id, **poste**) — shift_type ∈
+  {`jour`,`twe`,`garde_nuit`,`garde_24h`} (travail) **+ absences posables : `recup`,`off`,`conge_annuel`,
+  `conge_scientifique`,`conge_extralegal` (0 h, sans station, posées par l'admin — ne décomptent PAS les quotas)** ;
   **poste** ∈ {`usi1`,`usi2`,`usi3`,`usi4`,`usi5`,`bordet`,`labo_choc`} ou NULL (station de jour ; NULL pour TWE,
-  garde de nuit et garde 24h de week-end).
+  garde de nuit, garde 24h de week-end et toutes les absences).
 
 RLS en place :
 - `doctors` : lecture ouverte aux connectés ; écriture réservée admin via `is_admin()`.
 - `preferences` : chaque médecin gère/lit les siennes (matching par email `auth.jwt()->>'email'`
   ↔ `doctors.email`, en `lower()`), l'admin lit/écrit tout.
 - `shifts` / `schedules` : lecture ouverte aux connectés, écriture réservée admin.
-SQL dans `sql/` : `module2_quota_conges.sql`, `module4_rls.sql`, `module5_planning.sql`.
+SQL dans `sql/` : `module2_quota_conges.sql`, `module4_rls.sql`, `module5_planning.sql`,
+`module6_planning_admin.sql` (published_at + unique year/month), `module6_absences.sql` (types d'absence).
 
 ## Règles métier essentielles (détail complet dans SPECIFICATIONS.md)
 - Équipe ~15 médecins, cible horaire = 52 × fte (~50–55 h/sem).
@@ -93,10 +96,17 @@ SQL dans `sql/` : `module2_quota_conges.sql`, `module4_rls.sql`, `module5_planni
   Limites assumées : pas de backtracking inter-jours, équité encore grossière (Module 7).
 
 ## Ordre de développement restant
-- **Module 6 — Admin : génération + ajustements manuels + publication** ← PROCHAIN
-  (choix du mois, ajustements manuels des shifts par glisser/cliquer, passage draft → published,
-  visualisation des conflits et des compteurs d'heures/gardes par médecin)
-- Module 7 — Algorithme v2 (optimisation de l'équité trimestrielle)
+- **Module 6 — Admin : ajustements manuels + publication** ✅ FAIT
+  (clic sur un shift → modale d'édition : médecin/station/type/supprimer ; bouton « + Ajouter un shift » ;
+  publication draft → published avec **verrouillage lecture seule** + « repasser en brouillon » ;
+  avertissement **non bloquant** sur violation de contrainte (compare conflits avant/après) ;
+  panneau compteurs heures/gardes/week-ends par médecin ; liste des conflits via `validerPlanning` ;
+  **absences posables** récup/off/congés ; **vue Grille postes × jours** cliquable en plus du calendrier embelli.
+  Fonctions pures ajoutées : `validerPlanning`, `compterParMedecin` dans `planning.js`. Test : `node test_planning.js`.)
+- Module 7 — Algorithme v2 (optimisation de l'équité trimestrielle) ← PROCHAIN
+  + idées : génération auto des récup/off ; édition directe en grille déjà possible.
+- Module 8 (rappel) — quotas serveur (trigger SQL), export PDF, emails ; **garde-fou : les congés posés comme
+  shifts ne décomptent pas les quotas — à arbitrer (les router vers `preferences` ou ajouter un contrôle).**
 - Module 8 — Polish : export PDF, **emails (« mot de passe oublié » côté client via
   `resetPasswordForEmail`, + invitations à la création de compte via Edge Function service_role)**,
   trigger SQL serveur pour les quotas de congés
