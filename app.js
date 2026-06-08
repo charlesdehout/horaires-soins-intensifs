@@ -1030,6 +1030,126 @@ if (genererBtn) genererBtn.addEventListener("click", genererPlanningPourMoisAffi
 
 
 /* ===================================================================== */
+/* MODULE 7 — Génération trimestrielle (équité proportionnelle)          */
+/* ===================================================================== */
+
+const genererTrimBtn = document.getElementById("generer-trimestre-btn");
+
+/* Bornes ISO d'un mois (1-12). */
+function bornesMois(annee, mois) {
+  const moisStr = String(mois).padStart(2, "0");
+  return {
+    debut: annee + "-" + moisStr + "-01",
+    fin: annee + "-" + moisStr + "-" + new Date(annee, mois, 0).getDate(),
+  };
+}
+
+/* Génère les 3 mois du trimestre contenant le mois affiché, en optimisant
+   l'équité gardes/week-ends proportionnellement à la disponibilité. */
+async function genererTrimestrePourMoisAffiche() {
+  if (!calendrier || typeof genererTrimestre !== "function") return;
+
+  const dateVue = calendrier.getDate();
+  const annee = dateVue.getFullYear();
+  const moisAffiche = dateVue.getMonth() + 1;          // 1-12
+  const trimestre = Math.floor((moisAffiche - 1) / 3) + 1; // 1-4
+  const moisTrim = [0, 1, 2].map((k) => (trimestre - 1) * 3 + 1 + k);
+  const libelleTrim = "T" + trimestre + " " + annee + " (" + moisTrim.join("/") + ")";
+
+  genererTrimBtn.disabled = true;
+
+  // 1) Garde-fou : aucun des 3 mois ne doit être publié.
+  const { data: scheds, error: e0 } = await sb
+    .from("schedules")
+    .select("month, status")
+    .eq("year", annee)
+    .in("month", moisTrim);
+  if (e0) { genererTrimBtn.disabled = false; return messageGeneration("Erreur lecture des plannings : " + e0.message, "error"); }
+  const publies = (scheds || []).filter((s) => s.status === "published").map((s) => s.month);
+  if (publies.length) {
+    genererTrimBtn.disabled = false;
+    return messageGeneration(
+      "Mois publié(s) dans ce trimestre : " + publies.join(", ") +
+      ". Repasse-les en brouillon avant de régénérer le trimestre.", "error");
+  }
+
+  // 2) Confirmation : la génération écrase les 3 mois (brouillons).
+  if (!window.confirm(
+      "Générer tout le trimestre " + libelleTrim + " ?\n\n" +
+      "Cela REMPLACE les brouillons des 3 mois (les ajustements manuels non publiés seront perdus).")) {
+    genererTrimBtn.disabled = false;
+    return;
+  }
+
+  messageGeneration("Génération du trimestre " + libelleTrim + " en cours…", "info");
+
+  // 3) Médecins planifiables (hors admin / chef de service).
+  const { data: medecins, error: e1 } = await sb
+    .from("doctors")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles")
+    .neq("role", "admin");
+  if (e1) { genererTrimBtn.disabled = false; return messageGeneration("Erreur lecture médecins : " + e1.message, "error"); }
+
+  // 4) Préférences chevauchant le trimestre.
+  const debutTrim = bornesMois(annee, moisTrim[0]).debut;
+  const finTrim = bornesMois(annee, moisTrim[2]).fin;
+  const { data: prefs, error: e2 } = await sb
+    .from("preferences")
+    .select("doctor_id, start_date, end_date, pref_type")
+    .lte("start_date", finTrim)
+    .gte("end_date", debutTrim);
+  if (e2) { genererTrimBtn.disabled = false; return messageGeneration("Erreur lecture préférences : " + e2.message, "error"); }
+
+  // 5) Génération (algorithme pur, planning.js).
+  const res = genererTrimestre({ annee, trimestre, medecins: medecins || [], preferences: prefs || [] });
+
+  // 6) Écriture mois par mois : on remplace chaque brouillon (shifts + schedule),
+  //    puis on insère les shifts du mois rattachés à son schedule_id.
+  try {
+    for (const mois of moisTrim) {
+      const b = bornesMois(annee, mois);
+      await sb.from("shifts").delete().gte("date", b.debut).lte("date", b.fin);
+      await sb.from("schedules").delete().eq("year", annee).eq("month", mois);
+
+      const { data: sched, error: e3 } = await sb
+        .from("schedules")
+        .insert({ year: annee, month: mois, status: "draft" })
+        .select("id").single();
+      if (e3) throw e3;
+
+      const lignes = res.shifts
+        .filter((s) => s.date >= b.debut && s.date <= b.fin)
+        .map((s) => ({ date: s.date, shift_type: s.shift_type, poste: s.poste,
+                       doctor_id: s.doctor_id, schedule_id: sched.id }));
+      if (lignes.length) {
+        const { error: e4 } = await sb.from("shifts").insert(lignes);
+        if (e4) throw e4;
+      }
+    }
+  } catch (err) {
+    genererTrimBtn.disabled = false;
+    return messageGeneration("Erreur d'écriture du trimestre : " + (err.message || err), "error");
+  }
+
+  // 7) Résumé + rafraîchissement.
+  genererTrimBtn.disabled = false;
+  const nbConf = res.conflits.length;
+  const base = "Trimestre " + libelleTrim + " généré : " + res.shifts.length + " shifts. ";
+  if (nbConf === 0) {
+    messageGeneration(base + "Aucun conflit. ✅", "info");
+  } else {
+    const apercu = res.conflits.slice(0, 8).map((c) => c.date + " — " + c.message).join("<br>");
+    messageGeneration(base + "<strong>" + nbConf + " conflit(s)</strong> à arbitrer :<br>" +
+      apercu + (nbConf > 8 ? "<br>…" : ""), "error");
+  }
+  calendrier.refetchEvents();
+  rafraichirPanneauAdmin();
+}
+
+if (genererTrimBtn) genererTrimBtn.addEventListener("click", genererTrimestrePourMoisAffiche);
+
+
+/* ===================================================================== */
 /* MODULE 6 — Admin : ajustements manuels, publication, compteurs        */
 /* ===================================================================== */
 

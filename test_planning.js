@@ -5,7 +5,7 @@
    ===================================================================== */
 
 const assert = require("assert");
-const { genererPlanning, validerPlanning, compterParMedecin } = require("./planning.js");
+const { genererPlanning, genererTrimestre, validerPlanning, compterParMedecin } = require("./planning.js");
 
 let reussis = 0, total = 0;
 function test(nom, fn) {
@@ -113,6 +113,51 @@ test("compte heures / gardes / week-ends", () => {
   assert.strictEqual(stats.x.heures, 34.5, "heures=" + stats.x.heures);
   assert.strictEqual(stats.x.gardes, 1, "gardes=" + stats.x.gardes);
   assert.strictEqual(stats.x.weekends, 1, "weekends=" + stats.x.weekends);
+});
+
+console.log("\n=== Module 7 — genererTrimestre (équité) ===");
+
+const medsT = equipe();
+const resT = genererTrimestre({ annee: 2026, trimestre: 3, medecins: medsT, preferences: [] }); // T3 = juil/août/sept
+
+test("génère les 3 mois du trimestre", () => {
+  assert.deepStrictEqual(resT.mois, [7, 8, 9], "mois=" + resT.mois);
+  const moisVus = new Set(resT.shifts.map((s) => s.date.slice(5, 7)));
+  ["07", "08", "09"].forEach((m) => assert(moisVus.has(m), "mois manquant : " + m));
+});
+
+test("contraintes dures respectées sur tout le trimestre (validerPlanning par mois)", () => {
+  let totalDur = 0;
+  resT.mois.forEach((mois) => {
+    const shiftsMois = resT.shifts.filter((s) => s.date.slice(5, 7) === String(mois).padStart(2, "0"));
+    const conflits = validerPlanning({ annee: 2026, mois, shifts: shiftsMois, medecins: medsT, preferences: [] });
+    totalDur += conflits.filter((c) => /double affectation|repos 12h|récup/.test(c.message)).length;
+  });
+  assert.strictEqual(totalDur, 0, "violations dures (double/repos/récup) : " + totalDur);
+});
+
+test("équité gardes : équipe homogène => écart max ≤ 2 gardes sur le trimestre", () => {
+  const g = resT.stats.map((s) => s.gardes);
+  const ecart = Math.max(...g) - Math.min(...g);
+  assert(ecart <= 2, "écart de gardes trop grand : " + ecart + " (" + g.join(",") + ")");
+});
+
+test("équité week-ends : équipe homogène => écart max ≤ 2 week-ends", () => {
+  const w = resT.stats.map((s) => s.weekends);
+  const ecart = Math.max(...w) - Math.min(...w);
+  assert(ecart <= 2, "écart de week-ends trop grand : " + ecart + " (" + w.join(",") + ")");
+});
+
+test("proportionnalité : un mi-temps (fte 0.5) reçoit moins de gardes qu'un temps plein", () => {
+  const medsP = equipe();
+  medsP[0].fte = 0.5;                     // resident1 à mi-temps
+  medsP[0].jours_travailles = [1, 2, 3];  // dispo réduite
+  const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: medsP, preferences: [] });
+  const mi = r.stats.find((s) => s.id === "resident1").gardes;
+  // Moyenne des autres résidents (temps plein).
+  const autres = r.stats.filter((s) => /^resident/.test(s.id) && s.id !== "resident1").map((s) => s.gardes);
+  const moyAutres = autres.reduce((a, b) => a + b, 0) / autres.length;
+  assert(mi <= moyAutres, "mi-temps gardes=" + mi + " > moyenne temps plein=" + moyAutres.toFixed(1));
 });
 
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");

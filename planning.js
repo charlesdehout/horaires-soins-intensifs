@@ -61,6 +61,10 @@ function plNouvelEtat(medecins) {
   const e = {
     indispo: {}, souhait: {}, bloque: {}, assigneJour: {},
     nbGardes: {}, nbWeekend: {}, heures: {}, station: {},
+    // Poids d'équité (Module 7) : remplis seulement en mode trimestriel.
+    // null => plTrier reste en mode mensuel (compte brut). Sinon =>
+    // tri par déficit relatif : compte / poids (proportionnel à la dispo).
+    poidsGarde: null, poidsWeekend: null,
   };
   medecins.forEach((m) => {
     e.indispo[m.id] = new Set();
@@ -104,14 +108,32 @@ function plDispo(m, date, etat) {
 
 /* Trie les médecins du plus « prioritaire à servir » au moins prioritaire.
    critere : 'garde' = le moins de gardes d'abord ; 'weekend' = le moins de
-   week-ends ; sinon on départage par charge horaire relative à la cible. */
+   week-ends ; sinon on départage par charge horaire relative à la cible.
+
+   Module 7 — équité trimestrielle : si les poids de disponibilité sont
+   présents dans l'état (mode trimestriel), on trie par DÉFICIT RELATIF
+   (compte / poids) au lieu du compte brut. Le poids = fte × jours de
+   présence sur le trimestre → la distribution devient proportionnelle à
+   la disponibilité de chacun. Sans poids (mode mensuel), comportement
+   inchangé (compte brut). */
 function plTrier(liste, critere, etat) {
+  const EPS = 1e-9;
+  function scoreGarde(id) {
+    if (etat.poidsGarde) return etat.nbGardes[id] / Math.max(etat.poidsGarde[id] || 0, EPS);
+    return etat.nbGardes[id];
+  }
+  function scoreWeekend(id) {
+    if (etat.poidsWeekend) return etat.nbWeekend[id] / Math.max(etat.poidsWeekend[id] || 0, EPS);
+    return etat.nbWeekend[id];
+  }
   return liste.slice().sort((a, b) => {
-    if (critere === "garde" && etat.nbGardes[a.id] !== etat.nbGardes[b.id]) {
-      return etat.nbGardes[a.id] - etat.nbGardes[b.id];
+    if (critere === "garde") {
+      const sa = scoreGarde(a.id), sb = scoreGarde(b.id);
+      if (sa !== sb) return sa - sb;
     }
-    if (critere === "weekend" && etat.nbWeekend[a.id] !== etat.nbWeekend[b.id]) {
-      return etat.nbWeekend[a.id] - etat.nbWeekend[b.id];
+    if (critere === "weekend") {
+      const sa = scoreWeekend(a.id), sb = scoreWeekend(b.id);
+      if (sa !== sb) return sa - sb;
     }
     const ra = etat.heures[a.id] / (a.weekly_hours_target || 52);
     const rb = etat.heures[b.id] / (b.weekly_hours_target || 52);
@@ -287,6 +309,100 @@ function genererPlanning(opts) {
   }));
 
   return { shifts: sortie, conflits, stats };
+}
+
+
+/* =====================================================================
+   MODULE 7 — Génération trimestrielle (algorithme v2)
+   ---------------------------------------------------------------------
+   Génère les 3 mois d'un trimestre civil EN UNE PASSE, avec un état
+   PARTAGÉ : les compteurs de gardes / week-ends s'accumulent sur tout le
+   trimestre. L'équité devient proportionnelle à la disponibilité de
+   chacun grâce aux POIDS calculés ici, puis exploités par plTrier
+   (déficit relatif = compte / poids).
+
+   Poids (par médecin, sur le trimestre) :
+     - poidsGarde   = fte × (nb de jours où le médecin est planifiable)
+     - poidsWeekend = fte × (nb de jours de WEEK-END/férié planifiables)
+   « planifiable » ici = sous contrat, jour travaillable, hors préférence
+   bloquante (congé / indispo / off-clinic / récup). C'est la définition
+   « jours de présence » des SPÉCIFICATIONS.
+
+   Fonction PURE. opts = { annee, trimestre (1-4), medecins, preferences }.
+   Renvoie { shifts, conflits, stats, mois:[m1,m2,m3] }.
+   ===================================================================== */
+
+/* Disponibilité STATIQUE d'un médecin un jour donné : ne dépend que du
+   contrat, des jours travaillables et des préférences bloquantes (pas de
+   l'état dynamique). Sert à calculer les poids d'équité. */
+function plDispoStatique(m, date, indispoSet) {
+  if (m.contract_start && date < m.contract_start) return false;
+  if (m.contract_end && date > m.contract_end) return false;
+  const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
+  if (!jt.includes(plJourSemaine(date))) return false;
+  if (indispoSet && indispoSet.has(date)) return false;
+  return true;
+}
+
+/* Liste des dates ISO d'un mois (1-12). */
+function plDatesDuMois(annee, mois) {
+  const nbJours = new Date(Date.UTC(annee, mois, 0)).getUTCDate();
+  const dates = [];
+  for (let j = 1; j <= nbJours; j++) {
+    dates.push(annee + "-" + String(mois).padStart(2, "0") + "-" + String(j).padStart(2, "0"));
+  }
+  return dates;
+}
+
+function genererTrimestre(opts) {
+  const annee = opts.annee;
+  const trimestre = opts.trimestre;                 // 1-4
+  const medecins = opts.medecins || [];
+  const preferences = opts.preferences || [];
+  const moisTrim = [0, 1, 2].map((k) => (trimestre - 1) * 3 + 1 + k); // ex. T2 -> [4,5,6]
+
+  // État PARTAGÉ sur les 3 mois (les compteurs ne se réinitialisent pas).
+  const etat = plNouvelEtat(medecins);
+  plIndexerPreferences(preferences, etat);
+
+  // --- Poids d'équité : jours de présence sur le trimestre entier ---
+  etat.poidsGarde = {};
+  etat.poidsWeekend = {};
+  medecins.forEach((m) => {
+    let dispoTotal = 0, dispoWeekend = 0;
+    const indispoSet = etat.indispo[m.id];
+    moisTrim.forEach((mois) => {
+      plDatesDuMois(annee, mois).forEach((date) => {
+        if (!plDispoStatique(m, date, indispoSet)) return;
+        dispoTotal++;
+        if (plEstWeekendOuFerie(date)) dispoWeekend++;
+      });
+    });
+    const fte = (typeof m.fte === "number" && m.fte > 0) ? m.fte : 1;
+    etat.poidsGarde[m.id] = fte * dispoTotal;
+    etat.poidsWeekend[m.id] = fte * dispoWeekend;
+  });
+
+  // --- Génération jour par jour sur les 3 mois, état partagé ---
+  const sortie = [];
+  const conflits = [];
+  moisTrim.forEach((mois) => {
+    plDatesDuMois(annee, mois).forEach((date) => {
+      if (plEstWeekendOuFerie(date)) plGenererWeekend(date, medecins, etat, sortie, conflits);
+      else plGenererSemaine(date, medecins, etat, sortie, conflits);
+    });
+  });
+
+  const stats = medecins.map((m) => ({
+    id: m.id,
+    heures: Math.round(etat.heures[m.id] * 10) / 10,
+    gardes: etat.nbGardes[m.id],
+    weekends: etat.nbWeekend[m.id],
+    poidsGarde: etat.poidsGarde[m.id],
+    poidsWeekend: etat.poidsWeekend[m.id],
+  }));
+
+  return { shifts: sortie, conflits, stats, mois: moisTrim };
 }
 
 
@@ -471,5 +587,5 @@ function compterParMedecin(shifts) {
 
 /* ------------- Export pour Node (tests). Sans effet en navigateur. ------ */
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { genererPlanning, validerPlanning, compterParMedecin };
+  module.exports = { genererPlanning, genererTrimestre, validerPlanning, compterParMedecin };
 }
