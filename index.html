@@ -39,6 +39,35 @@
       <p id="welcome-text"></p>
       <p>Rôle détecté : <strong id="role-text"></strong></p>
 
+      <!-- ===== Espace PLANNING : calendrier (Module 4) — visible par tous ===== -->
+      <div id="planning-zone">
+        <div class="zone-header">
+          <h2>Planning</h2>
+        </div>
+
+        <!-- Légende des couleurs -->
+        <div id="calendar-legend" class="legend">
+          <span class="legend-group">
+            <strong>Shifts :</strong>
+            <span class="legend-item"><span class="dot" style="background:#1f6feb"></span>Journée</span>
+            <span class="legend-item"><span class="dot" style="background:#8250df"></span>Tour week-end</span>
+            <span class="legend-item"><span class="dot" style="background:#bf3989"></span>Garde de nuit</span>
+            <span class="legend-item"><span class="dot" style="background:#cf222e"></span>Garde 24h</span>
+          </span>
+          <span class="legend-group">
+            <strong>Préférences (fond) :</strong>
+            <span class="legend-item"><span class="dot" style="background:#1a7f37"></span>Congé</span>
+            <span class="legend-item"><span class="dot" style="background:#cf222e"></span>Indispo</span>
+            <span class="legend-item"><span class="dot" style="background:#1f6feb"></span>Souhait</span>
+            <span class="legend-item"><span class="dot" style="background:#9a6700"></span>Off/clinic</span>
+            <span class="legend-item"><span class="dot" style="background:#8250df"></span>Récup</span>
+          </span>
+          <span id="legend-mine" class="legend-item hidden"><span class="dot dot-mine"></span>Mes shifts</span>
+        </div>
+
+        <div id="calendar"></div>
+      </div>
+
       <!-- ===== Espace ADMIN : gestion des médecins (Module 2) ===== -->
       <div id="admin-zone" class="hidden">
         <div class="zone-header">
@@ -179,6 +208,8 @@
 
   <!-- Client Supabase officiel (CDN) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- FullCalendar (Module 4) — bundle global incluant mois/semaine/liste -->
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
   <!-- Notre logique applicative -->
   <script src="app.js"></script>
 </body>

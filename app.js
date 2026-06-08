@@ -67,6 +67,9 @@ const prefsTbody  = document.getElementById("prefs-tbody");
 const prefsTable  = document.getElementById("prefs-table");
 const prefsEmpty  = document.getElementById("prefs-empty");
 
+/* Références DOM — calendrier (Module 4) */
+const legendMine  = document.getElementById("legend-mine");
+
 /* Profil du médecin actuellement connecté (id, name, role). */
 let medecinCourant = null;
 
@@ -138,6 +141,11 @@ function afficherEspace(profil) {
   // Côté admin : liste des médecins. Côté médecin : ses préférences.
   if (estAdmin) chargerMedecins();
   else chargerPreferences();
+
+  // Planning (Module 4) : visible par tous. La légende « Mes shifts »
+  // n'apparaît que pour un médecin (l'admin n'est pas dans le planning).
+  legendMine.classList.toggle("hidden", estAdmin);
+  initCalendrier();
 }
 
 
@@ -506,6 +514,184 @@ async function supprimerPreference(pref) {
   chargerPreferences();
 }
 
+
+/* ===================================================================== */
+/* MODULE 4 — Affichage du calendrier (FullCalendar)                     */
+/* ===================================================================== */
+
+/* Configuration des types de shift.
+   Réutilisée par les modules suivants (génération du planning).
+   - debut/fin = HEURES RÉELLES (pas l'affichage), utilisées pour le calcul.
+   - lendemain = true si la fin tombe le jour suivant (gardes de nuit / 24h).
+   - heures = durée réelle, servira au comptage horaire (Module 5+).         */
+const SHIFT_CONFIG = {
+  jour:       { label: "Journée",       court: "J",   couleur: "#1f6feb", debut: "08:00", fin: "18:30", lendemain: false, heures: 10.5 },
+  twe:        { label: "Tour week-end",  court: "TWE", couleur: "#8250df", debut: "08:00", fin: "14:00", lendemain: false, heures: 6 },
+  garde_nuit: { label: "Garde de nuit",  court: "GN",  couleur: "#bf3989", debut: "17:00", fin: "08:00", lendemain: true,  heures: 15 },
+  garde_24h:  { label: "Garde 24h",      court: "G24", couleur: "#cf222e", debut: "08:00", fin: "08:00", lendemain: true,  heures: 24 },
+};
+
+/* Couleurs de fond des préférences affichées dans le calendrier. */
+const PREF_BG = {
+  conge:        "rgba(26,127,55,0.18)",   // vert
+  indispo:      "rgba(207,34,46,0.16)",    // rouge
+  souhait:      "rgba(31,111,235,0.14)",   // bleu
+  off_clinic:   "rgba(154,103,0,0.16)",    // orangé
+  recuperation: "rgba(130,80,223,0.16)",   // violet
+};
+
+/* Libellés complets des types de préférence (inclut off_clinic / recuperation). */
+const PREF_LABELS_FULL = {
+  conge: "Congé",
+  indispo: "Indisponibilité",
+  souhait: "Souhait",
+  off_clinic: "Off/clinic",
+  recuperation: "Récupération",
+};
+
+let calendrier = null;       // instance FullCalendar (créée une seule fois)
+let carteMedecins = {};      // { doctor_id: { name, grade } }, pour nommer les shifts
+
+/* Renvoie la date (YYYY-MM-DD) du lendemain d'une date donnée. */
+function lendemainDe(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/* Charge une fois la correspondance id → médecin (pour nommer les shifts).
+   La lecture de doctors est ouverte à tous les connectés (RLS). */
+async function chargerCarteMedecins() {
+  const { data, error } = await sb.from("doctors").select("id, name, grade");
+  if (error) {
+    console.error("Erreur chargement médecins (calendrier) :", error);
+    return;
+  }
+  carteMedecins = {};
+  (data || []).forEach((m) => { carteMedecins[m.id] = m; });
+}
+
+/* Construit les événements FullCalendar pour la période visible.
+   debutISO / finISO : bornes fournies par FullCalendar (fin exclusive). */
+async function construireEvenements(debutISO, finISO) {
+  const debut = debutISO.slice(0, 10);
+  const fin = finISO.slice(0, 10);
+  const events = [];
+
+  // --- 1) Shifts de la période (planning) ---
+  const { data: shifts, error: errShifts } = await sb
+    .from("shifts")
+    .select("id, date, shift_type, doctor_id, schedule_id")
+    .gte("date", debut)
+    .lt("date", fin);
+
+  if (errShifts) {
+    console.error("Erreur chargement shifts :", errShifts);
+  } else {
+    (shifts || []).forEach((s) => {
+      const cfg = SHIFT_CONFIG[s.shift_type] || {
+        label: s.shift_type, court: "?", couleur: "#57606a",
+        debut: "08:00", fin: "18:30", lendemain: false,
+      };
+      const med = carteMedecins[s.doctor_id] || {};
+      const nom = med.name || "?";
+      const estMien = medecinCourant && medecinCourant.id === s.doctor_id;
+      const dateFin = cfg.lendemain ? lendemainDe(s.date) : s.date;
+
+      events.push({
+        title: nom + " · " + cfg.court,
+        start: s.date + "T" + cfg.debut + ":00",
+        end: dateFin + "T" + cfg.fin + ":00",
+        backgroundColor: cfg.couleur,
+        borderColor: estMien ? "#1f2328" : cfg.couleur,
+        classNames: estMien ? ["shift-mien"] : [],
+        extendedProps: { tooltip: nom + " — " + cfg.label },
+      });
+    });
+  }
+
+  // --- 2) Préférences en arrière-plan ---
+  // Admin : toutes (RLS). Médecin : seulement les siennes (RLS).
+  // On prend toute préférence qui chevauche la période affichée.
+  const { data: prefs, error: errPrefs } = await sb
+    .from("preferences")
+    .select("id, doctor_id, start_date, end_date, pref_type, note")
+    .lte("start_date", fin)
+    .gte("end_date", debut);
+
+  if (errPrefs) {
+    console.error("Erreur chargement préférences (calendrier) :", errPrefs);
+  } else {
+    (prefs || []).forEach((p) => {
+      const med = carteMedecins[p.doctor_id] || {};
+      const libelle = PREF_LABELS_FULL[p.pref_type] || p.pref_type;
+      events.push({
+        start: p.start_date,
+        end: lendemainDe(p.end_date), // fin exclusive → +1 jour pour inclure end_date
+        display: "background",
+        backgroundColor: PREF_BG[p.pref_type] || "rgba(0,0,0,0.06)",
+        extendedProps: {
+          tooltip: (med.name ? med.name + " — " : "") + libelle +
+                   (p.note ? " (" + p.note + ")" : ""),
+        },
+      });
+    });
+  }
+
+  return events;
+}
+
+/* Initialise (une seule fois) puis affiche le calendrier.
+   Appelée à chaque connexion ; le contenu se recharge selon la période. */
+async function initCalendrier() {
+  const el = document.getElementById("calendar");
+  if (!el) return;
+
+  await chargerCarteMedecins();
+
+  if (!calendrier) {
+    calendrier = new FullCalendar.Calendar(el, {
+      initialView: "dayGridMonth",
+      locale: "fr",
+      firstDay: 1,              // semaine commençant le lundi
+      height: "auto",
+      nowIndicator: true,
+      dayMaxEvents: true,       // regroupe en « +N » si la journée est chargée
+      headerToolbar: {
+        left: "prev,next today",
+        center: "title",
+        right: "dayGridMonth,timeGridWeek,listMonth",
+      },
+      buttonText: {
+        today: "Aujourd'hui",
+        month: "Mois",
+        week: "Semaine",
+        list: "Liste",
+      },
+      noEventsText: "Aucun shift sur cette période",
+      // FullCalendar appelle cette fonction à chaque changement de période :
+      // navigation entre mois, changement de vue, etc.
+      events: async (info, success, failure) => {
+        try {
+          success(await construireEvenements(info.startStr, info.endStr));
+        } catch (e) {
+          console.error("Erreur construction des événements :", e);
+          failure(e);
+        }
+      },
+      // Affiche une infobulle (qui / quel shift) au survol.
+      eventDidMount: (info) => {
+        const t = info.event.extendedProps.tooltip;
+        if (t) info.el.setAttribute("title", t);
+      },
+    });
+    calendrier.render();
+  } else {
+    // Déjà créé : on rafraîchit l'affichage et les données.
+    calendrier.render();
+    calendrier.refetchEvents();
+  }
+}
 
 /* --------------------------------------------------------------------- */
 /* Au chargement de la page : restaure la session si elle existe déjà    */
