@@ -25,6 +25,11 @@
 >   la veille d'une garde. **Bilan horaire** : off-clinic crédité 10,5 h ; congés = jours
 >   entiers non crédités mais retirés du poids de présence (cible proportionnelle).
 > - **Max 60 h/semaine** (et non /mois) : plafond N2 au-dessus de la cible 52 h — à venir.
+> - **Workflow de validation §8.3/§12** : les demandes des travailleurs sont créées
+>   en `en_attente` ; l'admin les approuve/refuse (panneau « Demandes à valider ») ;
+>   la **génération est bloquée** tant qu'il reste des demandes en attente sur la
+>   période, et seules les demandes **approuvées** influencent le planning. Nouveaux
+>   types : formation USI, congé « autre » (hors quota), demande week-end/férié.
 
 ---
 

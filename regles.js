@@ -58,6 +58,7 @@ const COUVERTURE = {
 const PREF_BLOQUANTES = [
   "conge", "conge_annuel", "conge_extralegal", "conge_scientifique",
   "indispo", "off_clinic", "recuperation",
+  "formation", "autre", // Module 10 : formation USI et congé « autre » bloquent aussi
 ];
 
 

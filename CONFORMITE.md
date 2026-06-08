@@ -128,7 +128,8 @@ plusieurs **contraintes dures (Niveau 1)** ne sont pas encore appliquées.
 | Formation (illimité), Autre (maladie/mariage, hors quota), Demande weekend, Récup férié | ❌ | Types absents. |
 | Proportionnalité aux mois travaillés | ⚠️ | Prorata par dates, pas par mois cumulés. |
 | Récup férié : crédit auto + demande validée | ❌ | Absent. |
-| Validation admin de toutes les demandes avant planif (blocage si « en attente ») | ❌ | Workflow absent. |
+| Validation admin de toutes les demandes avant planif (blocage si « en attente ») | ✅ **appliqué** : statut `en_attente`/`approuve`/`refuse`, panneau admin Approuver/Refuser, **génération bloquée** tant qu'il reste des demandes en attente sur la période ; seules les approuvées influencent le planning. |
+| Types de demande : formation USI, congé « autre » (hors quota), demande week-end/férié | ✅ **appliqué** (sélecteur + bloquants formation/autre). Récup férié auto : à venir. |
 | **Off-clinic** (résidents dépendants) : 0–2/mois selon absences (0–4j→2, 5–9j→1, 10+→0), placement auto, interdits jour garde/post-garde/pré-garde | ✅ **appliqué** (`genererOffClinic`) : droit mensuel, placement auto en jours ouvrables, interdits garde/veille/lendemain, résidents dépendants only, crédité 10,5 h. *Hiérarchie de suppression en cas de difficulté : à venir (N3/N4).* |
 | Bilan horaire : off-clinic = heures de travail, congés = jours entiers | ✅ **appliqué** : off-clinic crédité 10,5 h ; congés retirés du « poids de présence » (cible proportionnelle aux jours présents). |
 | **Désidératas** : max 20/trimestre, priorités (admin principal > secondaires > travailleurs) | ❌ | On a `souhait` sans priorité ni quota. |

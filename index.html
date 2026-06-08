@@ -135,6 +135,20 @@
         <div class="zone-header"><h3 class="sous-titre">Conflits détectés</h3></div>
         <div id="conflits-zone" class="zone-info">Aucun planning chargé.</div>
 
+        <!-- Demandes à valider (Module 10) -->
+        <div class="zone-header">
+          <h3 class="sous-titre">Demandes à valider</h3>
+          <button id="refresh-demandes-btn" class="mini secondary">Rafraîchir</button>
+        </div>
+        <p class="zone-info">La génération du planning est bloquée tant qu'il reste des demandes en attente sur la période.</p>
+        <table id="demandes-table" class="data-table hidden">
+          <thead>
+            <tr><th>Médecin</th><th>Type</th><th>Début</th><th>Fin</th><th>Note</th><th></th></tr>
+          </thead>
+          <tbody id="demandes-tbody"></tbody>
+        </table>
+        <p id="demandes-empty" class="zone-info">Aucune demande en attente. ✅</p>
+
         <!-- ===== Espace ADMIN : gestion des médecins (Module 2) ===== -->
         <div class="zone-header">
           <h2>Médecins</h2>
@@ -274,8 +288,11 @@
                 <option value="conge_annuel">Congé annuel (bloquant)</option>
                 <option value="conge_extralegal">Congés extra-légaux (bloquant)</option>
                 <option value="conge_scientifique">Congé scientifique (bloquant)</option>
+                <option value="formation">Formation USI (bloquant)</option>
+                <option value="autre">Congé autre — maladie/mariage (bloquant, hors quota)</option>
                 <option value="indispo">Indisponibilité (bloquant)</option>
-                <option value="souhait">Souhait (préférence)</option>
+                <option value="demande_weekend">Demande week-end/férié</option>
+                <option value="souhait">Souhait / désidérata (préférence)</option>
               </select>
             </div>
             <div>

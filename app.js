@@ -489,6 +489,9 @@ const PREF_LABELS = {
   conge_scientifique: "Scientifique",
   indispo: "Indisponibilité",
   souhait: "Souhait",
+  formation: "Formation USI",
+  autre: "Congé autre",
+  demande_weekend: "Demande WE/férié",
 };
 
 /* Affiche un message dans le formulaire de préférences */
@@ -612,6 +615,13 @@ function rendrePreferences(prefs) {
     badge.className = "badge badge-" + pref.pref_type;
     badge.textContent = PREF_LABELS[pref.pref_type] || pref.pref_type;
     tdType.appendChild(badge);
+    // Statut de validation (Module 10).
+    const st = pref.status || "approuve";
+    const stLib = { en_attente: "⏳ en attente", approuve: "✅ approuvé", refuse: "✖ refusé" };
+    const stBadge = document.createElement("span");
+    stBadge.className = "statut-demande statut-" + st;
+    stBadge.textContent = " " + (stLib[st] || st);
+    tdType.appendChild(stBadge);
     tr.appendChild(tdType);
 
     [pref.start_date, pref.end_date, pref.note || "—"].forEach((valeur) => {
@@ -680,6 +690,7 @@ prefForm.addEventListener("submit", async (e) => {
     start_date: debut,
     end_date: fin,
     note: pNote.value.trim() || null,
+    status: "en_attente", // soumise pour validation par l'admin (§8.3)
   };
 
   const { error } = await sb.from("preferences").insert(payload);
@@ -753,6 +764,9 @@ const PREF_BG = {
   souhait:            "rgba(31,111,235,0.14)",   // bleu
   off_clinic:         "rgba(154,103,0,0.16)",    // orangé
   recuperation:       "rgba(130,80,223,0.16)",   // violet
+  formation:          "rgba(13,148,136,0.16)",   // sarcelle clair
+  autre:              "rgba(110,84,148,0.16)",   // mauve
+  demande_weekend:    "rgba(31,111,235,0.12)",   // bleu clair
 };
 
 /* Libellés complets des types de préférence (inclut off_clinic / recuperation). */
@@ -765,6 +779,10 @@ const PREF_LABELS_FULL = {
   souhait: "Souhait",
   off_clinic: "Off/clinic",
   recuperation: "Récupération",
+  formation: "Formation USI",
+  autre: "Congé autre (hors quota)",
+  demande_weekend: "Demande week-end/férié",
+  dispo: "Disponibilité déclarée",
 };
 
 let calendrier = null;       // instance FullCalendar (créée une seule fois)
@@ -885,6 +903,7 @@ async function construireEvenements(debutISO, finISO) {
   const { data: prefs, error: errPrefs } = await sb
     .from("preferences")
     .select("id, doctor_id, start_date, end_date, pref_type, note")
+    .neq("status", "refuse") // on n'affiche pas les demandes refusées
     .lte("start_date", fin)
     .gte("end_date", debut);
 
@@ -1021,6 +1040,15 @@ async function genererPlanningPourMoisAffiche() {
   const finMois = annee + "-" + moisStr + "-" + new Date(annee, mois, 0).getDate();
 
   genererBtn.disabled = true;
+
+  // Garde-fou §8.3 : aucune demande en attente sur le mois.
+  const nbAttente = await demandesEnAttenteSur(debutMois, finMois);
+  if (nbAttente > 0) {
+    genererBtn.disabled = false;
+    return messageGeneration(
+      nbAttente + " demande(s) en attente sur ce mois. Valide-les (Approuver/Refuser) avant de générer.", "error");
+  }
+
   messageGeneration("Génération de " + mois + "/" + annee + " en cours…", "info");
 
   // 1) Médecins planifiables (l'admin / chef de service n'est pas dans le planning).
@@ -1030,10 +1058,11 @@ async function genererPlanningPourMoisAffiche() {
     .neq("role", "admin");
   if (e1) { genererBtn.disabled = false; return messageGeneration("Erreur lecture médecins : " + e1.message, "error"); }
 
-  // 2) Préférences chevauchant le mois.
+  // 2) Préférences APPROUVÉES chevauchant le mois (les autres n'influencent pas).
   const { data: prefs, error: e2 } = await sb
     .from("preferences")
     .select("doctor_id, start_date, end_date, pref_type")
+    .eq("status", "approuve")
     .lte("start_date", finMois)
     .gte("end_date", debutMois);
   if (e2) { genererBtn.disabled = false; return messageGeneration("Erreur lecture préférences : " + e2.message, "error"); }
@@ -1148,12 +1177,19 @@ async function genererTrimestrePourMoisAffiche() {
     .neq("role", "admin");
   if (e1) { genererTrimBtn.disabled = false; return messageGeneration("Erreur lecture médecins : " + e1.message, "error"); }
 
-  // 4) Préférences chevauchant le trimestre.
+  // 4) Préférences APPROUVÉES chevauchant le trimestre + garde-fou §8.3.
   const debutTrim = bornesMois(annee, moisTrim[0]).debut;
   const finTrim = bornesMois(annee, moisTrim[2]).fin;
+  const nbAttente = await demandesEnAttenteSur(debutTrim, finTrim);
+  if (nbAttente > 0) {
+    genererTrimBtn.disabled = false;
+    return messageGeneration(
+      nbAttente + " demande(s) en attente sur ce trimestre. Valide-les avant de générer.", "error");
+  }
   const { data: prefs, error: e2 } = await sb
     .from("preferences")
     .select("doctor_id, start_date, end_date, pref_type")
+    .eq("status", "approuve")
     .lte("start_date", finTrim)
     .gte("end_date", debutTrim);
   if (e2) { genererTrimBtn.disabled = false; return messageGeneration("Erreur lecture préférences : " + e2.message, "error"); }
@@ -1279,15 +1315,101 @@ async function rafraichirPanneauAdmin() {
     .neq("role", "admin").order("name", { ascending: true });
   planningMois.medecins = meds || [];
 
+  // Préférences APPROUVÉES du mois (les demandes en attente/refusées
+  // n'influencent pas la validation du planning).
   const { data: prefs } = await sb.from("preferences")
     .select("doctor_id, start_date, end_date, pref_type")
+    .eq("status", "approuve")
     .lte("start_date", b.fin).gte("end_date", b.debut);
   planningMois.preferences = prefs || [];
 
   majStatutEtBoutons();
   majCompteurs();
   majConflits();
+  chargerDemandes();
   if (vueActive === "grille") construireGrille();
+}
+
+/* ===================================================================== */
+/* MODULE 10 — Validation des demandes (admin)                           */
+/* ===================================================================== */
+
+const demandesTable   = document.getElementById("demandes-table");
+const demandesTbody   = document.getElementById("demandes-tbody");
+const demandesEmpty   = document.getElementById("demandes-empty");
+const refreshDemandesBtn = document.getElementById("refresh-demandes-btn");
+
+let demandesEnAttente = []; // cache des demandes en attente (toutes périodes)
+
+/* Charge toutes les demandes en attente (tous médecins) et les affiche. */
+async function chargerDemandes() {
+  if (!medecinCourant || medecinCourant.role !== "admin") return;
+  if (!Object.keys(carteMedecins).length) await chargerCarteMedecins();
+
+  const { data, error } = await sb.from("preferences")
+    .select("id, doctor_id, start_date, end_date, pref_type, note, status")
+    .eq("status", "en_attente")
+    .order("start_date", { ascending: true });
+
+  if (error) { console.error("Erreur chargement demandes :", error); return; }
+  demandesEnAttente = data || [];
+  rendreDemandes(demandesEnAttente);
+}
+
+/* Construit le tableau des demandes en attente avec boutons Approuver/Refuser. */
+function rendreDemandes(demandes) {
+  if (!demandesTbody) return;
+  demandesTbody.innerHTML = "";
+  const vide = demandes.length === 0;
+  demandesTable.classList.toggle("hidden", vide);
+  demandesEmpty.classList.toggle("hidden", !vide);
+
+  demandes.forEach((d) => {
+    const tr = document.createElement("tr");
+    const med = carteMedecins[d.doctor_id] || {};
+    const cells = [
+      med.name || "?",
+      PREF_LABELS_FULL[d.pref_type] || d.pref_type,
+      d.start_date, d.end_date, d.note || "—",
+    ];
+    cells.forEach((v) => { const td = document.createElement("td"); td.textContent = v; tr.appendChild(td); });
+
+    const tdA = document.createElement("td");
+    tdA.className = "actions-cell";
+    const ok = document.createElement("button");
+    ok.textContent = "Approuver"; ok.className = "mini";
+    ok.addEventListener("click", () => deciderDemande(d.id, "approuve"));
+    const no = document.createElement("button");
+    no.textContent = "Refuser"; no.className = "mini danger";
+    no.addEventListener("click", () => deciderDemande(d.id, "refuse"));
+    tdA.appendChild(ok); tdA.appendChild(no);
+    tr.appendChild(tdA);
+    demandesTbody.appendChild(tr);
+  });
+}
+
+/* Approuve ou refuse une demande, puis rafraîchit panneau + calendrier. */
+async function deciderDemande(id, status) {
+  const { error } = await sb.from("preferences")
+    .update({ status, decided_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) { window.alert("Erreur : " + error.message); return; }
+  await chargerDemandes();
+  if (calendrier) calendrier.refetchEvents();
+  rafraichirPanneauAdmin();
+}
+
+if (refreshDemandesBtn) refreshDemandesBtn.addEventListener("click", chargerDemandes);
+
+/* Nombre de demandes EN ATTENTE chevauchant une période [debut, fin].
+   Sert à BLOQUER la génération tant que tout n'est pas validé (§8.3, §12). */
+async function demandesEnAttenteSur(debut, fin) {
+  const { data, error } = await sb.from("preferences")
+    .select("id")
+    .eq("status", "en_attente")
+    .lte("start_date", fin).gte("end_date", debut);
+  if (error) { console.error("Erreur vérif demandes en attente :", error); return 0; }
+  return (data || []).length;
 }
 
 /* Affiche le badge de statut et active/désactive les boutons. */

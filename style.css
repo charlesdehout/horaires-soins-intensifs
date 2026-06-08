@@ -379,6 +379,12 @@ button.mini.danger:hover { background: #fdeaea; }
 .fc .fc-daygrid-event .fc-event-title,
 .fc .fc-daygrid-event .fc-event-time { color: #fff; }
 
+/* Statut des demandes (Module 10) */
+.statut-demande { font-size: 0.78rem; font-weight: 600; margin-left: 0.3rem; }
+.statut-en_attente { color: #8a6d00; }
+.statut-approuve   { color: var(--vert); }
+.statut-refuse     { color: var(--rouge); }
+
 /* Périodes contractuelles multiples (Module 9) */
 .periode-ligne {
   display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;
