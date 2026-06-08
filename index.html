@@ -170,19 +170,34 @@
               <input type="number" id="d-hours" step="0.5" />
             </div>
             <div>
-              <label for="d-role">Accès</label>
-              <select id="d-role">
-                <option value="doctor">Médecin</option>
-                <option value="admin">Administrateur</option>
+              <label for="d-admin-level">Rôle</label>
+              <select id="d-admin-level">
+                <option value="aucun">Travailleur</option>
+                <option value="secondaire">Admin secondaire</option>
+                <option value="principal">Admin principal</option>
               </select>
             </div>
             <div>
-              <label for="d-start">Début de contrat</label>
-              <input type="date" id="d-start" />
+              <label for="d-statut">Statut</label>
+              <select id="d-statut">
+                <option value="dependant">Dépendant</option>
+                <option value="independant">Indépendant (Résident)</option>
+              </select>
             </div>
             <div>
-              <label for="d-end">Fin de contrat</label>
-              <input type="date" id="d-end" />
+              <label for="d-conges100"><input type="checkbox" id="d-conges100" /> Congés à 100 % malgré FTE réduit</label>
+            </div>
+            <div class="form-grid-full">
+              <label>Périodes contractuelles</label>
+              <div id="d-periodes">
+                <div class="periode-ligne" data-primaire="1">
+                  <input type="date" id="d-start" aria-label="Début période 1" />
+                  <span>→</span>
+                  <input type="date" id="d-end" aria-label="Fin période 1" />
+                </div>
+              </div>
+              <button type="button" id="d-add-periode" class="mini secondary">+ Ajouter une période</button>
+              <p class="form-hint">Plusieurs périodes possibles (contrats non consécutifs). La 1re période sert d'affichage ; laisser la fin vide = indéterminé.</p>
             </div>
             <div class="form-grid-full">
               <label>Jours travaillables</label>

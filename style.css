@@ -379,6 +379,14 @@ button.mini.danger:hover { background: #fdeaea; }
 .fc .fc-daygrid-event .fc-event-title,
 .fc .fc-daygrid-event .fc-event-time { color: #fff; }
 
+/* Périodes contractuelles multiples (Module 9) */
+.periode-ligne {
+  display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;
+}
+.periode-ligne input[type="date"] { margin: 0; }
+.periode-ligne span { color: #57606a; }
+#d-add-periode { width: auto; }
+
 /* --- Grille postes × jours --- */
 .grille-nav {
   display: flex; align-items: center; gap: 1rem; margin: 0.3rem 0 0.6rem;

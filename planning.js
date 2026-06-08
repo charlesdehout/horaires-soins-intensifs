@@ -35,6 +35,10 @@ function plBloq()        { return _PL_REGLES ? _PL_REGLES.PREF_BLOQUANTES  : PRE
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
 
+/* Off-clinic (§9) : journée de recherche CRÉDITÉE comme heures de travail
+   (équivalent d'une journée), mais sans station ni repos généré. */
+const PL_HEURES_OFFCLINIC = 10.5;
+
 /* Types d'« absence / repos » posables manuellement (0 h, sans station).
    Doivent coller aux types absence de SHIFT_CONFIG (app.js). */
 const PL_ABSENCES = ["recup", "off", "conge_annuel", "conge_scientifique", "conge_extralegal"];
@@ -68,6 +72,8 @@ function plNouvelEtat(medecins) {
     // compte une seule fois même si le médecin fait samedi ET dimanche (§7).
     // Sert à la priorité N2 « max 2 week-ends/mois ».
     weekendsTravailles: {},
+    // Jours déclarés disponibles par médecin (Résidents indépendants, §2.2).
+    dispoDeclaree: {},
     // Binôme TWE de week-end : date du dimanche -> id du médecin imposé
     // (celui qui a fait le TWE-seul du samedi doit refaire celui du dimanche).
     tweForce: {},
@@ -85,6 +91,7 @@ function plNouvelEtat(medecins) {
     e.heures[m.id] = 0;
     e.gardesSemaine[m.id] = {};
     e.weekendsTravailles[m.id] = new Set();
+    e.dispoDeclaree[m.id] = new Set(); // jours déclarés dispo (résidents indépendants)
     e.station[m.id] = {}; // { lundiISO: codeStation }
   });
   return e;
@@ -97,19 +104,42 @@ function plIndexerPreferences(preferences, etat) {
     if (!etat.indispo[p.doctor_id]) return; // médecin hors équipe
     const estBloquant = bloquantes.includes(p.pref_type);
     const estSouhait = p.pref_type === "souhait";
+    const estDispo = p.pref_type === "dispo"; // fenêtre déclarée (indépendants)
     let d = p.start_date;
     while (d <= p.end_date) {
       if (estBloquant) etat.indispo[p.doctor_id].add(d);
       if (estSouhait) etat.souhait[p.doctor_id].add(d);
+      if (estDispo) etat.dispoDeclaree[p.doctor_id].add(d);
       d = plAdd(d, 1);
     }
   });
 }
 
-/* Médecin planifiable ce jour-là ? (disponibilité — contraintes dures). */
-function plDispo(m, date, etat) {
+/* Le médecin est-il sous contrat ce jour-là ? Gère les périodes multiples
+   (contract_periods : [{start,end}]) si présentes, sinon contract_start/end. */
+function plSousContrat(m, date) {
+  const periodes = m.contract_periods;
+  if (Array.isArray(periodes) && periodes.length) {
+    return periodes.some((p) =>
+      (!p.start || date >= p.start) && (!p.end || date <= p.end));
+  }
   if (m.contract_start && date < m.contract_start) return false;
   if (m.contract_end && date > m.contract_end) return false;
+  return true;
+}
+
+/* Résident indépendant : planifiable UNIQUEMENT sur ses jours déclarés
+   disponibles (§2.2, contrainte absolue). Les autres médecins : présumés
+   disponibles. dispoSet = ensemble des dates déclarées (peut être absent). */
+function plDispoIndependant(m, date, dispoSet) {
+  if (m.statut !== "independant") return true;          // logique normale
+  return !!(dispoSet && dispoSet.has(date));            // sinon : jours déclarés
+}
+
+/* Médecin planifiable ce jour-là ? (disponibilité — contraintes dures). */
+function plDispo(m, date, etat) {
+  if (!plSousContrat(m, date)) return false;
+  if (!plDispoIndependant(m, date, etat.dispoDeclaree[m.id])) return false;
   const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
   if (!jt.includes(plJourSemaine(date))) return false;
   if (etat.indispo[m.id].has(date)) return false;
@@ -392,6 +422,10 @@ function genererPlanning(opts) {
     else plGenererSemaine(date, medecins, etat, sortie, conflits);
   }
 
+  // Placement automatique des off-clinic (§9), une fois le planning posé.
+  const offs = genererOffClinic({ annee, mois, medecins, shifts: sortie, preferences });
+  offs.forEach((o) => { sortie.push(o); etat.heures[o.doctor_id] += PL_HEURES_OFFCLINIC; });
+
   const stats = medecins.map((m) => ({
     id: m.id,
     heures: Math.round(etat.heures[m.id] * 10) / 10,
@@ -426,9 +460,9 @@ function genererPlanning(opts) {
 /* Disponibilité STATIQUE d'un médecin un jour donné : ne dépend que du
    contrat, des jours travaillables et des préférences bloquantes (pas de
    l'état dynamique). Sert à calculer les poids d'équité. */
-function plDispoStatique(m, date, indispoSet) {
-  if (m.contract_start && date < m.contract_start) return false;
-  if (m.contract_end && date > m.contract_end) return false;
+function plDispoStatique(m, date, indispoSet, dispoSet) {
+  if (!plSousContrat(m, date)) return false;
+  if (!plDispoIndependant(m, date, dispoSet)) return false;
   const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
   if (!jt.includes(plJourSemaine(date))) return false;
   if (indispoSet && indispoSet.has(date)) return false;
@@ -462,9 +496,10 @@ function genererTrimestre(opts) {
   medecins.forEach((m) => {
     let dispoTotal = 0, dispoWeekend = 0;
     const indispoSet = etat.indispo[m.id];
+    const dispoSet = etat.dispoDeclaree[m.id];
     moisTrim.forEach((mois) => {
       plDatesDuMois(annee, mois).forEach((date) => {
-        if (!plDispoStatique(m, date, indispoSet)) return;
+        if (!plDispoStatique(m, date, indispoSet, dispoSet)) return;
         dispoTotal++;
         // Poids week-end aligné sur le comptage (§7) : samedis/dimanches réels.
         const jr = plJourSemaine(date);
@@ -486,6 +521,12 @@ function genererTrimestre(opts) {
     });
   });
 
+  // Off-clinic (§9) : droit calculé par MOIS, posé après la génération.
+  moisTrim.forEach((mois) => {
+    const offs = genererOffClinic({ annee, mois, medecins, shifts: sortie, preferences });
+    offs.forEach((o) => { sortie.push(o); etat.heures[o.doctor_id] += PL_HEURES_OFFCLINIC; });
+  });
+
   const stats = medecins.map((m) => ({
     id: m.id,
     heures: Math.round(etat.heures[m.id] * 10) / 10,
@@ -496,6 +537,87 @@ function genererTrimestre(opts) {
   }));
 
   return { shifts: sortie, conflits, stats, mois: moisTrim };
+}
+
+
+/* =====================================================================
+   MODULE 11 — Placement automatique des jours OFF-CLINIC (spec §9)
+   ---------------------------------------------------------------------
+   Jours de recherche pour les Résidents DÉPENDANTS uniquement. Droit
+   mensuel selon le total de jours d'absence du mois :
+       0 à 4 absences -> 2 off-clinic ; 5 à 9 -> 1 ; 10+ -> 0.
+   Placement : jours ouvrables ordinaires (lun-ven hors férié) où le
+   médecin est libre, JAMAIS le jour d'une garde, ni le lendemain d'une
+   garde (post-garde/repos), ni la veille d'une garde (« ne peut précéder
+   une garde »). Off-clinic = 0 station, pas de repos généré ; crédité en
+   heures par compterParMedecin.
+
+   Fonction PURE. opts = { annee, mois (1-12), medecins, shifts, preferences }.
+   Renvoie les shifts off-clinic à AJOUTER (type "off").
+   ===================================================================== */
+function genererOffClinic(opts) {
+  const annee = opts.annee, mois = opts.mois;
+  const medecins = opts.medecins || [];
+  const shifts = opts.shifts || [];
+  const bloquantes = plBloq();
+
+  // Index des shifts par médecin et par date.
+  const byMed = {};
+  shifts.forEach((s) => {
+    const m = (byMed[s.doctor_id] = byMed[s.doctor_id] || {});
+    (m[s.date] = m[s.date] || []).push(s);
+  });
+
+  // Index des dates bloquées par préférence (congé / indispo / récup / off_clinic).
+  const prefBloq = {};
+  (opts.preferences || []).forEach((p) => {
+    if (!bloquantes.includes(p.pref_type)) return;
+    const set = (prefBloq[p.doctor_id] = prefBloq[p.doctor_id] || new Set());
+    let d = p.start_date;
+    while (d <= p.end_date) { set.add(d); d = plAdd(d, 1); }
+  });
+  const estBloque = (id, d) => !!(prefBloq[id] && prefBloq[id].has(d));
+  const shiftsDe = (id, d) => (byMed[id] && byMed[id][d]) || [];
+  const aGarde = (id, d) => shiftsDe(id, d).some((x) => x.shift_type === "garde_nuit" || x.shift_type === "garde_24h");
+
+  const dates = plDatesDuMois(annee, mois);
+  const out = [];
+
+  medecins.forEach((m) => {
+    // Éligibilité : Résident dépendant uniquement (§9).
+    if (m.grade !== "resident" || m.statut === "independant") return;
+
+    // Total de jours d'absence du mois (tous types sauf l'off-clinic lui-même).
+    const absSet = new Set();
+    dates.forEach((d) => {
+      const aAbsence = shiftsDe(m.id, d).some((x) => plEstAbsence(x.shift_type) && x.shift_type !== "off");
+      if (aAbsence || estBloque(m.id, d)) absSet.add(d);
+    });
+    const abs = absSet.size;
+    const droit = abs <= 4 ? 2 : abs <= 9 ? 1 : 0;
+    if (droit === 0) return;
+
+    // Placement sur les premiers jours ouvrables éligibles.
+    let poses = 0;
+    for (const d of dates) {
+      if (poses >= droit) break;
+      const j = plJourSemaine(d);
+      if (j === 6 || j === 7) continue;            // pas le week-end
+      if (plEstWeekendOuFerie(d)) continue;        // pas un férié (règles week-end)
+      if (!plSousContrat(m, d)) continue;
+      const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
+      if (!jt.includes(j)) continue;
+      if (shiftsDe(m.id, d).length > 0) continue;  // déjà un shift / une absence
+      if (estBloque(m.id, d)) continue;            // congé / indispo
+      if (aGarde(m.id, d)) continue;               // jamais le jour d'une garde
+      if (aGarde(m.id, plAdd(d, -1))) continue;    // pas en post-garde (repos)
+      if (aGarde(m.id, plAdd(d, 1))) continue;     // ne peut précéder une garde
+      out.push({ date: d, shift_type: "off", poste: null, doctor_id: m.id });
+      poses++;
+    }
+  });
+
+  return out;
 }
 
 
@@ -526,9 +648,17 @@ function validerPlanning(opts) {
   const medById = {};
   medecins.forEach((m) => { medById[m.id] = m; });
 
-  // Index des dates bloquées par préférence (congé / indispo / off / récup).
+  // Index des dates bloquées par préférence (congé / indispo / off / récup)
+  // et des fenêtres déclarées disponibles (résidents indépendants).
   const indispo = {};
+  const dispo = {};
   (opts.preferences || []).forEach((p) => {
+    if (p.pref_type === "dispo") {
+      if (!dispo[p.doctor_id]) dispo[p.doctor_id] = new Set();
+      let d = p.start_date;
+      while (d <= p.end_date) { dispo[p.doctor_id].add(d); d = plAdd(d, 1); }
+      return;
+    }
     if (!bloquantes.includes(p.pref_type)) return;
     if (!indispo[p.doctor_id]) indispo[p.doctor_id] = new Set();
     let d = p.start_date;
@@ -625,15 +755,16 @@ function validerPlanning(opts) {
 
       // 2b) Disponibilité (contrat / jours travaillables / préférence bloquante).
       if (med) {
-        if (med.contract_start && date < med.contract_start) {
-          conflits.push({ date, message: `${nom(id)} : affecté hors contrat (avant le début).` });
-        }
-        if (med.contract_end && date > med.contract_end) {
-          conflits.push({ date, message: `${nom(id)} : affecté hors contrat (après la fin).` });
+        if (!plSousContrat(med, date)) {
+          conflits.push({ date, message: `${nom(id)} : affecté hors période contractuelle.` });
         }
         const jt = (med.jours_travailles && med.jours_travailles.length) ? med.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
         if (!jt.includes(plJourSemaine(date))) {
           conflits.push({ date, message: `${nom(id)} : affecté un jour non travaillable.` });
+        }
+        // Résident indépendant : seulement sur jours déclarés disponibles (§2.2).
+        if (med.statut === "independant" && !(dispo[id] && dispo[id].has(date))) {
+          conflits.push({ date, message: `${nom(id)} (indépendant) : affecté hors fenêtre déclarée disponible.` });
         }
       }
       if (indispo[id] && indispo[id].has(date)) {
@@ -715,6 +846,8 @@ function compterParMedecin(shifts) {
   (shifts || []).forEach((s) => {
     const st = stats[s.doctor_id] || (stats[s.doctor_id] = { heures: 0, gardes: 0, weekends: 0 });
     st.heures += PL_HEURES[s.shift_type] || 0;
+    // Off-clinic crédité comme heures de travail (§9).
+    if (s.shift_type === "off") st.heures += PL_HEURES_OFFCLINIC;
     if (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h") st.gardes++;
     // Week-end travaillé = garde 24h ou tour un SAMEDI/DIMANCHE (spec §7).
     // Un férié en semaine ne compte pas.
@@ -728,5 +861,5 @@ function compterParMedecin(shifts) {
 
 /* ------------- Export pour Node (tests). Sans effet en navigateur. ------ */
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { genererPlanning, genererTrimestre, validerPlanning, compterParMedecin };
+  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, compterParMedecin };
 }

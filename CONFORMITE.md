@@ -90,7 +90,7 @@ plusieurs **contraintes dures (Niveau 1)** ne sont pas encore appliquées.
 | Gardes ±1 entre tous | ⚠️ (équité proportionnelle, pas ±1 strict) |
 | Volume horaire similaire | ⚠️ |
 | Repos compensatoire vendredi+dimanche → mardi ; jeudi+samedi → lundi | ⚠️ (récup weekend présente mais pas liée au couple garde jeudi/vendredi) |
-| Max 60 h/mois (compensable) | ❌ — **à clarifier** : 60 h/mois semble incompatible avec la cible 52 h/**semaine** ; probablement « heures de garde » ou un autre périmètre |
+| **Max 60 h/semaine** (compensable la semaine suivante) | ❌ → ciblé module équité fine. *(Clarifié : 60 h/**semaine**, plafond au-dessus de la cible 52 h.)* |
 | Pré-placements admin respectés | ❌ |
 | Désidératas admin principal = priorité absolue | ❌ |
 
@@ -129,7 +129,8 @@ plusieurs **contraintes dures (Niveau 1)** ne sont pas encore appliquées.
 | Proportionnalité aux mois travaillés | ⚠️ | Prorata par dates, pas par mois cumulés. |
 | Récup férié : crédit auto + demande validée | ❌ | Absent. |
 | Validation admin de toutes les demandes avant planif (blocage si « en attente ») | ❌ | Workflow absent. |
-| **Off-clinic** (résidents dépendants) : 0–2/mois selon absences (0–4j→2, 5–9j→1, 10+→0), placement auto, interdits jour garde/post-garde/pré-garde, hiérarchie de suppression | ❌ | Moteur entier à construire. On a seulement `off` posable. |
+| **Off-clinic** (résidents dépendants) : 0–2/mois selon absences (0–4j→2, 5–9j→1, 10+→0), placement auto, interdits jour garde/post-garde/pré-garde | ✅ **appliqué** (`genererOffClinic`) : droit mensuel, placement auto en jours ouvrables, interdits garde/veille/lendemain, résidents dépendants only, crédité 10,5 h. *Hiérarchie de suppression en cas de difficulté : à venir (N3/N4).* |
+| Bilan horaire : off-clinic = heures de travail, congés = jours entiers | ✅ **appliqué** : off-clinic crédité 10,5 h ; congés retirés du « poids de présence » (cible proportionnelle aux jours présents). |
 | **Désidératas** : max 20/trimestre, priorités (admin principal > secondaires > travailleurs) | ❌ | On a `souhait` sans priorité ni quota. |
 | 11. Date limite des demandes (1 sem. avant le dernier mois du trimestre) | ❌ | Absent. |
 

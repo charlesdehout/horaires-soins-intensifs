@@ -5,7 +5,7 @@
    ===================================================================== */
 
 const assert = require("assert");
-const { genererPlanning, genererTrimestre, validerPlanning, compterParMedecin } = require("./planning.js");
+const { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, compterParMedecin } = require("./planning.js");
 
 let reussis = 0, total = 0;
 function test(nom, fn) {
@@ -247,6 +247,51 @@ test("validerPlanning signale > 2 week-ends dans le mois", () => {
   ];
   const conflits = validerPlanning({ annee: 2026, mois: 6, shifts, medecins: medsR, preferences: [] });
   assert(conflits.some((c) => /week-ends travaillés/.test(c.message)), "dépassement week-ends non signalé");
+});
+
+console.log("\n=== Module 11 — Off-clinic (§9) ===");
+
+test("off-clinic : un résident dépendant sans absence reçoit 2 jours", () => {
+  const r = { id: "resident1", name: "R1", grade: "resident", statut: "dependant",
+    fte: 1, jours_travailles: [1, 2, 3, 4, 5], contract_start: null, contract_end: null };
+  // Aucun shift, aucune absence → 0 absence → droit = 2.
+  const offs = genererOffClinic({ annee: 2026, mois: 6, medecins: [r], shifts: [], preferences: [] });
+  assert.strictEqual(offs.length, 2, "off-clinic posés = " + offs.length);
+  assert(offs.every((o) => o.shift_type === "off"), "type incorrect");
+  // Jamais le week-end.
+  assert(offs.every((o) => {
+    const d = new Date(o.date + "T00:00:00Z").getUTCDay();
+    return d !== 0 && d !== 6;
+  }), "off-clinic posé un week-end");
+});
+
+test("off-clinic : pas pour un A/S ni un indépendant", () => {
+  const as = { id: "as1", grade: "assistant_specialiste", statut: "dependant", jours_travailles: [1,2,3,4,5] };
+  const indep = { id: "ri", grade: "resident", statut: "independant", jours_travailles: [1,2,3,4,5] };
+  const offs = genererOffClinic({ annee: 2026, mois: 6, medecins: [as, indep], shifts: [], preferences: [] });
+  assert.strictEqual(offs.length, 0, "off-clinic indûment posés = " + offs.length);
+});
+
+test("off-clinic : droit réduit à 1 si 5–9 jours d'absence", () => {
+  const r = { id: "r5", grade: "resident", statut: "dependant", jours_travailles: [1,2,3,4,5] };
+  // 5 congés en semaine (1→5 juin = lun-ven).
+  const prefs = [{ doctor_id: "r5", start_date: "2026-06-01", end_date: "2026-06-05", pref_type: "conge_annuel" }];
+  const offs = genererOffClinic({ annee: 2026, mois: 6, medecins: [r], shifts: [], preferences: prefs });
+  assert.strictEqual(offs.length, 1, "droit attendu 1, obtenu " + offs.length);
+});
+
+test("off-clinic : jamais la veille ni le lendemain d'une garde", () => {
+  const r = { id: "rg", grade: "resident", statut: "dependant", jours_travailles: [1,2,3,4,5] };
+  // Garde le mercredi 3/6 → mardi 2 (veille) et jeudi 4 (lendemain) interdits.
+  const shifts = [{ date: "2026-06-03", shift_type: "garde_nuit", doctor_id: "rg", poste: null }];
+  const offs = genererOffClinic({ annee: 2026, mois: 6, medecins: [r], shifts, preferences: [] });
+  const interdits = ["2026-06-02", "2026-06-03", "2026-06-04"];
+  assert(offs.every((o) => !interdits.includes(o.date)), "off-clinic posé sur jour interdit : " + offs.map((o) => o.date).join(","));
+});
+
+test("off-clinic crédité comme heures de travail (10,5 h)", () => {
+  const stats = compterParMedecin([{ date: "2026-06-02", shift_type: "off", doctor_id: "x", poste: null }]);
+  assert.strictEqual(stats.x.heures, 10.5, "heures off-clinic = " + stats.x.heures);
 });
 
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");

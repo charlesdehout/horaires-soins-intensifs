@@ -17,6 +17,14 @@
 >   week-end mais ne compte pas comme « week-end travaillé » (max 2/mois).
 > - **Max 2 week-ends/mois** (priorité N2) : privilégié à la génération, signalé
 >   en cas de dépassement. Le binôme samedi+dimanche compte pour un seul week-end.
+> - **Modèle de personnel §2** : statut dépendant/indépendant, flag congés 100 %,
+>   niveau admin (principal/secondaire), **contrats multi-périodes** (`contract_periods`).
+>   Résident indépendant = planifiable uniquement sur ses jours déclarés (`pref_type 'dispo'`).
+> - **Off-clinic automatique §9** : résidents dépendants, droit mensuel (0–4 abs→2,
+>   5–9→1, 10+→0), placé en jours ouvrables, jamais le jour d'une garde / en post-garde /
+>   la veille d'une garde. **Bilan horaire** : off-clinic crédité 10,5 h ; congés = jours
+>   entiers non crédités mais retirés du poids de présence (cible proportionnelle).
+> - **Max 60 h/semaine** (et non /mois) : plafond N2 au-dessus de la cible 52 h — à venir.
 
 ---
 

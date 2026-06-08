@@ -47,9 +47,13 @@ const dEmail          = document.getElementById("d-email");
 const dGrade          = document.getElementById("d-grade");
 const dFte            = document.getElementById("d-fte");
 const dHours          = document.getElementById("d-hours");
-const dRole           = document.getElementById("d-role");
+const dAdminLevel     = document.getElementById("d-admin-level");
+const dStatut         = document.getElementById("d-statut");
+const dConges100      = document.getElementById("d-conges100");
 const dStart          = document.getElementById("d-start");
 const dEnd            = document.getElementById("d-end");
+const dPeriodes       = document.getElementById("d-periodes");
+const dAddPeriode     = document.getElementById("d-add-periode");
 const dQuotaAnnuel    = document.getElementById("d-quota-annuel");
 const dQuotaExtra     = document.getElementById("d-quota-extra");
 const dQuotaScient    = document.getElementById("d-quota-scientifique");
@@ -248,12 +252,47 @@ function getJoursTravailles() {
   return casesJoursTravailles().filter((c) => c.checked).map((c) => parseInt(c.value, 10));
 }
 
+/* --- Périodes contractuelles multiples (§2) --- */
+function lignesPeriodes() {
+  return Array.from(dPeriodes.querySelectorAll(".periode-ligne"));
+}
+/* Ajoute une ligne de période supplémentaire (avec bouton de suppression). */
+function ajouterLignePeriode(start, end) {
+  const div = document.createElement("div");
+  div.className = "periode-ligne";
+  const i1 = document.createElement("input"); i1.type = "date"; i1.value = start || "";
+  const sep = document.createElement("span"); sep.textContent = "→";
+  const i2 = document.createElement("input"); i2.type = "date"; i2.value = end || "";
+  const del = document.createElement("button");
+  del.type = "button"; del.className = "mini danger"; del.textContent = "✕";
+  del.addEventListener("click", () => div.remove());
+  div.append(i1, sep, i2, del);
+  dPeriodes.appendChild(div);
+}
+/* Lit toutes les périodes saisies : [{start, end}] (start obligatoire). */
+function getPeriodes() {
+  return lignesPeriodes().map((l) => {
+    const ins = l.querySelectorAll("input[type=date]");
+    return { start: ins[0].value || null, end: ins[1].value || null };
+  }).filter((p) => p.start);
+}
+/* Pré-remplit les périodes : la 1re sur la ligne primaire, les autres ajoutées. */
+function setPeriodes(periodes) {
+  lignesPeriodes().forEach((l) => { if (!l.dataset.primaire) l.remove(); });
+  const list = (periodes && periodes.length) ? periodes : [{ start: "", end: "" }];
+  dStart.value = list[0].start || "";
+  dEnd.value = list[0].end || "";
+  for (let i = 1; i < list.length; i++) ajouterLignePeriode(list[i].start, list[i].end);
+}
+if (dAddPeriode) dAddPeriode.addEventListener("click", () => ajouterLignePeriode("", ""));
+
 /* Ouvre le formulaire en mode "ajout" (champs vides) */
 function ouvrirAjout() {
   doctorForm.reset();
   doctorId.value = "";
   dFte.value = "1";
   dHours.value = HEURES_BASE; // 52h par défaut (plein temps)
+  setPeriodes([]);            // une seule période vide
   messageFormMedecin("");
   doctorForm.classList.remove("hidden");
 }
@@ -266,9 +305,14 @@ function ouvrirEdition(med) {
   dGrade.value = med.grade || "specialiste";
   dFte.value = med.fte ?? 1;
   dHours.value = med.weekly_hours_target ?? HEURES_BASE;
-  dRole.value = med.role || "doctor";
-  dStart.value = med.contract_start || "";
-  dEnd.value = med.contract_end || "";
+  dAdminLevel.value = med.admin_level || (med.role === "admin" ? "principal" : "aucun");
+  dStatut.value = med.statut || "dependant";
+  dConges100.checked = !!med.conges_100pct;
+  setPeriodes(
+    (med.contract_periods && med.contract_periods.length)
+      ? med.contract_periods
+      : (med.contract_start ? [{ start: med.contract_start, end: med.contract_end }] : [])
+  );
   dQuotaAnnuel.value = med.quota_conge_annuel ?? "";
   dQuotaExtra.value = med.quota_conge_extralegal ?? "";
   dQuotaScient.value = med.quota_conge_scientifique ?? "";
@@ -365,6 +409,8 @@ doctorForm.addEventListener("submit", async (e) => {
   messageFormMedecin("");
 
   const fte = parseFloat(dFte.value);
+  const periodes = getPeriodes();
+  const adminLevel = dAdminLevel.value;
 
   // Construit l'objet à envoyer. Dates vides → null.
   const payload = {
@@ -373,10 +419,16 @@ doctorForm.addEventListener("submit", async (e) => {
     grade: dGrade.value,
     fte: isNaN(fte) ? 1 : fte,
     weekly_hours_target: parseFloat(dHours.value) || HEURES_BASE,
-    role: dRole.value,
+    // Rôle d'accès dérivé du niveau admin (travailleur → doctor, sinon admin).
+    role: adminLevel === "aucun" ? "doctor" : "admin",
+    admin_level: adminLevel,
+    statut: dStatut.value,
+    conges_100pct: dConges100.checked,
     contract_type: fte >= 1 ? "temps_plein" : "temps_partiel",
-    contract_start: dStart.value || null,
-    contract_end: dEnd.value || null,
+    // Périodes contractuelles : 1re période = affichage/repli, tableau complet en jsonb.
+    contract_start: periodes[0] ? periodes[0].start : null,
+    contract_end:   periodes[0] ? periodes[0].end : null,
+    contract_periods: periodes.length ? periodes : null,
     // Quotas de congés annuels (jours ouvrés). Vide → null = valeur par défaut.
     quota_conge_annuel:       dQuotaAnnuel.value === "" ? null : parseInt(dQuotaAnnuel.value, 10),
     quota_conge_extralegal:   dQuotaExtra.value === ""  ? null : parseInt(dQuotaExtra.value, 10),
@@ -974,7 +1026,7 @@ async function genererPlanningPourMoisAffiche() {
   // 1) Médecins planifiables (l'admin / chef de service n'est pas dans le planning).
   const { data: medecins, error: e1 } = await sb
     .from("doctors")
-    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods")
     .neq("role", "admin");
   if (e1) { genererBtn.disabled = false; return messageGeneration("Erreur lecture médecins : " + e1.message, "error"); }
 
@@ -1092,7 +1144,7 @@ async function genererTrimestrePourMoisAffiche() {
   // 3) Médecins planifiables (hors admin / chef de service).
   const { data: medecins, error: e1 } = await sb
     .from("doctors")
-    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods")
     .neq("role", "admin");
   if (e1) { genererTrimBtn.disabled = false; return messageGeneration("Erreur lecture médecins : " + e1.message, "error"); }
 
@@ -1223,7 +1275,7 @@ async function rafraichirPanneauAdmin() {
 
   // 3) Médecins planifiables (hors admin) + 4) préférences du mois.
   const { data: meds } = await sb.from("doctors")
-    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods")
     .neq("role", "admin").order("name", { ascending: true });
   planningMois.medecins = meds || [];
 
