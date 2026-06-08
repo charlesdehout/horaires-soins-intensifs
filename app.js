@@ -1244,6 +1244,244 @@ if (genererTrimBtn) genererTrimBtn.addEventListener("click", genererTrimestrePou
 
 
 /* ===================================================================== */
+/* MODULE 14 — Exports Excel (.xlsx) via ExcelJS (spec §13)              */
+/* ===================================================================== */
+
+const exportPlanningBtn = document.getElementById("export-planning-btn");
+const exportRecapBtn    = document.getElementById("export-recap-btn");
+
+/* Couleurs ARGB (préfixe FF = opaque) du gabarit. */
+const XL = {
+  entete:   "FFBDD7EE", // bleu-gris en-tête de dates
+  station:  "FFD9D9D9", // gris : stations USI
+  garde:    "FFC6E0B4", // vert : gardes / tour
+  congeA:   "FFFCE4D6", // orange clair : congé annuel
+  congeS:   "FFF8CBAD", // orange : congé scientifique
+  repos:    "FFE4DFEC", // mauve clair : repos
+  off:      "FFFFE699", // jaune : off-clinic
+  autre:    "FFF2F2F2", // gris très clair : indispo / autre
+  auto:     "FFF7F7F7", // fond des cellules auto-remplies (vs vides éditables)
+  trait:    "FFB0B0B0",
+};
+
+/* Liste des semaines (lun→dim) couvrant un mois (1-12). */
+function semainesDuMois(annee, mois) {
+  const dernier = new Date(Date.UTC(annee, mois, 0));
+  const d = new Date(Date.UTC(annee, mois - 1, 1));
+  const dow = d.getUTCDay() === 0 ? 7 : d.getUTCDay();
+  d.setUTCDate(d.getUTCDate() - (dow - 1)); // recule au lundi
+  const semaines = [];
+  while (d <= dernier) {
+    const jours = [];
+    for (let k = 0; k < 7; k++) {
+      const x = new Date(d); x.setUTCDate(x.getUTCDate() + k);
+      jours.push(x.toISOString().slice(0, 10));
+    }
+    semaines.push(jours);
+    d.setUTCDate(d.getUTCDate() + 7);
+  }
+  return semaines;
+}
+
+const JOURS_COURTS = ["lun", "mar", "mer", "jeu", "ven", "sam", "dim"];
+function libelleJour(iso, idx) {
+  return JOURS_COURTS[idx] + " " + iso.slice(8, 10) + "/" + iso.slice(5, 7);
+}
+
+/* Applique bordure + alignement à une cellule. */
+function styleCellule(cell, fillArgb) {
+  cell.border = {
+    top:    { style: "thin", color: { argb: XL.trait } },
+    left:   { style: "thin", color: { argb: XL.trait } },
+    bottom: { style: "thin", color: { argb: XL.trait } },
+    right:  { style: "thin", color: { argb: XL.trait } },
+  };
+  cell.alignment = { wrapText: true, vertical: "top" };
+  if (fillArgb) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fillArgb } };
+}
+
+/* Noms des médecins assignés un jour donné selon un prédicat sur le shift. */
+function nomsShift(shifts, date, predicate, nomFn) {
+  return shifts.filter((s) => s.date === date && predicate(s)).map((s) => nomFn(s.doctor_id));
+}
+/* Noms des médecins ayant une préférence (congé) couvrant la date. */
+function nomsPref(prefs, date, types, nomFn) {
+  return prefs.filter((p) => types.includes(p.pref_type) && p.start_date <= date && date <= p.end_date)
+    .map((p) => nomFn(p.doctor_id));
+}
+
+/* Construit une feuille « semaine » au gabarit Erasme. */
+function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
+  ws.getColumn(1).width = 20;
+  for (let c = 2; c <= 8; c++) ws.getColumn(c).width = 16;
+
+  // En-tête : col A vide + 7 dates.
+  const head = ws.getRow(1);
+  styleCellule(head.getCell(1), XL.entete);
+  jours.forEach((iso, i) => {
+    const cell = head.getCell(2 + i);
+    cell.value = libelleJour(iso, i);
+    cell.font = { bold: true };
+    styleCellule(cell, XL.entete);
+  });
+
+  // Définition des lignes (label, couleur, fonction de contenu par date).
+  const P = (codes) => (s) => codes.includes(s.shift_type);
+  const lignes = [];
+  const stations = [
+    ["USI 1", "usi1"], ["USI 2", "usi2"], ["USI 3", "usi3"], ["USI 4", "usi4"],
+    ["USI 5", "usi5"], ["USI Bordet", "bordet"], ["Labo de choc", "labo_choc"],
+  ];
+  stations.forEach(([lib, code]) => {
+    lignes.push({ label: lib, fill: XL.station,
+      get: (d) => nomsShift(shifts, d, (s) => s.poste === code && (s.shift_type === "jour" || s.shift_type === "garde_24h"), nomFn) });
+  });
+  lignes.push({ label: "Autres (saisie libre)", fill: null, get: () => [] });
+  lignes.push({ label: "Garde de nuit (17h–9h)", fill: XL.garde, get: (d) => nomsShift(shifts, d, P(["garde_nuit"]), nomFn) });
+  lignes.push({ label: "Garde 24h", fill: XL.garde, get: (d) => nomsShift(shifts, d, P(["garde_24h"]), nomFn) });
+  lignes.push({ label: "Tour (TWE)", fill: XL.garde, get: (d) => nomsShift(shifts, d, P(["twe"]), nomFn) });
+  lignes.push({ label: "Repos de garde", fill: XL.repos, get: (d) => nomsShift(shifts, d, P(["recup"]), nomFn) });
+  lignes.push({ label: "Off-clinic", fill: XL.off, get: (d) => nomsShift(shifts, d, P(["off"]), nomFn) });
+  lignes.push({ label: "Congé annuel", fill: XL.congeA,
+    get: (d) => nomsShift(shifts, d, P(["conge_annuel", "conge_extralegal"]), nomFn)
+      .concat(nomsPref(prefs, d, ["conge_annuel", "conge_extralegal"], nomFn)) });
+  lignes.push({ label: "Congé scientifique", fill: XL.congeS,
+    get: (d) => nomsShift(shifts, d, P(["conge_scientifique"]), nomFn)
+      .concat(nomsPref(prefs, d, ["conge_scientifique"], nomFn)) });
+  lignes.push({ label: "Indispo / formation / autre", fill: XL.autre,
+    get: (d) => nomsPref(prefs, d, ["indispo", "formation", "autre"], nomFn) });
+
+  // Écriture des lignes.
+  lignes.forEach((lg, r) => {
+    const row = ws.getRow(2 + r);
+    const lab = row.getCell(1);
+    lab.value = lg.label; lab.font = { bold: true };
+    styleCellule(lab, lg.fill);
+    jours.forEach((iso, i) => {
+      const cell = row.getCell(2 + i);
+      const noms = (lg.get(iso) || []).filter(Boolean);
+      cell.value = noms.length ? noms.join("\n") : null;
+      // Cellule auto-remplie distinguée des cellules vides (éditables).
+      styleCellule(cell, noms.length ? XL.auto : null);
+    });
+    row.height = Math.max(18, 14 * Math.max(1, ...jours.map((iso) => (lg.get(iso) || []).filter(Boolean).length)));
+  });
+}
+
+/* Déclenche le téléchargement d'un classeur ExcelJS. */
+async function telechargerClasseur(wb, filename) {
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+/* Charge shifts + préférences approuvées du mois affiché. */
+async function donneesMoisExport(b) {
+  const { data: shifts } = await sb.from("shifts")
+    .select("date, shift_type, doctor_id, poste").gte("date", b.debut).lte("date", b.fin);
+  const { data: prefs } = await sb.from("preferences")
+    .select("doctor_id, start_date, end_date, pref_type").eq("status", "approuve")
+    .lte("start_date", b.fin).gte("end_date", b.debut);
+  if (!Object.keys(carteMedecins).length) await chargerCarteMedecins();
+  return { shifts: shifts || [], prefs: prefs || [] };
+}
+
+/* EXPORT 1 — Planning complet : un onglet par semaine du mois affiché. */
+async function exporterExcelPlanning() {
+  if (typeof ExcelJS === "undefined") { window.alert("ExcelJS non chargé (vérifie ta connexion)."); return; }
+  const b = bornesMoisAffiche();
+  const { shifts, prefs } = await donneesMoisExport(b);
+  const nomFn = (id) => (carteMedecins[id] && carteMedecins[id].name) || "?";
+
+  const wb = new ExcelJS.Workbook();
+  semainesDuMois(b.annee, b.mois).forEach((jours, i) => {
+    const ws = wb.addWorksheet("Sem " + (i + 1));
+    construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn);
+  });
+  await telechargerClasseur(wb, "planning_" + b.annee + "-" + String(b.mois).padStart(2, "0") + ".xlsx");
+}
+
+/* EXPORT 2 — Récapitulatif individuel : lignes = médecins, colonnes = jours,
+   uniquement gardes / tours / congés / repos (pas la couverture des unités). */
+const CODE_SHIFT = {
+  garde_24h: "G24", garde_nuit: "GN", twe: "TWE", recup: "Repos", off: "Off",
+  conge_annuel: "CA", conge_scientifique: "Sci", conge_extralegal: "EL",
+};
+const CODE_PREF = {
+  conge_annuel: "CA", conge_extralegal: "EL", conge_scientifique: "Sci",
+  indispo: "Ind", formation: "Form", autre: "Autre", off_clinic: "Off", recuperation: "Repos",
+};
+
+async function exporterExcelRecap() {
+  if (typeof ExcelJS === "undefined") { window.alert("ExcelJS non chargé (vérifie ta connexion)."); return; }
+  const b = bornesMoisAffiche();
+  const { shifts, prefs } = await donneesMoisExport(b);
+  const { data: meds } = await sb.from("doctors")
+    .select("id, name, grade").neq("role", "admin").order("name", { ascending: true });
+  const medecins = meds || [];
+  const stats = (typeof compterParMedecin === "function") ? compterParMedecin(shifts) : {};
+
+  const nbJours = new Date(b.annee, b.mois, 0).getDate();
+  const ms = String(b.mois).padStart(2, "0");
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Récap " + ms + "-" + b.annee);
+  ws.getColumn(1).width = 22;
+  for (let j = 1; j <= nbJours; j++) ws.getColumn(1 + j).width = 5;
+  ["Gardes", "Week-ends", "Heures"].forEach((_, k) => { ws.getColumn(1 + nbJours + 1 + k).width = 9; });
+
+  // En-tête.
+  const head = ws.getRow(1);
+  head.getCell(1).value = "Médecin"; head.getCell(1).font = { bold: true };
+  styleCellule(head.getCell(1), XL.entete);
+  for (let j = 1; j <= nbJours; j++) {
+    const c = head.getCell(1 + j); c.value = j; c.font = { bold: true };
+    styleCellule(c, XL.entete);
+  }
+  ["Gardes", "WE", "Heures"].forEach((lib, k) => {
+    const c = head.getCell(1 + nbJours + 1 + k); c.value = lib; c.font = { bold: true };
+    styleCellule(c, XL.entete);
+  });
+
+  // Index rapide : shift d'un médecin à une date (priorité au travail/garde).
+  const parMedDate = {};
+  shifts.forEach((s) => { parMedDate[s.doctor_id + "|" + s.date] = s; });
+
+  medecins.forEach((m, r) => {
+    const row = ws.getRow(2 + r);
+    const lab = row.getCell(1); lab.value = m.name; lab.font = { bold: true };
+    styleCellule(lab, GRADE_LABELS[m.grade] === "Résident" ? null : null);
+    for (let j = 1; j <= nbJours; j++) {
+      const iso = b.annee + "-" + ms + "-" + String(j).padStart(2, "0");
+      const s = parMedDate[m.id + "|" + iso];
+      let code = "";
+      if (s) code = CODE_SHIFT[s.shift_type] || "";
+      if (!code) {
+        const p = prefs.find((x) => x.doctor_id === m.id && x.start_date <= iso && iso <= x.end_date && CODE_PREF[x.pref_type]);
+        if (p) code = CODE_PREF[p.pref_type];
+      }
+      const c = row.getCell(1 + j);
+      c.value = code || null;
+      c.alignment = { horizontal: "center" };
+      styleCellule(c, code ? XL.auto : null);
+    }
+    const st = stats[m.id] || { gardes: 0, weekends: 0, heures: 0 };
+    [st.gardes, st.weekends, st.heures].forEach((v, k) => {
+      const c = row.getCell(1 + nbJours + 1 + k);
+      c.value = v; c.alignment = { horizontal: "center" }; styleCellule(c, null);
+    });
+  });
+
+  await telechargerClasseur(wb, "recap_individuel_" + b.annee + "-" + ms + ".xlsx");
+}
+
+if (exportPlanningBtn) exportPlanningBtn.addEventListener("click", exporterExcelPlanning);
+if (exportRecapBtn) exportRecapBtn.addEventListener("click", exporterExcelRecap);
+
+
+/* ===================================================================== */
 /* MODULE 6 — Admin : ajustements manuels, publication, compteurs        */
 /* ===================================================================== */
 

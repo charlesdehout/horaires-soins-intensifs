@@ -105,6 +105,8 @@
           <button id="ajouter-shift-btn" class="secondary">+ Ajouter un shift</button>
           <button id="publier-btn" class="secondary">✓ Publier</button>
           <button id="depublier-btn" class="secondary">↩ Repasser en brouillon</button>
+          <button id="export-planning-btn" class="secondary">⬇ Excel — Planning</button>
+          <button id="export-recap-btn" class="secondary">⬇ Excel — Récap individuel</button>
         </div>
         <p class="zone-info">
           La génération crée un <strong>brouillon</strong> (greedy v1) pour le mois affiché ci-dessus,
@@ -391,6 +393,8 @@
   <script src="planning.js"></script>
   <!-- FullCalendar (Module 4) — bundle global (vues mois + liste) -->
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+  <!-- ExcelJS (Module 14) — génération de classeurs .xlsx stylés côté navigateur -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
   <!-- Notre logique applicative -->
   <script src="app.js"></script>
 </body>

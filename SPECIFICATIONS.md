@@ -30,6 +30,9 @@
 >   la **génération est bloquée** tant qu'il reste des demandes en attente sur la
 >   période, et seules les demandes **approuvées** influencent le planning. Nouveaux
 >   types : formation USI, congé « autre » (hors quota), demande week-end/férié.
+> - **Exports Excel §13** (ExcelJS, boutons admin) : Export 1 « Planning » (un onglet
+>   par semaine du mois, gabarit Erasme coloré, cellules auto distinguées des vides
+>   éditables) ; Export 2 « Récap individuel » (gardes/tours/congés/repos + totaux).
 
 ---
 

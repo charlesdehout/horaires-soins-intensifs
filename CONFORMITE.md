@@ -144,14 +144,17 @@ demandes, pré-placement, déclarations indépendants ❌).
 
 ## 13. Exports Excel
 
-❌ à construire selon la spec précise :
-- **Export 1 — Planning complet** : 1 onglet par semaine du **trimestre**,
-  toutes les unités (même non couvertes), postes vides = cellules éditables,
-  lignes vides supplémentaires par unité (infirmiers/autres), cellules
-  auto **distinguées visuellement** des cellules à saisie manuelle, et par
-  jour : postes+médecins, absences (avec type), repos (avec type).
-- **Export 2 — Récapitulatif individuel** : par travailleur, uniquement
-  congés/repos/gardes/tours, sans couverture des unités.
+⚠️ **appliqué (v1)** via ExcelJS, validé sous Node :
+- **Export 1 — Planning complet** ✅ : 1 onglet par semaine **du mois affiché**
+  (passage au trimestre = petit ajustement), gabarit coloré (stations USI 1–5 /
+  Bordet / Labo, gardes, tour, repos, off-clinic, congés annuels/scientifiques,
+  indispo/formation/autre), ligne « Autres (saisie libre) », cellules
+  auto-remplies **distinguées** (fond gris clair) des cellules vides éditables.
+- **Export 2 — Récapitulatif individuel** ✅ : lignes = médecins, colonnes =
+  jours, codes gardes/tours/congés/repos uniquement (pas la couverture des
+  unités) + totaux gardes/week-ends/heures.
+- Restant : découpage par **trimestre** plutôt que mois ; postes vides montrés
+  explicitement les week-ends (Labo fermé) ; lignes vides supplémentaires par unité.
 
 ## 14. Seuil d'alerte absences simultanées
 
