@@ -118,6 +118,10 @@
               <label for="d-end">Fin de contrat</label>
               <input type="date" id="d-end" />
             </div>
+            <div>
+              <label for="d-conges">Quota congés (jours sur le contrat)</label>
+              <input type="number" id="d-conges" min="0" step="1" placeholder="laisser vide = illimité" />
+            </div>
           </div>
           <div class="form-actions">
             <button type="submit" id="save-doctor-btn">Enregistrer</button>
@@ -137,6 +141,7 @@
               <th>Cible h/sem</th>
               <th>Contrat</th>
               <th>Accès</th>
+              <th>Congés max</th>
               <th></th>
             </tr>
           </thead>
@@ -154,6 +159,9 @@
           Encode tes congés, indisponibilités et souhaits. Le chef de service
           en tiendra compte lors de la génération du planning.
         </p>
+
+        <!-- Compteur de congés (affiché seulement si un quota est défini) -->
+        <p id="conges-compteur" class="zone-info hidden"></p>
 
         <!-- Formulaire d'ajout d'une préférence -->
         <form id="pref-form" class="doctor-form">

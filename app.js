@@ -50,6 +50,7 @@ const dHours          = document.getElementById("d-hours");
 const dRole           = document.getElementById("d-role");
 const dStart          = document.getElementById("d-start");
 const dEnd            = document.getElementById("d-end");
+const dConges         = document.getElementById("d-conges");
 const cancelDoctorBtn = document.getElementById("cancel-doctor-btn");
 const doctorFormMsg   = document.getElementById("doctor-form-msg");
 const doctorsTbody    = document.getElementById("doctors-tbody");
@@ -69,6 +70,12 @@ const prefsEmpty  = document.getElementById("prefs-empty");
 
 /* Références DOM — calendrier (Module 4) */
 const legendMine  = document.getElementById("legend-mine");
+
+/* Références DOM — quota de congés (Module 2/3) */
+const congesCompteur = document.getElementById("conges-compteur");
+
+/* Préférences du médecin connecté, mémorisées pour le calcul du quota. */
+let prefsCourantes = [];
 
 /* Profil du médecin actuellement connecté (id, name, role). */
 let medecinCourant = null;
@@ -97,7 +104,7 @@ function basculerVue(connecte) {
 async function chargerProfil(user) {
   const { data, error } = await sb
     .from("doctors")
-    .select("id, name, role")
+    .select("id, name, role, contract_start, contract_end, max_conges_days")
     .eq("email", user.email)
     .maybeSingle();
 
@@ -235,6 +242,7 @@ function ouvrirEdition(med) {
   dRole.value = med.role || "doctor";
   dStart.value = med.contract_start || "";
   dEnd.value = med.contract_end || "";
+  dConges.value = med.max_conges_days ?? "";
   messageFormMedecin("");
   doctorForm.classList.remove("hidden");
   doctorForm.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -260,7 +268,7 @@ async function chargerMedecins() {
   if (error) {
     console.error("Erreur chargement médecins :", error);
     doctorsTbody.innerHTML =
-      '<tr><td colspan="8">Erreur de chargement (vérifie les règles RLS).</td></tr>';
+      '<tr><td colspan="9">Erreur de chargement (vérifie les règles RLS).</td></tr>';
     return;
   }
 
@@ -291,6 +299,7 @@ function rendreTableau(medecins) {
       (med.weekly_hours_target ?? "") + " h",
       contrat,
       med.role === "admin" ? "Admin" : "Médecin",
+      med.max_conges_days == null ? "illimité" : med.max_conges_days + " j",
     ];
     cells.forEach((valeur) => {
       const td = document.createElement("td");
@@ -338,6 +347,8 @@ doctorForm.addEventListener("submit", async (e) => {
     contract_type: fte >= 1 ? "temps_plein" : "temps_partiel",
     contract_start: dStart.value || null,
     contract_end: dEnd.value || null,
+    // Quota de congés sur la durée du contrat. Vide → null (illimité).
+    max_conges_days: dConges.value === "" ? null : parseInt(dConges.value, 10),
   };
 
   let error;
@@ -414,7 +425,39 @@ async function chargerPreferences() {
     return;
   }
 
-  rendrePreferences(data || []);
+  prefsCourantes = data || [];
+  majCompteurConges();          // met à jour l'affichage du quota
+  rendrePreferences(prefsCourantes);
+}
+
+/* Nombre de jours (inclusif) entre deux dates AAAA-MM-JJ. */
+function nbJoursInclusif(debut, fin) {
+  const d1 = new Date(debut + "T00:00:00");
+  const d2 = new Date(fin + "T00:00:00");
+  return Math.round((d2 - d1) / 86400000) + 1;
+}
+
+/* Total des jours de congé déjà encodés par le médecin connecté. */
+function totalJoursConges() {
+  return prefsCourantes
+    .filter((p) => p.pref_type === "conge")
+    .reduce((somme, p) => somme + nbJoursInclusif(p.start_date, p.end_date), 0);
+}
+
+/* Affiche le compteur « X / Y jours de congé » si un quota est défini. */
+function majCompteurConges() {
+  if (!congesCompteur) return;
+  const quota = medecinCourant ? medecinCourant.max_conges_days : null;
+  if (quota == null) {
+    congesCompteur.classList.add("hidden");
+    return;
+  }
+  const utilises = totalJoursConges();
+  const reste = quota - utilises;
+  congesCompteur.textContent =
+    "Congés : " + utilises + " / " + quota + " jours utilisés" +
+    " (reste " + (reste < 0 ? 0 : reste) + " j).";
+  congesCompteur.classList.remove("hidden");
 }
 
 /* Construit les lignes du tableau de préférences */
@@ -473,6 +516,20 @@ prefForm.addEventListener("submit", async (e) => {
   if (fin < debut) {
     messageFormPref("La date de fin doit être postérieure ou égale à la date de début.");
     return;
+  }
+
+  // Contrôle du quota de congés (bloquant) si un maximum est défini.
+  const quota = medecinCourant.max_conges_days;
+  if (pType.value === "conge" && quota != null) {
+    const demande = nbJoursInclusif(debut, fin);
+    const total = totalJoursConges() + demande;
+    if (total > quota) {
+      messageFormPref(
+        "Quota de congés dépassé : " + total + " j demandés pour un maximum de " +
+        quota + " j sur le contrat (déjà " + totalJoursConges() + " j encodés)."
+      );
+      return;
+    }
   }
 
   const payload = {
