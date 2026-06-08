@@ -201,9 +201,19 @@ button.mini.danger:hover { background: #fdeaea; }
   font-size: 0.78rem;
   font-weight: 600;
 }
-.badge-conge   { background: #ddf4e4; color: var(--vert); }
-.badge-indispo { background: #fdeaea; color: var(--rouge); }
-.badge-souhait { background: #e3eefe; color: var(--bleu); }
+.badge-conge              { background: #ddf4e4; color: var(--vert); }
+.badge-conge_annuel       { background: #ddf4e4; color: var(--vert); }
+.badge-conge_extralegal   { background: #c8ecd4; color: #0f5132; }
+.badge-conge_scientifique { background: #ccecea; color: #0b6b63; }
+.badge-indispo            { background: #fdeaea; color: var(--rouge); }
+.badge-souhait            { background: #e3eefe; color: var(--bleu); }
+
+/* Aide sous un formulaire (texte gris discret) */
+.form-hint {
+  margin: 0.2rem 0 0.6rem;
+  font-size: 0.8rem;
+  color: #57606a;
+}
 
 /* =====================================================================
    Module 4 — Calendrier (FullCalendar) + légende

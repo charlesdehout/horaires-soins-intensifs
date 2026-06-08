@@ -50,7 +50,9 @@ const dHours          = document.getElementById("d-hours");
 const dRole           = document.getElementById("d-role");
 const dStart          = document.getElementById("d-start");
 const dEnd            = document.getElementById("d-end");
-const dConges         = document.getElementById("d-conges");
+const dQuotaAnnuel    = document.getElementById("d-quota-annuel");
+const dQuotaExtra     = document.getElementById("d-quota-extra");
+const dQuotaScient    = document.getElementById("d-quota-scientifique");
 const cancelDoctorBtn = document.getElementById("cancel-doctor-btn");
 const doctorFormMsg   = document.getElementById("doctor-form-msg");
 const doctorsTbody    = document.getElementById("doctors-tbody");
@@ -104,7 +106,7 @@ function basculerVue(connecte) {
 async function chargerProfil(user) {
   const { data, error } = await sb
     .from("doctors")
-    .select("id, name, role, contract_start, contract_end, max_conges_days")
+    .select("id, name, role, contract_start, contract_end, quota_conge_annuel, quota_conge_extralegal, quota_conge_scientifique")
     .eq("email", user.email)
     .maybeSingle();
 
@@ -209,6 +211,19 @@ const GRADE_LABELS = {
   specialiste: "Spécialiste",
 };
 
+/* Quota de base d'un type de congé : surcharge du médecin, sinon défaut (regles.js). */
+function quotaBase(med, type) {
+  const valeur = med["quota_" + type];
+  return valeur != null ? valeur : CONGE_TYPES[type].defaut;
+}
+
+/* Résumé compact « annuel/extra/scientifique » pour le tableau admin. */
+function quotasResume(med) {
+  return quotaBase(med, "conge_annuel") + "/" +
+         quotaBase(med, "conge_extralegal") + "/" +
+         quotaBase(med, "conge_scientifique");
+}
+
 /* Affiche un message dans le formulaire médecin */
 function messageFormMedecin(texte, type = "error") {
   doctorFormMsg.textContent = texte;
@@ -242,7 +257,9 @@ function ouvrirEdition(med) {
   dRole.value = med.role || "doctor";
   dStart.value = med.contract_start || "";
   dEnd.value = med.contract_end || "";
-  dConges.value = med.max_conges_days ?? "";
+  dQuotaAnnuel.value = med.quota_conge_annuel ?? "";
+  dQuotaExtra.value = med.quota_conge_extralegal ?? "";
+  dQuotaScient.value = med.quota_conge_scientifique ?? "";
   messageFormMedecin("");
   doctorForm.classList.remove("hidden");
   doctorForm.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -299,7 +316,7 @@ function rendreTableau(medecins) {
       (med.weekly_hours_target ?? "") + " h",
       contrat,
       med.role === "admin" ? "Admin" : "Médecin",
-      med.max_conges_days == null ? "illimité" : med.max_conges_days + " j",
+      quotasResume(med),
     ];
     cells.forEach((valeur) => {
       const td = document.createElement("td");
@@ -347,8 +364,10 @@ doctorForm.addEventListener("submit", async (e) => {
     contract_type: fte >= 1 ? "temps_plein" : "temps_partiel",
     contract_start: dStart.value || null,
     contract_end: dEnd.value || null,
-    // Quota de congés sur la durée du contrat. Vide → null (illimité).
-    max_conges_days: dConges.value === "" ? null : parseInt(dConges.value, 10),
+    // Quotas de congés annuels (jours ouvrés). Vide → null = valeur par défaut.
+    quota_conge_annuel:       dQuotaAnnuel.value === "" ? null : parseInt(dQuotaAnnuel.value, 10),
+    quota_conge_extralegal:   dQuotaExtra.value === ""  ? null : parseInt(dQuotaExtra.value, 10),
+    quota_conge_scientifique: dQuotaScient.value === "" ? null : parseInt(dQuotaScient.value, 10),
   };
 
   let error;
@@ -395,9 +414,12 @@ async function supprimerMedecin(med) {
 /* MODULE 3 — Préférences du médecin (congés / indispos / souhaits)      */
 /* ===================================================================== */
 
-// Libellés lisibles des types de préférence.
+// Libellés lisibles des types de préférence ('conge' = ancien type, compat.).
 const PREF_LABELS = {
   conge: "Congé",
+  conge_annuel: "Congé annuel",
+  conge_extralegal: "Extra-légaux",
+  conge_scientifique: "Scientifique",
   indispo: "Indisponibilité",
   souhait: "Souhait",
 };
@@ -430,33 +452,79 @@ async function chargerPreferences() {
   rendrePreferences(prefsCourantes);
 }
 
-/* Nombre de jours (inclusif) entre deux dates AAAA-MM-JJ. */
-function nbJoursInclusif(debut, fin) {
-  const d1 = new Date(debut + "T00:00:00");
-  const d2 = new Date(fin + "T00:00:00");
-  return Math.round((d2 - d1) / 86400000) + 1;
+/* --- Comptage des congés en jours OUVRÉS, par catégorie et par année --- */
+
+/* Catégorie de quota d'un pref_type ('conge' historique compté en annuel). */
+function categorieConge(prefType) {
+  if (prefType === "conge") return "conge_annuel";
+  return CONGE_TYPES[prefType] ? prefType : null;
 }
 
-/* Total des jours de congé déjà encodés par le médecin connecté. */
-function totalJoursConges() {
-  return prefsCourantes
-    .filter((p) => p.pref_type === "conge")
-    .reduce((somme, p) => somme + nbJoursInclusif(p.start_date, p.end_date), 0);
-}
-
-/* Affiche le compteur « X / Y jours de congé » si un quota est défini. */
-function majCompteurConges() {
-  if (!congesCompteur) return;
-  const quota = medecinCourant ? medecinCourant.max_conges_days : null;
-  if (quota == null) {
-    congesCompteur.classList.add("hidden");
-    return;
+/* Jours ouvrés (lun–ven hors fériés) d'une plage tombant dans l'année donnée. */
+function joursOuvresDansAnnee(debut, fin, annee) {
+  let total = 0;
+  const d = new Date(debut + "T00:00:00Z");
+  const dFin = new Date(fin + "T00:00:00Z");
+  while (d <= dFin) {
+    const iso = d.toISOString().slice(0, 10);
+    if (d.getUTCFullYear() === annee && estJourOuvre(iso)) total++;
+    d.setUTCDate(d.getUTCDate() + 1);
   }
-  const utilises = totalJoursConges();
-  const reste = quota - utilises;
-  congesCompteur.textContent =
-    "Congés : " + utilises + " / " + quota + " jours utilisés" +
-    " (reste " + (reste < 0 ? 0 : reste) + " j).";
+  return total;
+}
+
+/* Fraction de l'année civile couverte par le contrat du médecin (0 à 1). */
+function fractionAnneeSousContrat(annee, med) {
+  const debutAnnee = Date.UTC(annee, 0, 1);
+  const finAnnee = Date.UTC(annee, 11, 31);
+  let debut = med.contract_start ? Date.parse(med.contract_start + "T00:00:00Z") : debutAnnee;
+  let fin = med.contract_end ? Date.parse(med.contract_end + "T00:00:00Z") : finAnnee;
+  debut = Math.max(debut, debutAnnee);
+  fin = Math.min(fin, finAnnee);
+  if (fin < debut) return 0;
+  const jours = (fin - debut) / 86400000 + 1;
+  const joursAnnee = (finAnnee - debutAnnee) / 86400000 + 1;
+  return jours / joursAnnee;
+}
+
+/* Quota effectif (défaut ou surcharge, proratisé au contrat) pour une année. */
+function quotaEffectif(type, annee) {
+  if (!medecinCourant) return 0;
+  return Math.round(quotaBase(medecinCourant, type) *
+                    fractionAnneeSousContrat(annee, medecinCourant));
+}
+
+/* Jours ouvrés déjà encodés pour une catégorie et une année. */
+function congesUtilises(type, annee) {
+  return prefsCourantes
+    .filter((p) => categorieConge(p.pref_type) === type)
+    .reduce((s, p) => s + joursOuvresDansAnnee(p.start_date, p.end_date, annee), 0);
+}
+
+/* Années à afficher : année courante + toute année comportant un congé. */
+function anneesAvecConges() {
+  const annees = new Set([new Date().getUTCFullYear()]);
+  prefsCourantes.forEach((p) => {
+    if (categorieConge(p.pref_type)) {
+      annees.add(new Date(p.start_date + "T00:00:00Z").getUTCFullYear());
+      annees.add(new Date(p.end_date + "T00:00:00Z").getUTCFullYear());
+    }
+  });
+  return [...annees].sort();
+}
+
+/* Affiche les compteurs « X / Y jours ouvrés » par catégorie et par année. */
+function majCompteurConges() {
+  if (!congesCompteur || !medecinCourant) return;
+  const lignes = anneesAvecConges().map((annee) => {
+    const parts = Object.keys(CONGE_TYPES).map((type) => {
+      return CONGE_TYPES[type].label + " " +
+             congesUtilises(type, annee) + "/" + quotaEffectif(type, annee);
+    });
+    return "<strong>" + annee + "</strong> — " + parts.join(" · ");
+  });
+  congesCompteur.innerHTML =
+    lignes.join("<br>") + "<br><em>en jours ouvrés (lun–ven hors fériés)</em>";
   congesCompteur.classList.remove("hidden");
 }
 
@@ -518,17 +586,24 @@ prefForm.addEventListener("submit", async (e) => {
     return;
   }
 
-  // Contrôle du quota de congés (bloquant) si un maximum est défini.
-  const quota = medecinCourant.max_conges_days;
-  if (pType.value === "conge" && quota != null) {
-    const demande = nbJoursInclusif(debut, fin);
-    const total = totalJoursConges() + demande;
-    if (total > quota) {
-      messageFormPref(
-        "Quota de congés dépassé : " + total + " j demandés pour un maximum de " +
-        quota + " j sur le contrat (déjà " + totalJoursConges() + " j encodés)."
-      );
-      return;
+  // Contrôle des quotas de congés (bloquant), par catégorie et par année civile.
+  const categorie = categorieConge(pType.value);
+  if (categorie) {
+    const anneeDebut = new Date(debut + "T00:00:00Z").getUTCFullYear();
+    const anneeFin = new Date(fin + "T00:00:00Z").getUTCFullYear();
+    for (let annee = anneeDebut; annee <= anneeFin; annee++) {
+      const demande = joursOuvresDansAnnee(debut, fin, annee);
+      if (demande === 0) continue;
+      const dejaPris = congesUtilises(categorie, annee);
+      const quota = quotaEffectif(categorie, annee);
+      if (dejaPris + demande > quota) {
+        messageFormPref(
+          CONGE_TYPES[categorie].label + " " + annee + " : quota dépassé (" +
+          (dejaPris + demande) + " j ouvrés demandés pour un maximum de " + quota +
+          " j ; déjà " + dejaPris + " j encodés)."
+        );
+        return;
+      }
     }
   }
 
@@ -590,16 +665,22 @@ const SHIFT_CONFIG = {
 
 /* Couleurs de fond des préférences affichées dans le calendrier. */
 const PREF_BG = {
-  conge:        "rgba(26,127,55,0.18)",   // vert
-  indispo:      "rgba(207,34,46,0.16)",    // rouge
-  souhait:      "rgba(31,111,235,0.14)",   // bleu
-  off_clinic:   "rgba(154,103,0,0.16)",    // orangé
-  recuperation: "rgba(130,80,223,0.16)",   // violet
+  conge:              "rgba(26,127,55,0.18)",   // vert (ancien type)
+  conge_annuel:       "rgba(26,127,55,0.18)",   // vert
+  conge_extralegal:   "rgba(26,127,55,0.28)",   // vert plus soutenu
+  conge_scientifique: "rgba(13,148,136,0.20)",  // sarcelle
+  indispo:            "rgba(207,34,46,0.16)",    // rouge
+  souhait:            "rgba(31,111,235,0.14)",   // bleu
+  off_clinic:         "rgba(154,103,0,0.16)",    // orangé
+  recuperation:       "rgba(130,80,223,0.16)",   // violet
 };
 
 /* Libellés complets des types de préférence (inclut off_clinic / recuperation). */
 const PREF_LABELS_FULL = {
   conge: "Congé",
+  conge_annuel: "Congé annuel",
+  conge_extralegal: "Congés extra-légaux",
+  conge_scientifique: "Congé scientifique",
   indispo: "Indisponibilité",
   souhait: "Souhait",
   off_clinic: "Off/clinic",

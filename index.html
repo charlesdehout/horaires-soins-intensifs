@@ -119,10 +119,19 @@
               <input type="date" id="d-end" />
             </div>
             <div>
-              <label for="d-conges">Quota congés (jours sur le contrat)</label>
-              <input type="number" id="d-conges" min="0" step="1" placeholder="laisser vide = illimité" />
+              <label for="d-quota-annuel">Congé annuel (j/an)</label>
+              <input type="number" id="d-quota-annuel" min="0" step="1" placeholder="défaut 24" />
+            </div>
+            <div>
+              <label for="d-quota-extra">Extra-légaux (j/an)</label>
+              <input type="number" id="d-quota-extra" min="0" step="1" placeholder="défaut 5" />
+            </div>
+            <div>
+              <label for="d-quota-scientifique">Scientifique (j/an)</label>
+              <input type="number" id="d-quota-scientifique" min="0" step="1" placeholder="défaut 12" />
             </div>
           </div>
+          <p class="form-hint">Quotas annuels en jours ouvrés, proratisés selon la durée du contrat. Laisser vide = valeur par défaut.</p>
           <div class="form-actions">
             <button type="submit" id="save-doctor-btn">Enregistrer</button>
             <button type="button" id="cancel-doctor-btn" class="secondary">Annuler</button>
@@ -141,7 +150,7 @@
               <th>Cible h/sem</th>
               <th>Contrat</th>
               <th>Accès</th>
-              <th>Congés max</th>
+              <th>Quotas A/E/S</th>
               <th></th>
             </tr>
           </thead>
@@ -169,7 +178,9 @@
             <div>
               <label for="p-type">Type</label>
               <select id="p-type">
-                <option value="conge">Congé (bloquant)</option>
+                <option value="conge_annuel">Congé annuel (bloquant)</option>
+                <option value="conge_extralegal">Congés extra-légaux (bloquant)</option>
+                <option value="conge_scientifique">Congé scientifique (bloquant)</option>
                 <option value="indispo">Indisponibilité (bloquant)</option>
                 <option value="souhait">Souhait (préférence)</option>
               </select>
@@ -216,6 +227,8 @@
 
   <!-- Client Supabase officiel (CDN) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Règles métier (config : quotas de congés, jours fériés…) -->
+  <script src="regles.js"></script>
   <!-- FullCalendar (Module 4) — bundle global (vues mois + liste) -->
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
   <!-- Notre logique applicative -->
