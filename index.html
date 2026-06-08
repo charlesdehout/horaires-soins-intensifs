@@ -39,10 +39,84 @@
       <p id="welcome-text"></p>
       <p>Rôle détecté : <strong id="role-text"></strong></p>
 
-      <!-- Contenu spécifique au rôle (rempli aux modules suivants) -->
+      <!-- ===== Espace ADMIN : gestion des médecins (Module 2) ===== -->
       <div id="admin-zone" class="hidden">
-        <p class="zone-info">Espace administrateur (chef de service) — à construire au Module 2.</p>
+        <div class="zone-header">
+          <h2>Médecins</h2>
+          <button id="add-doctor-btn">+ Ajouter un médecin</button>
+        </div>
+
+        <!-- Formulaire d'ajout / édition (masqué par défaut) -->
+        <form id="doctor-form" class="doctor-form hidden">
+          <input type="hidden" id="doctor-id" />
+          <div class="form-grid">
+            <div>
+              <label for="d-name">Nom</label>
+              <input type="text" id="d-name" required />
+            </div>
+            <div>
+              <label for="d-email">Email</label>
+              <input type="email" id="d-email" required />
+            </div>
+            <div>
+              <label for="d-grade">Grade</label>
+              <select id="d-grade">
+                <option value="resident">Résident</option>
+                <option value="assistant_specialiste">Assistant spécialiste</option>
+                <option value="specialiste">Spécialiste</option>
+              </select>
+            </div>
+            <div>
+              <label for="d-fte">Quotité (fte)</label>
+              <input type="number" id="d-fte" min="0.1" max="1" step="0.1" value="1" />
+            </div>
+            <div>
+              <label for="d-hours">Cible h/sem (auto)</label>
+              <input type="number" id="d-hours" step="0.5" />
+            </div>
+            <div>
+              <label for="d-role">Accès</label>
+              <select id="d-role">
+                <option value="doctor">Médecin</option>
+                <option value="admin">Administrateur</option>
+              </select>
+            </div>
+            <div>
+              <label for="d-start">Début de contrat</label>
+              <input type="date" id="d-start" />
+            </div>
+            <div>
+              <label for="d-end">Fin de contrat</label>
+              <input type="date" id="d-end" />
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="submit" id="save-doctor-btn">Enregistrer</button>
+            <button type="button" id="cancel-doctor-btn" class="secondary">Annuler</button>
+          </div>
+          <p id="doctor-form-msg" class="message"></p>
+        </form>
+
+        <!-- Tableau des médecins -->
+        <table id="doctors-table" class="data-table">
+          <thead>
+            <tr>
+              <th>Nom</th>
+              <th>Email</th>
+              <th>Grade</th>
+              <th>Quotité</th>
+              <th>Cible h/sem</th>
+              <th>Contrat</th>
+              <th>Accès</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="doctors-tbody"></tbody>
+        </table>
+        <p id="doctors-empty" class="zone-info hidden">Aucun médecin enregistré pour l'instant.</p>
       </div>
+
+      <!-- ===== Espace MÉDECIN (Module 3) ===== -->
       <div id="doctor-zone" class="hidden">
         <p class="zone-info">Espace médecin — à construire au Module 3.</p>
       </div>

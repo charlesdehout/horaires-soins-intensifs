@@ -38,6 +38,24 @@ const adminZone   = document.getElementById("admin-zone");
 const doctorZone  = document.getElementById("doctor-zone");
 const logoutBtn   = document.getElementById("logout-btn");
 
+/* Références DOM — gestion des médecins (Module 2) */
+const addDoctorBtn    = document.getElementById("add-doctor-btn");
+const doctorForm      = document.getElementById("doctor-form");
+const doctorId        = document.getElementById("doctor-id");
+const dName           = document.getElementById("d-name");
+const dEmail          = document.getElementById("d-email");
+const dGrade          = document.getElementById("d-grade");
+const dFte            = document.getElementById("d-fte");
+const dHours          = document.getElementById("d-hours");
+const dRole           = document.getElementById("d-role");
+const dStart          = document.getElementById("d-start");
+const dEnd            = document.getElementById("d-end");
+const cancelDoctorBtn = document.getElementById("cancel-doctor-btn");
+const doctorFormMsg   = document.getElementById("doctor-form-msg");
+const doctorsTbody    = document.getElementById("doctors-tbody");
+const doctorsTable    = document.getElementById("doctors-table");
+const doctorsEmpty    = document.getElementById("doctors-empty");
+
 
 /* --------------------------------------------------------------------- */
 /* Petites fonctions utilitaires d'affichage                             */
@@ -101,6 +119,9 @@ function afficherEspace(profil) {
   doctorZone.classList.toggle("hidden", estAdmin);
 
   basculerVue(true);
+
+  // Côté admin : on charge la liste des médecins.
+  if (estAdmin) chargerMedecins();
 }
 
 
@@ -141,6 +162,198 @@ logoutBtn.addEventListener("click", async () => {
   loginForm.reset();
   afficherMessage("");
 });
+
+
+/* ===================================================================== */
+/* MODULE 2 — Gestion des médecins (CRUD admin)                          */
+/* ===================================================================== */
+
+// Heures hebdo de référence pour un plein temps (cible = HEURES_BASE × fte).
+const HEURES_BASE = 52;
+
+// Libellés lisibles des grades.
+const GRADE_LABELS = {
+  resident: "Résident",
+  assistant_specialiste: "Assistant spéc.",
+  specialiste: "Spécialiste",
+};
+
+/* Affiche un message dans le formulaire médecin */
+function messageFormMedecin(texte, type = "error") {
+  doctorFormMsg.textContent = texte;
+  doctorFormMsg.className = "message " + type;
+}
+
+/* Met à jour la cible horaire automatiquement quand la quotité change */
+dFte.addEventListener("input", () => {
+  const fte = parseFloat(dFte.value);
+  if (!isNaN(fte)) dHours.value = Math.round(HEURES_BASE * fte * 10) / 10;
+});
+
+/* Ouvre le formulaire en mode "ajout" (champs vides) */
+function ouvrirAjout() {
+  doctorForm.reset();
+  doctorId.value = "";
+  dFte.value = "1";
+  dHours.value = HEURES_BASE; // 52h par défaut (plein temps)
+  messageFormMedecin("");
+  doctorForm.classList.remove("hidden");
+}
+
+/* Ouvre le formulaire en mode "édition", pré-rempli avec un médecin */
+function ouvrirEdition(med) {
+  doctorId.value = med.id;
+  dName.value = med.name || "";
+  dEmail.value = med.email || "";
+  dGrade.value = med.grade || "specialiste";
+  dFte.value = med.fte ?? 1;
+  dHours.value = med.weekly_hours_target ?? HEURES_BASE;
+  dRole.value = med.role || "doctor";
+  dStart.value = med.contract_start || "";
+  dEnd.value = med.contract_end || "";
+  messageFormMedecin("");
+  doctorForm.classList.remove("hidden");
+  doctorForm.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+/* Ferme le formulaire */
+function fermerFormulaire() {
+  doctorForm.classList.add("hidden");
+  doctorForm.reset();
+  messageFormMedecin("");
+}
+
+addDoctorBtn.addEventListener("click", ouvrirAjout);
+cancelDoctorBtn.addEventListener("click", fermerFormulaire);
+
+/* Charge tous les médecins depuis Supabase et les affiche dans le tableau */
+async function chargerMedecins() {
+  const { data, error } = await sb
+    .from("doctors")
+    .select("*")
+    .order("name", { ascending: true });
+
+  if (error) {
+    console.error("Erreur chargement médecins :", error);
+    doctorsTbody.innerHTML =
+      '<tr><td colspan="8">Erreur de chargement (vérifie les règles RLS).</td></tr>';
+    return;
+  }
+
+  rendreTableau(data || []);
+}
+
+/* Construit les lignes du tableau */
+function rendreTableau(medecins) {
+  doctorsTbody.innerHTML = "";
+
+  const vide = medecins.length === 0;
+  doctorsTable.classList.toggle("hidden", vide);
+  doctorsEmpty.classList.toggle("hidden", !vide);
+
+  medecins.forEach((med) => {
+    const tr = document.createElement("tr");
+
+    const contrat = med.contract_start
+      ? med.contract_start + (med.contract_end ? " → " + med.contract_end : " → indéterminé")
+      : "—";
+
+    // textContent partout pour éviter toute injection HTML.
+    const cells = [
+      med.name,
+      med.email,
+      GRADE_LABELS[med.grade] || med.grade,
+      med.fte,
+      (med.weekly_hours_target ?? "") + " h",
+      contrat,
+      med.role === "admin" ? "Admin" : "Médecin",
+    ];
+    cells.forEach((valeur) => {
+      const td = document.createElement("td");
+      td.textContent = valeur;
+      tr.appendChild(td);
+    });
+
+    // Cellule d'actions (Éditer / Supprimer)
+    const tdActions = document.createElement("td");
+    tdActions.className = "actions-cell";
+
+    const btnEdit = document.createElement("button");
+    btnEdit.textContent = "Éditer";
+    btnEdit.className = "mini";
+    btnEdit.addEventListener("click", () => ouvrirEdition(med));
+
+    const btnDel = document.createElement("button");
+    btnDel.textContent = "Supprimer";
+    btnDel.className = "mini danger";
+    btnDel.addEventListener("click", () => supprimerMedecin(med));
+
+    tdActions.appendChild(btnEdit);
+    tdActions.appendChild(btnDel);
+    tr.appendChild(tdActions);
+
+    doctorsTbody.appendChild(tr);
+  });
+}
+
+/* Enregistre (création ou mise à jour) un médecin */
+doctorForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  messageFormMedecin("");
+
+  const fte = parseFloat(dFte.value);
+
+  // Construit l'objet à envoyer. Dates vides → null.
+  const payload = {
+    name: dName.value.trim(),
+    email: dEmail.value.trim().toLowerCase(),
+    grade: dGrade.value,
+    fte: isNaN(fte) ? 1 : fte,
+    weekly_hours_target: parseFloat(dHours.value) || HEURES_BASE,
+    role: dRole.value,
+    contract_type: fte >= 1 ? "temps_plein" : "temps_partiel",
+    contract_start: dStart.value || null,
+    contract_end: dEnd.value || null,
+  };
+
+  let error;
+  if (doctorId.value) {
+    // Mise à jour
+    ({ error } = await sb.from("doctors").update(payload).eq("id", doctorId.value));
+  } else {
+    // Création
+    ({ error } = await sb.from("doctors").insert(payload));
+  }
+
+  if (error) {
+    console.error("Erreur enregistrement :", error);
+    if (error.code === "23505") {
+      messageFormMedecin("Cet email est déjà utilisé par un autre médecin.");
+    } else if (error.code === "42501" || /policy/i.test(error.message)) {
+      messageFormMedecin("Action refusée : seul un administrateur peut modifier les médecins (RLS).");
+    } else {
+      messageFormMedecin("Erreur : " + error.message);
+    }
+    return;
+  }
+
+  fermerFormulaire();
+  chargerMedecins();
+});
+
+/* Supprime un médecin après confirmation */
+async function supprimerMedecin(med) {
+  const ok = window.confirm("Supprimer définitivement " + med.name + " ?");
+  if (!ok) return;
+
+  const { error } = await sb.from("doctors").delete().eq("id", med.id);
+  if (error) {
+    console.error("Erreur suppression :", error);
+    window.alert("Suppression impossible : " + error.message);
+    return;
+  }
+  chargerMedecins();
+}
 
 
 /* --------------------------------------------------------------------- */

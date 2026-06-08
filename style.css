@@ -113,3 +113,88 @@ button.secondary:hover { background: var(--gris-clair); }
 }
 
 .hidden { display: none !important; }
+
+/* =====================================================================
+   Module 2 — Espace admin : gestion des médecins
+   ===================================================================== */
+
+/* L'espace connecté admin doit être large (tableau). */
+#app-view { max-width: 1000px; }
+
+.zone-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 1rem 0;
+}
+.zone-header h2 { margin: 0; font-size: 1.2rem; }
+
+#add-doctor-btn { width: auto; padding: 0.5rem 1rem; }
+
+/* Formulaire ajout / édition */
+.doctor-form {
+  background: var(--gris-clair);
+  border: 1px solid var(--gris-bordure);
+  border-radius: 10px;
+  padding: 1.2rem;
+  margin-bottom: 1.5rem;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem 1rem;
+}
+.form-grid label { display: block; }
+.form-grid input,
+.form-grid select { width: 100%; margin-bottom: 0.5rem; }
+
+.form-actions {
+  display: flex;
+  gap: 0.7rem;
+  margin-top: 0.5rem;
+}
+.form-actions button { width: auto; padding: 0.55rem 1.2rem; }
+.form-actions .secondary { margin-top: 0; }
+
+/* Tableau de données */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid var(--gris-bordure);
+}
+.data-table th {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #57606a;
+}
+.data-table tbody tr:hover { background: var(--gris-clair); }
+
+.actions-cell { white-space: nowrap; }
+
+/* Petits boutons d'action dans le tableau */
+button.mini {
+  width: auto;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+  background: #fff;
+  color: var(--texte);
+  border: 1px solid var(--gris-bordure);
+  margin-left: 0.3rem;
+}
+button.mini:hover { background: var(--gris-clair); }
+button.mini.danger { color: var(--rouge); border-color: #f3c4c4; }
+button.mini.danger:hover { background: #fdeaea; }
+
+/* Sur petit écran : formulaire en une colonne */
+@media (max-width: 600px) {
+  .form-grid { grid-template-columns: 1fr; }
+  .data-table { font-size: 0.8rem; }
+}
