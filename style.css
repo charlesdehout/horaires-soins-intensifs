@@ -349,10 +349,95 @@ button.mini.danger:hover { background: #fdeaea; }
 .modal-card .form-actions { margin-top: 0.8rem; align-items: center; }
 .modal-card .form-actions .mini.danger { margin-left: auto; }
 
+/* =====================================================================
+   Module 6 — Bascule de vue, pastilles, grille postes × jours
+   ===================================================================== */
+
+/* Boutons de bascule Calendrier / Grille */
+.vue-toggle { display: inline-flex; border: 1px solid var(--gris-bordure); border-radius: 8px; overflow: hidden; }
+.vue-btn {
+  width: auto; padding: 0.4rem 0.9rem; background: #fff; color: var(--texte);
+  border: none; border-radius: 0; font-size: 0.85rem; font-weight: 600;
+}
+.vue-btn:hover { background: var(--gris-clair); }
+.vue-btn.actif { background: var(--bleu); color: #fff; }
+
+/* Pastilles du calendrier : un peu plus lisibles (coins arrondis, padding). */
+.fc .fc-daygrid-event {
+  border-radius: 6px;
+  padding: 1px 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: none;
+}
+.fc .fc-daygrid-event .fc-event-time { font-weight: 400; opacity: 0.85; }
+.fc-event.shift-absence {
+  font-style: italic;
+  opacity: 0.95;
+}
+/* Couleur de texte blanche sur les pastilles colorées. */
+.fc .fc-daygrid-event .fc-event-title,
+.fc .fc-daygrid-event .fc-event-time { color: #fff; }
+
+/* --- Grille postes × jours --- */
+.grille-nav {
+  display: flex; align-items: center; gap: 1rem; margin: 0.3rem 0 0.6rem;
+}
+.grille-nav .mini { width: auto; }
+.grille-titre { font-weight: 700; font-size: 1.05rem; text-transform: capitalize; }
+
+.grille-scroll { overflow-x: auto; border: 1px solid var(--gris-bordure); border-radius: 10px; }
+
+.grille-table {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  min-width: 100%;
+}
+.grille-table th, .grille-table td {
+  border: 1px solid var(--gris-bordure);
+  padding: 2px 3px;
+  text-align: center;
+  white-space: nowrap;
+}
+/* En-tête de colonnes (jours) collante en haut. */
+.grille-table thead th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--gris-clair);
+}
+.grille-jour { min-width: 2.1rem; }
+.grille-jour .gj-num { display: block; font-weight: 700; }
+.grille-jour .gj-dow { display: block; font-size: 0.68rem; color: #57606a; }
+/* Première colonne (libellés de poste) collante à gauche. */
+.grille-coin, .grille-rowhead {
+  position: sticky; left: 0; z-index: 1;
+  background: #fff; text-align: left; font-weight: 600;
+  min-width: 8.5rem; max-width: 8.5rem;
+}
+.grille-coin { z-index: 3; background: var(--gris-clair); }
+.grille-we { background: #f0f2f5; }
+.grille-cell { height: 1.9rem; vertical-align: middle; }
+.grille-cell.editable { cursor: pointer; }
+.grille-cell.editable:hover { outline: 2px solid var(--bleu); outline-offset: -2px; }
+
+/* Étiquette d'un médecin dans une cellule de la grille. */
+.grille-chip {
+  display: inline-block;
+  max-width: 7.5rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  vertical-align: bottom;
+  color: #fff;
+  border-radius: 5px;
+  padding: 1px 5px;
+  margin: 1px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 /* Sur petit écran : formulaire en une colonne */
 @media (max-width: 600px) {
   .form-grid { grid-template-columns: 1fr; }
   .data-table { font-size: 0.8rem; }
   .fc .fc-toolbar { flex-direction: column; gap: 0.5rem; }
   .planning-actions button { flex: 1 1 100%; }
+  .grille-coin, .grille-rowhead { min-width: 6rem; max-width: 6rem; }
 }

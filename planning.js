@@ -35,6 +35,11 @@ function plBloq()        { return _PL_REGLES ? _PL_REGLES.PREF_BLOQUANTES  : PRE
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
 
+/* Types d'« absence / repos » posables manuellement (0 h, sans station).
+   Doivent coller aux types absence de SHIFT_CONFIG (app.js). */
+const PL_ABSENCES = ["recup", "off", "conge_annuel", "conge_scientifique", "conge_extralegal"];
+function plEstAbsence(type) { return PL_ABSENCES.indexOf(type) !== -1; }
+
 
 /* ---------------------- Utilitaires de dates (UTC) ---------------------- */
 function plIso(d) { return d.toISOString().slice(0, 10); }
@@ -385,13 +390,22 @@ function validerPlanning(opts) {
   Object.keys(datesParMed).forEach((id) => {
     const dm = datesParMed[id];
     const med = medById[id];
+    const estGarde = (s) => s.shift_type === "garde_nuit" || s.shift_type === "garde_24h";
+
     Object.keys(dm).forEach((date) => {
       const duJour = dm[date];
+      // Shifts de TRAVAIL du jour (on exclut les absences/repos posés).
+      const travail = duJour.filter((s) => !plEstAbsence(s.shift_type));
+      const aTravail = travail.length > 0;
 
-      // 2a) Double affectation le même jour.
+      // 2a) Double affectation le même jour (toutes catégories confondues).
       if (duJour.length > 1) {
-        conflits.push({ date, message: `${nom(id)} : ${duJour.length} shifts le même jour (double affectation).` });
+        conflits.push({ date, message: `${nom(id)} : ${duJour.length} entrées le même jour (double affectation).` });
       }
+
+      // Les contrôles suivants ne concernent que les shifts de TRAVAIL :
+      // une absence (récup/off/congé) est précisément ce qui rend libre.
+      if (!aTravail) return;
 
       // 2b) Disponibilité (contrat / jours travaillables / préférence bloquante).
       if (med) {
@@ -410,10 +424,10 @@ function validerPlanning(opts) {
         conflits.push({ date, message: `${nom(id)} : affecté pendant un congé / une indisponibilité.` });
       }
 
-      // 2c) Repos 12h : aucune garde la veille d'un shift.
+      // 2c) Repos 12h : aucune garde la veille d'un shift de travail.
       const veille = plAdd(date, -1);
-      if (dm[veille] && dm[veille].some((s) => s.shift_type === "garde_nuit" || s.shift_type === "garde_24h")) {
-        conflits.push({ date, message: `${nom(id)} : repos 12h non respecté (shift au lendemain d'une garde).` });
+      if (dm[veille] && dm[veille].some(estGarde)) {
+        conflits.push({ date, message: `${nom(id)} : repos 12h non respecté (travail au lendemain d'une garde).` });
       }
 
       // 2d) Récup week-end : garde 24h le samedi → lundi off ;
@@ -421,15 +435,15 @@ function validerPlanning(opts) {
       const sam = plAdd(date, -2);
       if (dm[sam] && plJourSemaine(sam) === 6 &&
           dm[sam].some((s) => s.shift_type === "garde_24h") && plJourSemaine(date) === 1) {
-        conflits.push({ date, message: `${nom(id)} : récup non respectée (lundi après garde du samedi).` });
+        conflits.push({ date, message: `${nom(id)} : récup non respectée (travail le lundi après garde du samedi).` });
       }
       const dim1 = plAdd(date, -1);
       const dim2 = plAdd(date, -2);
       if (dm[dim1] && plJourSemaine(dim1) === 7 && dm[dim1].some((s) => s.shift_type === "garde_24h")) {
-        conflits.push({ date, message: `${nom(id)} : récup non respectée (lundi après garde du dimanche).` });
+        conflits.push({ date, message: `${nom(id)} : récup non respectée (travail le lundi après garde du dimanche).` });
       }
       if (dm[dim2] && plJourSemaine(dim2) === 7 && dm[dim2].some((s) => s.shift_type === "garde_24h") && plJourSemaine(date) === 2) {
-        conflits.push({ date, message: `${nom(id)} : récup non respectée (mardi après garde du dimanche).` });
+        conflits.push({ date, message: `${nom(id)} : récup non respectée (travail le mardi après garde du dimanche).` });
       }
     });
   });

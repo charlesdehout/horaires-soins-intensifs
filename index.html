@@ -39,10 +39,14 @@
       <p id="welcome-text"></p>
       <p>Rôle détecté : <strong id="role-text"></strong></p>
 
-      <!-- ===== Espace PLANNING : calendrier (Module 4) — visible par tous ===== -->
+      <!-- ===== Espace PLANNING : calendrier + grille (Module 4/6) — visible par tous ===== -->
       <div id="planning-zone">
         <div class="zone-header">
           <h2>Planning</h2>
+          <div class="vue-toggle">
+            <button id="vue-calendrier-btn" type="button" class="vue-btn actif">Calendrier</button>
+            <button id="vue-grille-btn" type="button" class="vue-btn">Grille</button>
+          </div>
         </div>
 
         <!-- Légende des couleurs -->
@@ -55,17 +59,36 @@
             <span class="legend-item"><span class="dot" style="background:#cf222e"></span>Garde 24h</span>
           </span>
           <span class="legend-group">
+            <strong>Absences :</strong>
+            <span class="legend-item"><span class="dot" style="background:#6e5494"></span>Récup</span>
+            <span class="legend-item"><span class="dot" style="background:#9a6700"></span>Off/clinic</span>
+            <span class="legend-item"><span class="dot" style="background:#1a7f37"></span>Congé annuel</span>
+            <span class="legend-item"><span class="dot" style="background:#0b6b63"></span>Scientifique</span>
+            <span class="legend-item"><span class="dot" style="background:#0f5132"></span>Extra-légaux</span>
+          </span>
+          <span class="legend-group">
             <strong>Préférences (fond) :</strong>
-            <span class="legend-item"><span class="dot" style="background:#1a7f37"></span>Congé</span>
             <span class="legend-item"><span class="dot" style="background:#cf222e"></span>Indispo</span>
             <span class="legend-item"><span class="dot" style="background:#1f6feb"></span>Souhait</span>
-            <span class="legend-item"><span class="dot" style="background:#9a6700"></span>Off/clinic</span>
-            <span class="legend-item"><span class="dot" style="background:#8250df"></span>Récup</span>
           </span>
           <span id="legend-mine" class="legend-item hidden"><span class="dot dot-mine"></span>Mes shifts</span>
         </div>
 
+        <!-- Vue 1 : calendrier FullCalendar -->
         <div id="calendar"></div>
+
+        <!-- Vue 2 : grille postes × jours (masquée par défaut) -->
+        <div id="grille-wrapper" class="hidden">
+          <div class="grille-nav">
+            <button id="grille-prev" type="button" class="mini">‹ Mois préc.</button>
+            <span id="grille-titre" class="grille-titre"></span>
+            <button id="grille-next" type="button" class="mini">Mois suiv. ›</button>
+          </div>
+          <p class="form-hint" id="grille-aide">Astuce : clique sur une cellule pour ajouter ou modifier un shift (admin).</p>
+          <div id="grille-scroll" class="grille-scroll">
+            <table id="grille-table" class="grille-table"></table>
+          </div>
+        </div>
       </div>
 
       <!-- ===== Espace ADMIN : génération + ajustements + publication (Module 5/6) ===== -->
@@ -292,10 +315,19 @@
             <div>
               <label for="s-type">Type de shift</label>
               <select id="s-type">
-                <option value="jour">Journée (station)</option>
-                <option value="garde_24h">Garde 24h</option>
-                <option value="garde_nuit">Garde de nuit</option>
-                <option value="twe">Tour week-end (TWE)</option>
+                <optgroup label="Travail">
+                  <option value="jour">Journée (station)</option>
+                  <option value="garde_24h">Garde 24h</option>
+                  <option value="garde_nuit">Garde de nuit</option>
+                  <option value="twe">Tour week-end (TWE)</option>
+                </optgroup>
+                <optgroup label="Absence / repos">
+                  <option value="recup">Récupération</option>
+                  <option value="off">Off / clinic</option>
+                  <option value="conge_annuel">Congé annuel</option>
+                  <option value="conge_scientifique">Congé scientifique</option>
+                  <option value="conge_extralegal">Congés extra-légaux</option>
+                </optgroup>
               </select>
             </div>
             <div>

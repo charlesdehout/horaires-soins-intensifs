@@ -676,7 +676,20 @@ const SHIFT_CONFIG = {
   twe:        { label: "Tour week-end",  court: "TWE", couleur: "#8250df", debut: "08:00", fin: "14:00", lendemain: false, heures: 6 },
   garde_nuit: { label: "Garde de nuit",  court: "GN",  couleur: "#bf3989", debut: "17:00", fin: "08:00", lendemain: true,  heures: 15 },
   garde_24h:  { label: "Garde 24h",      court: "G24", couleur: "#cf222e", debut: "08:00", fin: "08:00", lendemain: true,  heures: 24 },
+  // Absences / repos posables par l'admin (0 h, sans station, affichées en
+  // pastille « journée entière »). Les congés posés ici ne décomptent pas les
+  // quotas (ceux-ci restent gérés via les préférences du médecin).
+  recup:              { label: "Récupération",        court: "Récup", couleur: "#6e5494", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
+  off:                { label: "Off / clinic",        court: "Off",   couleur: "#9a6700", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
+  conge_annuel:       { label: "Congé annuel",        court: "Congé", couleur: "#1a7f37", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
+  conge_scientifique: { label: "Congé scientifique",  court: "Sci.",  couleur: "#0b6b63", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
+  conge_extralegal:   { label: "Congés extra-légaux", court: "E.L.",  couleur: "#0f5132", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
 };
+
+/* Vrai si le type de shift est une absence / un repos (0 h, sans station). */
+function estShiftAbsence(type) {
+  return !!(SHIFT_CONFIG[type] && SHIFT_CONFIG[type].absence);
+}
 
 /* Couleurs de fond des préférences affichées dans le calendrier. */
 const PREF_BG = {
@@ -757,6 +770,20 @@ async function construireEvenements(debutISO, finISO) {
         doctorId: s.doctor_id, poste: s.poste || null, dateStr: s.date,
       };
       const cls = estMien ? ["shift-mien"] : [];
+
+      // Absence / repos : pastille « journée entière ».
+      if (cfg.absence) {
+        events.push({
+          title: nom + " · " + cfg.court,
+          start: s.date,
+          allDay: true,
+          backgroundColor: cfg.couleur,
+          borderColor: estMien ? "#1f2328" : cfg.couleur,
+          classNames: cls.concat(["shift-absence"]),
+          extendedProps: Object.assign({ tooltip: nom + " - " + cfg.label }, propsBase),
+        });
+        return;
+      }
 
       // Cas particulier : garde 24h de SEMAINE qui occupe une station.
       // On l'affiche sur DEUX lignes — une pour la station occupée le jour,
@@ -886,7 +913,9 @@ async function initCalendrier() {
       // À chaque changement de mois/vue : rafraîchit le panneau admin.
       datesSet: () => {
         if (medecinCourant && medecinCourant.role === "admin") {
-          rafraichirPanneauAdmin();
+          rafraichirPanneauAdmin(); // rafraîchit aussi la grille si elle est visible
+        } else if (vueActive === "grille") {
+          construireGrille();
         }
       },
     });
@@ -1075,6 +1104,7 @@ async function rafraichirPanneauAdmin() {
   majStatutEtBoutons();
   majCompteurs();
   majConflits();
+  if (vueActive === "grille") construireGrille();
 }
 
 /* Affiche le badge de statut et active/désactive les boutons. */
@@ -1219,34 +1249,46 @@ function ouvrirEditionShift(shift) {
   sType.value = shift.shift_type;
   remplirSelectMedecins(shift.doctor_id);
   remplirSelectPostes(shift.poste);
+  majEtatStation();
   deleteShiftBtn.classList.remove("hidden");
   ouvrirModaleShift();
 }
 
-/* Ouvre la modale en mode ajout (nouveau shift). */
-function ouvrirAjoutShift() {
+/* Ouvre la modale en mode ajout (nouveau shift), éventuellement pré-rempli
+   (depuis un clic sur une cellule de la grille). */
+function ouvrirAjoutShift(opts) {
   if (planningVerrouille) return;
+  opts = opts || {};
   shiftEnEdition = null;
   shiftModalTit.textContent = "Ajouter un shift";
   const b = bornesMoisAffiche();
-  sDate.value = b.debut;
+  sDate.value = opts.date || b.debut;
   sDate.disabled = false;
   sDate.min = b.debut; sDate.max = b.fin;
-  sType.value = "jour";
+  sType.value = opts.type || "jour";
   remplirSelectMedecins(null);
-  remplirSelectPostes(null);
+  const posteDefaut = ("poste" in opts) ? opts.poste
+    : ((typeof POSTES_JOUR !== "undefined" && POSTES_JOUR[0]) ? POSTES_JOUR[0].code : null);
+  remplirSelectPostes(posteDefaut);
+  majEtatStation();
   deleteShiftBtn.classList.add("hidden");
   ouvrirModaleShift();
 }
 
-/* Quand le type change : suggère une station cohérente. */
+/* Quand le type change : suggère une station cohérente et (dés)active le
+   sélecteur de station selon le type. */
+function majEtatStation() {
+  const t = sType.value;
+  const sansStation = estShiftAbsence(t) || t === "garde_nuit" || t === "twe";
+  if (sansStation) { remplirSelectPostes(null); sPoste.value = ""; }
+  sPoste.disabled = sansStation;
+}
 sType.addEventListener("change", () => {
-  if (sType.value === "garde_nuit" || sType.value === "twe") {
-    remplirSelectPostes(null); // pas de station
-  } else if (sType.value === "jour" && !sPoste.value) {
+  if (sType.value === "jour" && !sPoste.value) {
     const premier = (typeof POSTES_JOUR !== "undefined" && POSTES_JOUR[0]) ? POSTES_JOUR[0].code : null;
     remplirSelectPostes(premier);
   }
+  majEtatStation();
 });
 
 /* Garantit qu'un schedule (brouillon) existe pour le mois ; renvoie son id. */
@@ -1337,7 +1379,7 @@ deleteShiftBtn.addEventListener("click", async () => {
 
 cancelShiftBtn.addEventListener("click", fermerModaleShift);
 shiftModal.addEventListener("click", (e) => { if (e.target === shiftModal) fermerModaleShift(); });
-if (ajouterShiftBtn) ajouterShiftBtn.addEventListener("click", ouvrirAjoutShift);
+if (ajouterShiftBtn) ajouterShiftBtn.addEventListener("click", () => ouvrirAjoutShift());
 
 /* Publication : brouillon → publié (verrouille l'édition). */
 if (publierBtn) publierBtn.addEventListener("click", async () => {
@@ -1368,6 +1410,202 @@ if (depublierBtn) depublierBtn.addEventListener("click", async () => {
   messageGeneration("Planning repassé en brouillon. Tu peux le modifier.", "info");
   rafraichirPanneauAdmin();
 });
+
+
+/* ===================================================================== */
+/* MODULE 6 — Vue « Grille postes × jours » + bascule de vue             */
+/* --------------------------------------------------------------------- */
+/* Tableau lisible : lignes = stations / nuit / 24h WE / TWE / absences ; */
+/* colonnes = jours du mois ; cellule = médecin(s). Cellules cliquables   */
+/* (admin) pour ajouter / modifier un shift.                              */
+/* ===================================================================== */
+
+const vueCalendrierBtn = document.getElementById("vue-calendrier-btn");
+const vueGrilleBtn     = document.getElementById("vue-grille-btn");
+const grilleWrapper    = document.getElementById("grille-wrapper");
+const calendarEl       = document.getElementById("calendar");
+const grilleTable      = document.getElementById("grille-table");
+const grilleTitre      = document.getElementById("grille-titre");
+const grillePrev       = document.getElementById("grille-prev");
+const grilleNext       = document.getElementById("grille-next");
+
+let vueActive = "calendrier";
+let grilleShiftsById = {}; // id -> shift (pour l'édition au clic)
+
+const MOIS_FR = ["janvier", "février", "mars", "avril", "mai", "juin",
+                 "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+const JOURS_FR = ["D", "L", "M", "M", "J", "V", "S"]; // index = getUTCDay()
+
+/* Définition des lignes de la grille (ordre d'affichage). */
+function grilleLignes() {
+  const postes = (typeof POSTES_JOUR !== "undefined" ? POSTES_JOUR : []);
+  const lignes = postes.map((p) => ({ label: p.label, type: "station", code: p.code }));
+  lignes.push({ label: "Garde de nuit", type: "garde_nuit" });
+  lignes.push({ label: "Garde 24h (WE)", type: "garde_24h_we" });
+  lignes.push({ label: "TWE", type: "twe" });
+  lignes.push({ label: "Absences / repos", type: "absence" });
+  return lignes;
+}
+
+/* Week-end ou férié (réutilise joursFeriesBE de regles.js si dispo). */
+function estWeekendOuFerieISO(iso) {
+  const d = new Date(iso + "T00:00:00Z");
+  const j = d.getUTCDay();
+  if (j === 0 || j === 6) return true;
+  try { return joursFeriesBE(d.getUTCFullYear()).has(iso); } catch (e) { return false; }
+}
+
+/* Nom court d'un médecin pour la grille. */
+function nomCourt(id) {
+  const m = carteMedecins[id];
+  return m && m.name ? m.name : "?";
+}
+
+/* Quels shifts d'un jour correspondent à une ligne donnée ? */
+function shiftsPourLigne(ligne, duJour) {
+  if (ligne.type === "station") {
+    return duJour.filter((s) =>
+      (s.shift_type === "jour" && s.poste === ligne.code) ||
+      (s.shift_type === "garde_24h" && s.poste === ligne.code));
+  }
+  if (ligne.type === "garde_nuit") return duJour.filter((s) => s.shift_type === "garde_nuit");
+  if (ligne.type === "garde_24h_we") return duJour.filter((s) => s.shift_type === "garde_24h" && !s.poste);
+  if (ligne.type === "twe") return duJour.filter((s) => s.shift_type === "twe");
+  if (ligne.type === "absence") return duJour.filter((s) => estShiftAbsence(s.shift_type));
+  return [];
+}
+
+/* Type de shift par défaut quand on clique une cellule vide d'une ligne. */
+function typeDefautLigne(ligne) {
+  if (ligne.type === "station") return { type: "jour", poste: ligne.code };
+  if (ligne.type === "garde_nuit") return { type: "garde_nuit", poste: null };
+  if (ligne.type === "garde_24h_we") return { type: "garde_24h", poste: null };
+  if (ligne.type === "twe") return { type: "twe", poste: null };
+  if (ligne.type === "absence") return { type: "recup", poste: null };
+  return { type: "jour", poste: null };
+}
+
+/* Construit (ou reconstruit) la grille pour le mois affiché au calendrier. */
+async function construireGrille() {
+  if (!calendrier) return;
+  const d = calendrier.getDate();
+  const annee = d.getFullYear();
+  const mois = d.getMonth() + 1;
+  const ms = String(mois).padStart(2, "0");
+  const nbJours = new Date(annee, mois, 0).getDate();
+  const debut = annee + "-" + ms + "-01";
+  const fin = annee + "-" + ms + "-" + nbJours;
+
+  grilleTitre.textContent = MOIS_FR[mois - 1] + " " + annee;
+
+  // Données : médecins (noms) + shifts du mois.
+  if (!Object.keys(carteMedecins).length) await chargerCarteMedecins();
+  const { data: shifts, error } = await sb.from("shifts")
+    .select("id, date, shift_type, doctor_id, poste")
+    .gte("date", debut).lte("date", fin);
+  if (error) { console.error("Erreur grille :", error); return; }
+
+  grilleShiftsById = {};
+  const parJour = {};
+  (shifts || []).forEach((s) => {
+    grilleShiftsById[s.id] = s;
+    (parJour[s.date] = parJour[s.date] || []).push(s);
+  });
+
+  const editable = medecinCourant && medecinCourant.role === "admin" && !planningVerrouille;
+  const lignes = grilleLignes();
+
+  // En-tête : coin + un th par jour (numéro + lettre du jour).
+  let html = "<thead><tr><th class='grille-coin'>Poste \\ Jour</th>";
+  for (let j = 1; j <= nbJours; j++) {
+    const iso = annee + "-" + ms + "-" + String(j).padStart(2, "0");
+    const dd = new Date(iso + "T00:00:00Z");
+    const we = estWeekendOuFerieISO(iso) ? " grille-we" : "";
+    html += "<th class='grille-jour" + we + "'><span class='gj-num'>" + j +
+            "</span><span class='gj-dow'>" + JOURS_FR[dd.getUTCDay()] + "</span></th>";
+  }
+  html += "</tr></thead><tbody>";
+
+  // Lignes.
+  lignes.forEach((ligne) => {
+    html += "<tr><th class='grille-rowhead'>" + escapeHtml(ligne.label) + "</th>";
+    for (let j = 1; j <= nbJours; j++) {
+      const iso = annee + "-" + ms + "-" + String(j).padStart(2, "0");
+      const we = estWeekendOuFerieISO(iso) ? " grille-we" : "";
+      const duJour = parJour[iso] || [];
+      const correspondants = shiftsPourLigne(ligne, duJour);
+      const cls = "grille-cell" + we + (editable ? " editable" : "");
+      const defaut = typeDefautLigne(ligne);
+      let contenu = "";
+      correspondants.forEach((s) => {
+        const suff = (s.shift_type === "garde_24h" && s.poste) ? " (24h)"
+                   : estShiftAbsence(s.shift_type) ? (" " + (SHIFT_CONFIG[s.shift_type] ? SHIFT_CONFIG[s.shift_type].court : ""))
+                   : "";
+        const couleur = SHIFT_CONFIG[s.shift_type] ? SHIFT_CONFIG[s.shift_type].couleur : "#57606a";
+        contenu += "<span class='grille-chip' data-shiftid='" + s.id + "' " +
+                   "style='background:" + couleur + "' title='" +
+                   escapeHtml(nomCourt(s.doctor_id) + suff) + "'>" +
+                   escapeHtml(nomCourt(s.doctor_id)) + escapeHtml(suff) + "</span>";
+      });
+      html += "<td class='" + cls + "' data-date='" + iso + "' data-type='" + defaut.type +
+              "' data-poste='" + (defaut.poste || "") + "'>" + contenu + "</td>";
+    }
+    html += "</tr>";
+  });
+  html += "</tbody>";
+  grilleTable.innerHTML = html;
+}
+
+/* Échappe le HTML (les noms sont insérés dans une chaîne HTML). */
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+/* Clic sur la grille : chip → édition du shift ; cellule vide → ajout. */
+grilleTable.addEventListener("click", (e) => {
+  if (!medecinCourant || medecinCourant.role !== "admin") return;
+  if (planningVerrouille) {
+    window.alert("Planning publié (lecture seule). Repasse-le en brouillon pour le modifier.");
+    return;
+  }
+  const chip = e.target.closest(".grille-chip");
+  if (chip) {
+    const s = grilleShiftsById[chip.getAttribute("data-shiftid")];
+    if (s) ouvrirEditionShift({ id: s.id, date: s.date, shift_type: s.shift_type, doctor_id: s.doctor_id, poste: s.poste });
+    return;
+  }
+  const cell = e.target.closest(".grille-cell");
+  if (cell) {
+    ouvrirAjoutShift({
+      date: cell.getAttribute("data-date"),
+      type: cell.getAttribute("data-type"),
+      poste: cell.getAttribute("data-poste") || null,
+    });
+  }
+});
+
+/* Bascule Calendrier / Grille. */
+function basculerVuePlanning(vue) {
+  vueActive = vue;
+  const grille = vue === "grille";
+  grilleWrapper.classList.toggle("hidden", !grille);
+  calendarEl.classList.toggle("hidden", grille);
+  vueGrilleBtn.classList.toggle("actif", grille);
+  vueCalendrierBtn.classList.toggle("actif", !grille);
+  if (grille) {
+    construireGrille();
+  } else if (calendrier) {
+    calendrier.updateSize(); // recalcule la taille après réaffichage
+  }
+}
+if (vueCalendrierBtn) vueCalendrierBtn.addEventListener("click", () => basculerVuePlanning("calendrier"));
+if (vueGrilleBtn) vueGrilleBtn.addEventListener("click", () => basculerVuePlanning("grille"));
+
+/* Navigation mois dans la grille (pilote le calendrier ; datesSet
+   reconstruit la grille automatiquement). */
+if (grillePrev) grillePrev.addEventListener("click", () => { if (calendrier) calendrier.prev(); });
+if (grilleNext) grilleNext.addEventListener("click", () => { if (calendrier) calendrier.next(); });
 
 
 /* --------------------------------------------------------------------- */
