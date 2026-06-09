@@ -654,7 +654,11 @@ async function chargerPreferences() {
   rendrePreferences(prefsCourantes);
 }
 
-/* --- Comptage des congés en jours OUVRÉS, par catégorie et par année --- */
+/* --- Comptage des congés en jours OUVRÉS, par catégorie et par ANNÉE ACADÉMIQUE --- */
+/* L'année de référence des quotas n'est PAS l'année civile mais l'année
+   ACADÉMIQUE : du 1er octobre au 30 septembre (révision Dr Calabro). Le compteur
+   « repart à zéro » chaque 1er octobre, automatiquement, puisque le consommé est
+   dérivé des préférences filtrées sur la fenêtre académique. */
 
 /* Catégorie de quota d'un pref_type ('conge' historique compté en annuel). */
 function categorieConge(prefType) {
@@ -662,23 +666,32 @@ function categorieConge(prefType) {
   return CONGE_TYPES[prefType] ? prefType : null;
 }
 
-/* Jours ouvrés (lun–ven hors fériés) d'une plage tombant dans l'année donnée. */
-function joursOuvresDansAnnee(debut, fin, annee) {
+/* Année ACADÉMIQUE d'une date (objet Date UTC), identifiée par son année de
+   DÉBUT : oct/nov/déc → année en cours ; jan→sep → année précédente.
+   Ex. l'académique 2025 = 1 oct 2025 → 30 sep 2026. */
+function anneeAcademique(d) {
+  return (d.getUTCMonth() >= 9) ? d.getUTCFullYear() : d.getUTCFullYear() - 1;
+}
+/* Libellé d'affichage d'une année académique : « 2025–2026 ». */
+function labelAcad(a) { return a + "–" + (a + 1); }
+
+/* Jours ouvrés (lun–ven hors fériés) d'une plage tombant dans l'année ACADÉMIQUE. */
+function joursOuvresDansAnnee(debut, fin, anneeAcad) {
   let total = 0;
   const d = new Date(debut + "T00:00:00Z");
   const dFin = new Date(fin + "T00:00:00Z");
   while (d <= dFin) {
     const iso = d.toISOString().slice(0, 10);
-    if (d.getUTCFullYear() === annee && estJourOuvre(iso)) total++;
+    if (anneeAcademique(d) === anneeAcad && estJourOuvre(iso)) total++;
     d.setUTCDate(d.getUTCDate() + 1);
   }
   return total;
 }
 
-/* Fraction de l'année civile couverte par le contrat du médecin (0 à 1). */
-function fractionAnneeSousContrat(annee, med) {
-  const debutAnnee = Date.UTC(annee, 0, 1);
-  const finAnnee = Date.UTC(annee, 11, 31);
+/* Fraction de l'année ACADÉMIQUE (1 oct → 30 sep) couverte par le contrat (0 à 1). */
+function fractionAnneeSousContrat(anneeAcad, med) {
+  const debutAnnee = Date.UTC(anneeAcad, 9, 1);      // 1er octobre (mois index 9)
+  const finAnnee = Date.UTC(anneeAcad + 1, 8, 30);   // 30 septembre (mois index 8)
   let debut = med.contract_start ? Date.parse(med.contract_start + "T00:00:00Z") : debutAnnee;
   let fin = med.contract_end ? Date.parse(med.contract_end + "T00:00:00Z") : finAnnee;
   debut = Math.max(debut, debutAnnee);
@@ -689,33 +702,33 @@ function fractionAnneeSousContrat(annee, med) {
   return jours / joursAnnee;
 }
 
-/* Quota effectif (défaut ou surcharge, proratisé au contrat) pour une année. */
-function quotaEffectif(type, annee) {
+/* Quota effectif (défaut ou surcharge, proratisé au contrat) pour une année académique. */
+function quotaEffectif(type, anneeAcad) {
   if (!medecinCourant) return 0;
   return Math.round(quotaBase(medecinCourant, type) *
-                    fractionAnneeSousContrat(annee, medecinCourant));
+                    fractionAnneeSousContrat(anneeAcad, medecinCourant));
 }
 
-/* Jours ouvrés déjà encodés pour une catégorie et une année. */
-function congesUtilises(type, annee) {
+/* Jours ouvrés déjà encodés pour une catégorie et une année académique. */
+function congesUtilises(type, anneeAcad) {
   return prefsCourantes
     .filter((p) => categorieConge(p.pref_type) === type)
-    .reduce((s, p) => s + joursOuvresDansAnnee(p.start_date, p.end_date, annee), 0);
+    .reduce((s, p) => s + joursOuvresDansAnnee(p.start_date, p.end_date, anneeAcad), 0);
 }
 
-/* Années à afficher : année courante + toute année comportant un congé. */
+/* Années académiques à afficher : académique courante + toute année comportant un congé. */
 function anneesAvecConges() {
-  const annees = new Set([new Date().getUTCFullYear()]);
+  const annees = new Set([anneeAcademique(new Date())]);
   prefsCourantes.forEach((p) => {
     if (categorieConge(p.pref_type)) {
-      annees.add(new Date(p.start_date + "T00:00:00Z").getUTCFullYear());
-      annees.add(new Date(p.end_date + "T00:00:00Z").getUTCFullYear());
+      annees.add(anneeAcademique(new Date(p.start_date + "T00:00:00Z")));
+      annees.add(anneeAcademique(new Date(p.end_date + "T00:00:00Z")));
     }
   });
-  return [...annees].sort();
+  return [...annees].sort((a, b) => a - b);
 }
 
-/* Affiche les compteurs « X / Y jours ouvrés » par catégorie et par année. */
+/* Affiche les compteurs « X / Y jours ouvrés » par catégorie et par année académique. */
 function majCompteurConges() {
   if (!congesCompteur || !medecinCourant) return;
   const lignes = anneesAvecConges().map((annee) => {
@@ -723,10 +736,11 @@ function majCompteurConges() {
       return CONGE_TYPES[type].label + " " +
              congesUtilises(type, annee) + "/" + quotaEffectif(type, annee);
     });
-    return "<strong>" + annee + "</strong> — " + parts.join(" · ");
+    return "<strong>" + labelAcad(annee) + "</strong> — " + parts.join(" · ");
   });
   congesCompteur.innerHTML =
-    lignes.join("<br>") + "<br><em>en jours ouvrés (lun–ven hors fériés)</em>";
+    lignes.join("<br>") +
+    "<br><em>en jours ouvrés (lun–ven hors fériés) · année académique 1 oct → 30 sep</em>";
   congesCompteur.classList.remove("hidden");
 }
 
@@ -795,11 +809,11 @@ prefForm.addEventListener("submit", async (e) => {
     return;
   }
 
-  // Contrôle des quotas de congés (bloquant), par catégorie et par année civile.
+  // Contrôle des quotas de congés (bloquant), par catégorie et par ANNÉE ACADÉMIQUE.
   const categorie = categorieConge(pType.value);
   if (categorie) {
-    const anneeDebut = new Date(debut + "T00:00:00Z").getUTCFullYear();
-    const anneeFin = new Date(fin + "T00:00:00Z").getUTCFullYear();
+    const anneeDebut = anneeAcademique(new Date(debut + "T00:00:00Z"));
+    const anneeFin = anneeAcademique(new Date(fin + "T00:00:00Z"));
     for (let annee = anneeDebut; annee <= anneeFin; annee++) {
       const demande = joursOuvresDansAnnee(debut, fin, annee);
       if (demande === 0) continue;
@@ -807,7 +821,7 @@ prefForm.addEventListener("submit", async (e) => {
       const quota = quotaEffectif(categorie, annee);
       if (dejaPris + demande > quota) {
         messageFormPref(
-          CONGE_TYPES[categorie].label + " " + annee + " : quota dépassé (" +
+          CONGE_TYPES[categorie].label + " " + labelAcad(annee) + " : quota dépassé (" +
           (dejaPris + demande) + " j ouvrés demandés pour un maximum de " + quota +
           " j ; déjà " + dejaPris + " j encodés)."
         );

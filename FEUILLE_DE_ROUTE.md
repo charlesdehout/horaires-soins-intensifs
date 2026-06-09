@@ -46,6 +46,11 @@
   cassée. (Gardes toujours équilibrées au MOIS.)
 - **Tests d'équité reformulés en INTRA-grade** (`test_planning.js`) : 27/27
   verts. L'équité se mesure résidents-entre-eux et A/S-entre-eux.
+- **Quotas de congés en ANNÉE ACADÉMIQUE (1 oct → 30 sep)** : comptage, proration
+  au contrat et contrôle bloquant basculés de l'année civile vers l'académique
+  (les 3 types : annuel, extra-légaux, scientifique). Remise à zéro automatique
+  au 1er octobre (le consommé est dérivé des préférences). 100 % côté `app.js`,
+  pas de SQL. Affichage « 2025–2026 ».
 
 ## 🔜 Reste à faire (par priorité)
 
