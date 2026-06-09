@@ -52,6 +52,22 @@ const COUVERTURE = {
 
 
 /* ---------------------------------------------------------------------
+   Paramètres d'ÉQUITÉ fine (Module 12 — priorité N2). Tous SOUPLES :
+   ils orientent la génération et déclenchent des avertissements
+   indicatifs (non bloquants) dans validerPlanning.
+   - plafond_hebdo  : heures max par semaine ISO et par médecin. On évite
+     de le dépasser (compensable la semaine suivante) ; dépassement signalé.
+   - plancher_ratio : part minimale de la charge horaire moyenne en-deçà
+     de laquelle un médecin est signalé comme « sous le plancher » (risque
+     de déséquilibre). 0.85 = on alerte sous 85 % de la charge moyenne.
+   --------------------------------------------------------------------- */
+const EQUITE = {
+  plafond_hebdo:  60,
+  plancher_ratio: 0.85,
+};
+
+
+/* ---------------------------------------------------------------------
    Types de préférence qui rendent un médecin NON planifiable un jour
    donné (contrainte dure). 'souhait' reste souple (non bloquant).
    --------------------------------------------------------------------- */
@@ -140,6 +156,6 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     CONGE_TYPES, calculerPaques, joursFeriesBE, estJourOuvre,
     dateEnISO, ajouterJours,
-    POSTES_JOUR, COUVERTURE, PREF_BLOQUANTES,
+    POSTES_JOUR, COUVERTURE, PREF_BLOQUANTES, EQUITE,
   };
 }

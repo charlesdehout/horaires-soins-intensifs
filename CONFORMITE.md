@@ -87,10 +87,10 @@ plusieurs **contraintes dures (Niveau 1)** ne sont pas encore appliquées.
 | Règle | Statut |
 |---|---|
 | Max 2 weekends/mois/personne (compensable) | ✅ **appliqué** — priorité à la génération + signalement dans `validerPlanning` (un week-end = sam/dim, le binôme sam+dim compte pour 1) |
-| Gardes ±1 entre tous | ⚠️ (équité proportionnelle, pas ±1 strict) |
-| Volume horaire similaire | ⚠️ |
-| Repos compensatoire vendredi+dimanche → mardi ; jeudi+samedi → lundi | ⚠️ (récup weekend présente mais pas liée au couple garde jeudi/vendredi) |
-| **Max 60 h/semaine** (compensable la semaine suivante) | ❌ → ciblé module équité fine. *(Clarifié : 60 h/**semaine**, plafond au-dessus de la cible 52 h.)* |
+| Gardes ±1 entre tous | ⚠️ **M12a** : équité des gardes **sans biais de grade** appliquée (le 2e créneau de garde n'est plus réservé aux A/S → A/S et Résidents à égalité par déficit ; 2 Résidents possibles ensemble). ±1 strict reste à venir (M12b). |
+| Volume horaire similaire | ✅ **M12a** : tri par charge horaire relative (plancher) + alerte « sous le plancher d'équilibre » dans `validerPlanning`. |
+| Repos compensatoire vendredi+dimanche → mardi ; jeudi+samedi → lundi | ⚠️ (récup weekend présente mais pas liée au couple garde jeudi/vendredi) → **M12b**. |
+| **Max 60 h/semaine** (compensable la semaine suivante) | ✅ **M12a** : suivi des heures par semaine ISO + plafond **souple** (on évite >60 h, fallback en dernier recours) + avertissement indicatif dans `validerPlanning`. |
 | Pré-placements admin respectés | ❌ |
 | Désidératas admin principal = priorité absolue | ❌ |
 
@@ -193,13 +193,17 @@ du plus structurant au plus cosmétique :
    hiérarchie de suppression.
 5. **M12 — Équité fine N2** : max 2 weekends/mois, ±1 garde, **max 60 h/semaine**,
    repos compensatoires couplés, concentration des gardes de nuit.
-   **À intégrer (demande Charles, 2026-06) :**
-   - **Plancher horaire** : un taux d'heures minimum par médecin pour garantir
-     l'équilibre (personne très en-dessous de la cible).
-   - **Équité des gardes entre grades** : les A/S doivent avoir ± le **même
-     nombre de gardes** que les Résidents (ne plus biaiser Résident→nuit /
-     A/S→24h pour le comptage). **2 Résidents peuvent être ensemble** en garde
-     (assouplit la préférence A/S+Résident ; seule reste dure : jamais 2 A/S).
+   **M12a — FAIT (2026-06) :**
+   - ✅ **Plancher horaire** : tri par charge relative + alerte « sous le plancher
+     d'équilibre » (< 85 % de la charge moyenne) dans `validerPlanning`.
+   - ✅ **Équité des gardes entre grades** : le 2e créneau de garde (nuit semaine
+     et week-end) n'est plus réservé aux A/S → choisi par déficit toutes catégories.
+     **2 Résidents peuvent être ensemble** ; règles dures conservées : ≥1 Résident
+     et jamais 2 A/S.
+   - ✅ **Plafond 60 h/semaine** souple (compensable) + suivi `heuresSemaine` +
+     avertissement indicatif.
+   **M12b — à venir :** ±1 garde strict, repos compensatoires couplés
+   (vendredi+dimanche → mardi ; jeudi+samedi → lundi), concentration des gardes de nuit.
 6. **M13 — Rotation trimestrielle des unités** + historique.
 7. **M14 — Exports Excel** (Export 1 + Export 2) selon §13.
 8. **M15 — Alertes absences simultanées** + pré-placement manuel.

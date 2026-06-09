@@ -31,6 +31,13 @@ function plFeries(annee) { return (_PL_REGLES ? _PL_REGLES.joursFeriesBE : jours
 function plPostes()      { return _PL_REGLES ? _PL_REGLES.POSTES_JOUR     : POSTES_JOUR; }
 function plCouv()        { return _PL_REGLES ? _PL_REGLES.COUVERTURE       : COUVERTURE; }
 function plBloq()        { return _PL_REGLES ? _PL_REGLES.PREF_BLOQUANTES  : PREF_BLOQUANTES; }
+/* Paramètres d'équité (Module 12). Repli sur des valeurs par défaut si la
+   config n'expose pas EQUITE (compatibilité ascendante). */
+const PL_EQUITE_DEFAUT = { plafond_hebdo: 60, plancher_ratio: 0.85 };
+function plEquite() {
+  const e = _PL_REGLES ? _PL_REGLES.EQUITE : (typeof EQUITE !== "undefined" ? EQUITE : null);
+  return e || PL_EQUITE_DEFAUT;
+}
 
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
@@ -68,6 +75,9 @@ function plNouvelEtat(medecins) {
   const e = {
     indispo: {}, souhait: {}, bloque: {}, assigneJour: {},
     nbGardes: {}, nbWeekend: {}, heures: {}, station: {},
+    // Heures par semaine ISO (lundi) et par médecin : { id: { lundiISO: h } }.
+    // Sert au PLAFOND 60 h/semaine souple (Module 12, priorité N2).
+    heuresSemaine: {},
     // Gardes par semaine ISO (lundi) et par médecin : { id: { lundiISO: n } }.
     // Sert à la contrainte DURE « max 3 gardes/semaine » (spec §6 N1).
     gardesSemaine: {},
@@ -93,10 +103,15 @@ function plNouvelEtat(medecins) {
     e.nbWeekend[m.id] = 0;
     e.heures[m.id] = 0;
     e.gardesSemaine[m.id] = {};
+    e.heuresSemaine[m.id] = {};
     e.weekendsTravailles[m.id] = new Set();
     e.dispoDeclaree[m.id] = new Set(); // jours déclarés dispo (résidents indépendants)
     e.station[m.id] = {}; // { lundiISO: codeStation }
   });
+  // Paramètres d'équité (Module 12), figés à la création de l'état.
+  const eq = plEquite();
+  e.plafondHebdo = eq.plafond_hebdo;
+  e.plancherRatio = eq.plancher_ratio;
   return e;
 }
 
@@ -201,6 +216,22 @@ function plGardesSemaine(id, date, etat) {
   return (etat.gardesSemaine[id] && etat.gardesSemaine[id][lk]) || 0;
 }
 
+/* Heures déjà posées au médecin durant la semaine ISO (lundi) de `date`. */
+function plHeuresSemaine(id, date, etat) {
+  const lk = plLundiDe(date);
+  return (etat.heuresSemaine[id] && etat.heuresSemaine[id][lk]) || 0;
+}
+
+/* PLAFOND 60 h/semaine — SOUPLE (Module 12, N2). Filtre une liste de candidats
+   pour ne garder que ceux qui RESTERAIENT sous le plafond après `ajout` heures.
+   Si plus personne ne respecte le plafond, on rend la liste entière (le plafond
+   est compensable la semaine suivante : violable en dernier recours). */
+function plFiltrerPlafond(liste, date, etat, ajout) {
+  const plaf = etat.plafondHebdo || PL_EQUITE_DEFAUT.plafond_hebdo;
+  const ok = liste.filter((m) => plHeuresSemaine(m.id, date, etat) + ajout <= plaf);
+  return ok.length ? ok : liste;
+}
+
 /* Plafond N2 : max 2 week-ends travaillés par mois et par personne (§6 N2). */
 const PL_MAX_WEEKENDS_MOIS = 2;
 
@@ -239,6 +270,9 @@ function plAffecter(sortie, etat, date, type, doctorId, poste) {
   sortie.push({ date, shift_type: type, poste: poste || null, doctor_id: doctorId });
   plMarquerAssigne(date, doctorId, etat);
   etat.heures[doctorId] += PL_HEURES[type];
+  // Heures de la semaine ISO (plafond 60 h souple, Module 12).
+  const lkH = plLundiDe(date);
+  etat.heuresSemaine[doctorId][lkH] = (etat.heuresSemaine[doctorId][lkH] || 0) + PL_HEURES[type];
   if (type === "garde_nuit" || type === "garde_24h") {
     etat.nbGardes[doctorId]++;
     const lk = plLundiDe(date);
@@ -267,15 +301,18 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits) {
   const residents = libresG.filter((m) => m.grade === "resident");
 
   // 1) NUIT : ≥2 dont ≥1 résident, JAMAIS 2 A/S. Le résident démarre à 17 h
-  //    (garde_nuit), le 2e (A/S de préférence) fait une garde 24 h qui occupe
-  //    une station. Comme l'un des deux est toujours un résident, la règle
-  //    « jamais 2 A/S ensemble » est structurellement garantie.
+  //    (garde_nuit) ; le 2e fait une garde 24 h qui occupe une station.
+  //    Module 12 — équité des gardes entre grades : le 2e créneau n'est PLUS
+  //    réservé aux A/S. On garantit un résident au 1er créneau (règle dure
+  //    « ≥1 résident » + « jamais 2 A/S »), puis on choisit le 2e par déficit
+  //    de gardes TOUTES CATÉGORIES confondues (A/S et Résidents à égalité).
+  //    Deux Résidents peuvent donc être de garde ensemble. Plafond 60 h souple.
   let resNuit = null, second = null;
   if (residents.length > 0) {
-    resNuit = plTrier(residents, "garde", etat)[0];
-    const reste = libresG.filter((m) => m.id !== resNuit.id);
-    const as = reste.filter((m) => m.grade === "assistant_specialiste");
-    second = (as.length ? plTrier(as, "garde", etat) : plTrier(reste, "garde", etat))[0] || null;
+    const resPool = plFiltrerPlafond(residents, date, etat, PL_HEURES.garde_nuit);
+    resNuit = plTrier(resPool, "garde", etat)[0];
+    const reste = plFiltrerPlafond(libresG.filter((m) => m.id !== resNuit.id), date, etat, PL_HEURES.garde_24h);
+    second = plTrier(reste, "garde", etat)[0] || null;
   } else {
     conflits.push({ date, message: "Nuit : aucun résident disponible (≥1 obligatoire)." });
   }
@@ -357,19 +394,21 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits) {
 
   // 2 gardes 24 h dont ≥1 résident. On privilégie ceux qui n'ont pas encore
   // 2 week-ends ce mois-ci (priorité N2 « max 2 week-ends/mois »).
+  // Module 12 — équité entre grades : le 2e créneau n'est plus réservé aux A/S.
+  // 1er créneau garanti à un résident (≥1 résident + jamais 2 A/S), 2e créneau
+  // choisi par déficit toutes catégories (2 Résidents possibles). Plafond 60 h souple.
   let g1 = null, g2 = null;
   if (residentsG.length > 0) {
-    g1 = plChoisirWE(residentsG, date, etat);
-    const reste = libresGarde.filter((m) => m.id !== g1.id);
-    const as = reste.filter((m) => m.grade === "assistant_specialiste");
-    g2 = plChoisirWE(as.length ? as : reste, date, etat);
+    g1 = plChoisirWE(plFiltrerPlafond(residentsG, date, etat, PL_HEURES.garde_24h), date, etat);
+    const reste = plFiltrerPlafond(libresGarde.filter((m) => m.id !== g1.id), date, etat, PL_HEURES.garde_24h);
+    g2 = plChoisirWE(reste, date, etat);
   } else {
     conflits.push({ date, message: "Week-end nuit : aucun résident disponible (≥1 obligatoire)." });
   }
 
   // TWE-seul : l'imposé (binôme) sinon le plus prioritaire restant (même priorité N2).
   const pris = new Set([g1 && g1.id, g2 && g2.id, t1 && t1.id].filter(Boolean));
-  if (!t1) t1 = plChoisirWE(libres.filter((m) => !pris.has(m.id)), date, etat);
+  if (!t1) t1 = plChoisirWE(plFiltrerPlafond(libres.filter((m) => !pris.has(m.id)), date, etat, PL_HEURES.twe), date, etat);
 
   // Samedi : on mémorise le binôme à imposer le dimanche.
   if (j === 6 && t1) etat.tweForce[plAdd(date, 1)] = t1.id;
@@ -878,6 +917,54 @@ function validerPlanning(opts) {
       }
     });
   });
+
+  // ---- 5) Plafond 60 h par semaine ISO (Module 12, N2 — indicatif) ----
+  // Avertissement NON bloquant : le plafond est compensable la semaine suivante.
+  const eqV = plEquite();
+  const heuresParSemaine = {}; // id -> { lundiISO -> h }
+  shifts.forEach((s) => {
+    let h = PL_HEURES[s.shift_type] || 0;
+    if (s.shift_type === "off") h = PL_HEURES_OFFCLINIC; // off-clinic = heures de travail
+    if (h <= 0) return;                                  // absences / repos = 0 h
+    const lk = plLundiDe(s.date);
+    const m = (heuresParSemaine[s.doctor_id] = heuresParSemaine[s.doctor_id] || {});
+    m[lk] = (m[lk] || 0) + h;
+  });
+  Object.keys(heuresParSemaine).forEach((id) => {
+    Object.keys(heuresParSemaine[id]).forEach((lk) => {
+      const h = Math.round(heuresParSemaine[id][lk] * 10) / 10;
+      if (h > eqV.plafond_hebdo) {
+        conflits.push({ date: lk, message: `${nom(id)} : ${h} h la semaine du ${lk} (> ${eqV.plafond_hebdo} h — N2 indicatif, compensable la semaine suivante).` });
+      }
+    });
+  });
+
+  // ---- 6) Plancher d'équilibre horaire (Module 12, N2 — indicatif) ----
+  // Charge relative = heures de travail / cible hebdo. On signale les médecins
+  // nettement sous la charge MOYENNE du groupe (< plancher_ratio × moyenne).
+  const heuresTotales = {}; // id -> heures de travail (hors absences)
+  shifts.forEach((s) => {
+    let h = PL_HEURES[s.shift_type] || 0;
+    if (s.shift_type === "off") h = PL_HEURES_OFFCLINIC;
+    if (h <= 0) return;
+    heuresTotales[s.doctor_id] = (heuresTotales[s.doctor_id] || 0) + h;
+  });
+  const charges = Object.keys(heuresTotales).map((id) => {
+    const med = medById[id];
+    const cible = (med && med.weekly_hours_target) ? med.weekly_hours_target : 52;
+    return { id, charge: heuresTotales[id] / cible, heures: heuresTotales[id] };
+  });
+  if (charges.length >= 2) {
+    const moyenne = charges.reduce((a, c) => a + c.charge, 0) / charges.length;
+    const seuil = eqV.plancher_ratio * moyenne;
+    const dateMois = annee + "-" + String(mois).padStart(2, "0") + "-01";
+    charges.forEach((c) => {
+      if (moyenne > 0 && c.charge < seuil) {
+        const pct = Math.round((c.charge / moyenne) * 100);
+        conflits.push({ date: dateMois, message: `${nom(c.id)} : sous le plancher d'équilibre (${Math.round(c.heures * 10) / 10} h, ~${pct} % de la charge moyenne).` });
+      }
+    });
+  }
 
   // Tri par date pour un affichage lisible.
   conflits.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
