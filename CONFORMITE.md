@@ -99,7 +99,7 @@ plusieurs **contraintes dures (Niveau 1)** ne sont pas encore appliquées.
 | Règle | Statut |
 |---|---|
 | Continuité dans les unités (hors Labo, souple le weekend) | ✅ (semaine) |
-| Concentration des gardes de nuit sur une période du mois | ❌ |
+| Concentration des gardes de nuit sur une période du mois | ✅ **M12c** : départage des gardes de nuit de semaine à déficit STRICTEMENT égal en faveur du médecin ayant gardé le plus récemment (regroupe les nuits sans coût d'équité ; tunable `EQUITE.concentration_*`). |
 | Si 3 gardes/semaine → préférer 17h–9h | ❌ |
 | Couples vendredi soir + dimanche 24h / jeudi soir + samedi 24h | ❌ |
 | Résident gardes semaine en 17h–9h (pas 24h) sauf équité | ⚠️ |
@@ -211,7 +211,15 @@ du plus structurant au plus cosmétique :
      (plancher horaire + équité des gardes) est appelée par l'app sur l'ENSEMBLE
      du trimestre généré, pas au mois. Le plancher a été retiré de `validerPlanning`
      (mensuel) ; seul le plafond 60 h/semaine y reste (valable à toute échelle).
-   **M12c — à venir :** concentration des gardes de nuit sur une période du mois (N3).
+   **M12c — FAIT (2026-06) :** concentration des gardes de nuit de semaine (N3).
+   - ✅ Départage à déficit STRICTEMENT égal : entre candidats ayant le même
+     déficit de gardes, on choisit celui dont la dernière garde est la plus
+     récente (`plTrierGardeNuit` + `plRecenceGarde`, état `derniereGarde`).
+     L'équité passe toujours avant ; seul le CHOIX à égalité change → les nuits
+     se regroupent (taux de nuits rapprochées ≤4 j ~doublé en test) sans
+     dégrader la distribution au-delà de la tolérance ±1 de `validerEquite`.
+     Paramètres dans `regles.js` → `EQUITE.{concentration_nuits, concentration_coeff, fenetre_nuits}`.
+     Ne s'applique PAS aux gardes de week-end (pilotées par l'équité week-end + binôme TWE).
 6. **M13 — Rotation trimestrielle des unités** + historique.
 7. **M14 — Exports Excel** (Export 1 + Export 2) selon §13.
 8. **M15 — Alertes absences simultanées** + pré-placement manuel.
