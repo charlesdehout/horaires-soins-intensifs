@@ -1,35 +1,39 @@
 /* =====================================================================
-   Planning Soins Intensifs — Feuille de style
-   Style simple et lisible. Sera étendu aux modules suivants.
+   Planning Soins Intensifs — Feuille de style (refonte « sarcelle médical »)
+   ---------------------------------------------------------------------
+   Palette teal hospitalière, en-tête d'application, navigation par
+   onglets, tableaux zébrés, badges. Tous les sélecteurs historiques
+   sont conservés (la logique JS n'a pas changé).
    ===================================================================== */
 
 :root {
-  --bleu: #1f6feb;
-  --bleu-fonce: #1a5cc4;
-  --gris-clair: #f4f6f8;
-  --gris-bordure: #d0d7de;
-  --texte: #1f2328;
-  --rouge: #cf222e;
-  --vert: #1a7f37;
+  /* Couleur d'accent (sarcelle médical) et ses déclinaisons. */
+  --accent:        #0f6e56;  /* boutons, liens, états actifs */
+  --accent-fonce:  #085041;  /* survol */
+  --accent-sombre: #04342c;  /* en-tête d'application */
+  --accent-clair:  #e1f5ee;  /* fonds doux, badges */
+  --accent-pale:   #9fe1cb;  /* pastilles */
+  /* Neutres. */
+  --fond:          #f2f5f4;  /* fond de page (gris-vert très pâle) */
+  --gris-clair:    #f5f7f6;  /* surfaces secondaires */
+  --gris-bordure:  #d5ddda;
+  --texte:         #1f2724;
+  --texte-doux:    #5b6660;
+  /* Sémantiques. */
+  --rouge: #c2362b;
+  --vert:  #1a7f37;
+  --ambre: #8a6d00;
+  /* Compatibilité : anciens noms encore utilisés çà et là. */
+  --bleu: var(--accent);
+  --bleu-fonce: var(--accent-fonce);
 }
 
 * { box-sizing: border-box; }
 
-/* Lien auxiliaire sous le formulaire de connexion (mot de passe oublié). */
-.login-aux { margin: 0.5rem 0 0; font-size: 0.9rem; }
-.login-aux a { color: var(--bleu); text-decoration: none; }
-.login-aux a:hover { text-decoration: underline; }
-
-/* En-têtes triables du tableau des compteurs (Module 6). */
-.compteurs-table th.triable { cursor: pointer; user-select: none; white-space: nowrap; }
-.compteurs-table th.triable:hover { background: var(--gris-clair); }
-.compteurs-table th.tri-actif { color: var(--bleu); }
-.compteurs-table td.num-liste { color: #6e7781; text-align: right; width: 2.5em; }
-
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  background: var(--gris-clair);
+  background: var(--fond);
   color: var(--texte);
 }
 
@@ -41,27 +45,123 @@ body {
   padding: 1rem;
 }
 
+/* --------------------------------------------------------------------- */
+/* Cartes (login + application)                                          */
+/* --------------------------------------------------------------------- */
 .card {
   background: #fff;
   border: 1px solid var(--gris-bordure);
-  border-radius: 12px;
+  border-radius: 14px;
   padding: 2rem;
   width: 100%;
   max-width: 380px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 6px 24px rgba(4, 52, 44, 0.08);
 }
 
-h1 {
-  margin: 0 0 0.25rem;
-  font-size: 1.4rem;
-}
+/* L'espace connecté : large, padding géré par l'en-tête et les panneaux. */
+#app-view { max-width: 1080px; }
+.card-app { padding: 0; }
+
+h1 { margin: 0 0 0.25rem; font-size: 1.4rem; }
 
 .subtitle {
   margin: 0 0 1.5rem;
-  color: #57606a;
+  color: var(--texte-doux);
   font-size: 0.95rem;
 }
 
+/* Lien auxiliaire sous le formulaire de connexion (mot de passe oublié). */
+.login-aux { margin: 0.5rem 0 0; font-size: 0.9rem; }
+.login-aux a { color: var(--accent); text-decoration: none; }
+.login-aux a:hover { text-decoration: underline; }
+
+/* --------------------------------------------------------------------- */
+/* En-tête d'application + navigation par onglets (refonte)              */
+/* --------------------------------------------------------------------- */
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  background: var(--accent-sombre);
+  color: var(--accent-clair);
+  padding: 0.85rem 1.5rem;
+  border-radius: 13px 13px 0 0;
+}
+.app-brand { font-size: 1.05rem; font-weight: 700; letter-spacing: 0.01em; }
+.app-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.9rem;
+}
+.role-badge {
+  background: var(--accent-fonce);
+  color: var(--accent-pale);
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.btn-logout {
+  width: auto;
+  background: transparent;
+  color: var(--accent-clair);
+  border: 1px solid rgba(225, 245, 238, 0.4);
+  padding: 0.35rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border-radius: 8px;
+}
+.btn-logout:hover { background: var(--accent-fonce); }
+
+/* Barre d'onglets — collante en haut de page pour rester accessible. */
+.tabs {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  gap: 0.2rem;
+  flex-wrap: wrap;
+  background: #fff;
+  border-bottom: 1px solid var(--gris-bordure);
+  padding: 0.35rem 1.2rem 0;
+}
+.tab {
+  width: auto;
+  background: transparent;
+  color: var(--texte-doux);
+  border: none;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+.tab:hover { background: var(--gris-clair); color: var(--texte); }
+.tab.actif { color: var(--accent); border-bottom-color: var(--accent); background: transparent; }
+.tab-badge {
+  display: inline-block;
+  min-width: 1.25rem;
+  text-align: center;
+  background: #fff3cd;
+  color: var(--ambre);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.08rem 0.35rem;
+  margin-left: 0.25rem;
+}
+
+/* Panneaux d'onglet : le contenu reprend le padding de l'ancienne carte. */
+.tab-panel { padding: 1.25rem 1.5rem 2rem; }
+
+/* --------------------------------------------------------------------- */
+/* Formulaires de base                                                   */
+/* --------------------------------------------------------------------- */
 form { display: flex; flex-direction: column; }
 
 label {
@@ -70,33 +170,35 @@ label {
   margin-bottom: 0.3rem;
 }
 
-input {
-  padding: 0.6rem 0.7rem;
+input, select {
+  padding: 0.55rem 0.7rem;
   margin-bottom: 1rem;
   border: 1px solid var(--gris-bordure);
   border-radius: 8px;
-  font-size: 1rem;
+  font-size: 0.95rem;
+  background: #fff;
+  color: var(--texte);
 }
 
-input:focus {
+input:focus, select:focus {
   outline: none;
-  border-color: var(--bleu);
-  box-shadow: 0 0 0 3px rgba(31, 111, 235, 0.15);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(15, 110, 86, 0.18);
 }
 
 button {
   padding: 0.65rem;
   border: none;
   border-radius: 8px;
-  background: var(--bleu);
+  background: var(--accent);
   color: #fff;
   font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
 }
 
-button:hover { background: var(--bleu-fonce); }
-button:disabled { opacity: 0.6; cursor: default; }
+button:hover { background: var(--accent-fonce); }
+button:disabled { opacity: 0.55; cursor: default; }
 
 button.secondary {
   background: #fff;
@@ -112,7 +214,7 @@ button.secondary:hover { background: var(--gris-clair); }
   min-height: 1.2em;
 }
 .message.error { color: var(--rouge); }
-.message.info  { color: var(--bleu); }
+.message.info  { color: var(--accent); }
 
 .zone-info {
   background: var(--gris-clair);
@@ -120,7 +222,7 @@ button.secondary:hover { background: var(--gris-clair); }
   border-radius: 8px;
   padding: 0.8rem;
   font-size: 0.9rem;
-  color: #57606a;
+  color: var(--texte-doux);
 }
 
 .hidden { display: none !important; }
@@ -128,9 +230,6 @@ button.secondary:hover { background: var(--gris-clair); }
 /* =====================================================================
    Module 2 — Espace admin : gestion des médecins
    ===================================================================== */
-
-/* L'espace connecté admin doit être large (tableau). */
-#app-view { max-width: 1000px; }
 
 .zone-header {
   display: flex;
@@ -184,7 +283,7 @@ button.secondary:hover { background: var(--gris-clair); }
 .form-actions button { width: auto; padding: 0.55rem 1.2rem; }
 .form-actions .secondary { margin-top: 0; }
 
-/* Tableau de données */
+/* Tableau de données : en-tête teinté, lignes zébrées, survol doux. */
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -197,12 +296,16 @@ button.secondary:hover { background: var(--gris-clair); }
   border-bottom: 1px solid var(--gris-bordure);
 }
 .data-table th {
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: #57606a;
+  letter-spacing: 0.04em;
+  color: var(--accent-fonce);
+  background: var(--accent-clair);
 }
-.data-table tbody tr:hover { background: var(--gris-clair); }
+.data-table th:first-child { border-radius: 8px 0 0 0; }
+.data-table th:last-child  { border-radius: 0 8px 0 0; }
+.data-table tbody tr:nth-child(even) { background: var(--gris-clair); }
+.data-table tbody tr:hover { background: var(--accent-clair); }
 
 .actions-cell { white-space: nowrap; }
 
@@ -217,10 +320,10 @@ button.mini {
   margin-left: 0.3rem;
 }
 button.mini:hover { background: var(--gris-clair); }
-button.mini.danger { color: var(--rouge); border-color: #f3c4c4; }
-button.mini.danger:hover { background: #fdeaea; }
+button.mini.danger { color: var(--rouge); border-color: #f0c8c4; }
+button.mini.danger:hover { background: #fbeae8; }
 
-/* Pastilles de type de préférence (Module 3) */
+/* Pastilles de type de préférence (Module 3) + grades (refonte) */
 .badge {
   display: inline-block;
   padding: 0.15rem 0.55rem;
@@ -233,13 +336,21 @@ button.mini.danger:hover { background: #fdeaea; }
 .badge-conge_extralegal   { background: #c8ecd4; color: #0f5132; }
 .badge-conge_scientifique { background: #ccecea; color: #0b6b63; }
 .badge-indispo            { background: #fdeaea; color: var(--rouge); }
-.badge-souhait            { background: #e3eefe; color: var(--bleu); }
+.badge-souhait            { background: #e3eefe; color: #1f6feb; }
+.badge-grade-resident     { background: #eeedfe; color: #3c3489; }
+.badge-grade-as           { background: var(--accent-clair); color: var(--accent-fonce); }
+
+/* En-têtes triables du tableau des compteurs (Module 6). */
+.compteurs-table th.triable { cursor: pointer; user-select: none; white-space: nowrap; }
+.compteurs-table th.triable:hover { background: var(--accent-pale); }
+.compteurs-table th.tri-actif { color: var(--accent-sombre); text-decoration: underline; }
+.compteurs-table td.num-liste { color: var(--texte-doux); text-align: right; width: 2.5em; }
 
 /* Aide sous un formulaire (texte gris discret) */
 .form-hint {
   margin: 0.2rem 0 0.6rem;
   font-size: 0.8rem;
-  color: #57606a;
+  color: var(--texte-doux);
 }
 
 /* =====================================================================
@@ -256,19 +367,20 @@ button.mini.danger:hover { background: #fdeaea; }
   font-size: 0.9rem;
 }
 
-/* Boutons natifs de FullCalendar : on les aligne sur le style de l'app. */
+/* Boutons natifs de FullCalendar : alignés sur la palette de l'app. */
 .fc .fc-button-primary {
-  background: var(--bleu);
-  border-color: var(--bleu);
+  background: var(--accent);
+  border-color: var(--accent);
   font-weight: 600;
 }
-.fc .fc-button-primary:hover { background: var(--bleu-fonce); border-color: var(--bleu-fonce); }
+.fc .fc-button-primary:hover { background: var(--accent-fonce); border-color: var(--accent-fonce); }
 .fc .fc-button-primary:not(:disabled).fc-button-active,
 .fc .fc-button-primary:not(:disabled):active {
-  background: var(--bleu-fonce);
-  border-color: var(--bleu-fonce);
+  background: var(--accent-fonce);
+  border-color: var(--accent-fonce);
 }
 .fc .fc-toolbar-title { font-size: 1.2rem; }
+.fc .fc-day-today { background: rgba(15, 110, 86, 0.07) !important; }
 
 /* Met en évidence les shifts du médecin connecté. */
 .fc-event.shift-mien {
@@ -284,7 +396,7 @@ button.mini.danger:hover { background: #fdeaea; }
   gap: 0.4rem 1rem;
   margin: 0.5rem 0 1rem;
   font-size: 0.82rem;
-  color: #57606a;
+  color: var(--texte-doux);
 }
 .legend-group { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 0.8rem; }
 .legend-item { display: inline-flex; align-items: center; gap: 0.35rem; }
@@ -315,8 +427,8 @@ button.mini.danger:hover { background: #fdeaea; }
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
-.statut-aucun     { background: #eaeef2; color: #57606a; }
-.statut-draft     { background: #fff3cd; color: #8a6d00; }
+.statut-aucun     { background: #eaeeec; color: var(--texte-doux); }
+.statut-draft     { background: #fff3cd; color: var(--ambre); }
 .statut-published { background: #ddf4e4; color: var(--vert); }
 
 /* Barre des boutons d'action du planning */
@@ -332,7 +444,7 @@ button.mini.danger:hover { background: #fdeaea; }
 .compteurs-table td.depasse { color: var(--rouge); font-weight: 600; }
 .compteurs-table td.ok      { color: var(--vert); }
 /* Cible réduite par des congés acceptés (infobulle = détail du calcul). */
-.compteurs-table td.cible-reduite { color: var(--bleu, #1a5fb4); cursor: help; }
+.compteurs-table td.cible-reduite { color: var(--accent); cursor: help; }
 
 /* Liste des conflits */
 #conflits-zone.conflits-ok { border-color: #b7e0c2; color: var(--vert); }
@@ -343,7 +455,7 @@ button.mini.danger:hover { background: #fdeaea; }
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(4, 52, 44, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -373,7 +485,7 @@ button.mini.danger:hover { background: #fdeaea; }
   border: none; border-radius: 0; font-size: 0.85rem; font-weight: 600;
 }
 .vue-btn:hover { background: var(--gris-clair); }
-.vue-btn.actif { background: var(--bleu); color: #fff; }
+.vue-btn.actif { background: var(--accent); color: #fff; }
 
 /* Pastilles du calendrier : un peu plus lisibles (coins arrondis, padding). */
 .fc .fc-daygrid-event {
@@ -394,7 +506,7 @@ button.mini.danger:hover { background: #fdeaea; }
 
 /* Statut des demandes (Module 10) */
 .statut-demande { font-size: 0.78rem; font-weight: 600; margin-left: 0.3rem; }
-.statut-en_attente { color: #8a6d00; }
+.statut-en_attente { color: var(--ambre); }
 .statut-approuve   { color: var(--vert); }
 .statut-refuse     { color: var(--rouge); }
 
@@ -403,7 +515,7 @@ button.mini.danger:hover { background: #fdeaea; }
   display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;
 }
 .periode-ligne input[type="date"] { margin: 0; }
-.periode-ligne span { color: #57606a; }
+.periode-ligne span { color: var(--texte-doux); }
 #d-add-periode { width: auto; }
 
 /* --- Grille postes × jours --- */
@@ -429,22 +541,22 @@ button.mini.danger:hover { background: #fdeaea; }
 /* En-tête de colonnes (jours) collante en haut. */
 .grille-table thead th {
   position: sticky; top: 0; z-index: 2;
-  background: var(--gris-clair);
+  background: var(--accent-clair);
 }
 .grille-jour { min-width: 2.1rem; }
 .grille-jour .gj-num { display: block; font-weight: 700; }
-.grille-jour .gj-dow { display: block; font-size: 0.68rem; color: #57606a; }
+.grille-jour .gj-dow { display: block; font-size: 0.68rem; color: var(--texte-doux); }
 /* Première colonne (libellés de poste) collante à gauche. */
 .grille-coin, .grille-rowhead {
   position: sticky; left: 0; z-index: 1;
   background: #fff; text-align: left; font-weight: 600;
   min-width: 8.5rem; max-width: 8.5rem;
 }
-.grille-coin { z-index: 3; background: var(--gris-clair); }
-.grille-we { background: #f0f2f5; }
+.grille-coin { z-index: 3; background: var(--accent-clair); }
+.grille-we { background: #eef1ef; }
 .grille-cell { height: 1.9rem; vertical-align: middle; }
 .grille-cell.editable { cursor: pointer; }
-.grille-cell.editable:hover { outline: 2px solid var(--bleu); outline-offset: -2px; }
+.grille-cell.editable:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* Module 17 — congrès (en-tête surligné) et unité fermée (cellule grisée). */
 .grille-jour.grille-congres { background: #ffe2b3; }
@@ -466,11 +578,15 @@ button.mini.danger:hover { background: #fdeaea; }
   cursor: pointer;
 }
 
-/* Sur petit écran : formulaire en une colonne */
+/* Sur petit écran : formulaire en une colonne, en-tête compact. */
 @media (max-width: 600px) {
   .form-grid { grid-template-columns: 1fr; }
   .data-table { font-size: 0.8rem; }
   .fc .fc-toolbar { flex-direction: column; gap: 0.5rem; }
   .planning-actions button { flex: 1 1 100%; }
   .grille-coin, .grille-rowhead { min-width: 6rem; max-width: 6rem; }
+  .app-header { padding: 0.7rem 1rem; }
+  .tab-panel { padding: 1rem 1rem 1.5rem; }
+  .tabs { padding: 0.25rem 0.5rem 0; }
+  .tab { padding: 0.5rem 0.6rem; font-size: 0.85rem; }
 }

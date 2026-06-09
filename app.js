@@ -160,12 +160,21 @@ function afficherEspace(profil) {
   medecinCourant = profil; // mémorise le médecin connecté
   const estAdmin = profil.role === "admin";
 
-  welcomeText.textContent = "Connecté en tant que " + (profil.name || "");
-  roleText.textContent = estAdmin ? "Administrateur (chef de service)" : "Médecin";
+  // En-tête : nom + badge de rôle (refonte graphique).
+  welcomeText.textContent = profil.name || "";
+  roleText.textContent = estAdmin ? "Admin" : "Médecin";
 
   // On montre uniquement la zone correspondant au rôle.
   adminZone.classList.toggle("hidden", !estAdmin);
   doctorZone.classList.toggle("hidden", estAdmin);
+
+  // Onglets : ceux de l'admin / du médecin selon le rôle, et les outils
+  // admin de l'onglet Planning (génération, compteurs, conflits).
+  document.querySelectorAll(".tab-admin").forEach((el) => el.classList.toggle("hidden", !estAdmin));
+  document.querySelectorAll(".tab-doctor").forEach((el) => el.classList.toggle("hidden", estAdmin));
+  const adminPlanning = document.getElementById("admin-planning");
+  if (adminPlanning) adminPlanning.classList.toggle("hidden", !estAdmin);
+  basculerOnglet("planning"); // toujours démarrer sur le planning
 
   basculerVue(true);
 
@@ -1470,11 +1479,13 @@ const exportPlanningBtn  = document.getElementById("export-planning-btn");
 const exportTrimestreBtn = document.getElementById("export-trimestre-btn");
 const exportRecapBtn     = document.getElementById("export-recap-btn");
 
-/* Couleurs ARGB (préfixe FF = opaque) du gabarit. */
+/* Couleurs ARGB (préfixe FF = opaque) du gabarit — palette « sarcelle ». */
 const XL = {
-  entete:   "FFBDD7EE", // bleu-gris en-tête de dates
-  station:  "FFD9D9D9", // gris : stations USI
-  garde:    "FFC6E0B4", // vert : gardes / tour
+  titre:    "FF04342C", // bandeau de titre fusionné (teal sombre, texte clair)
+  entete:   "FFE1F5EE", // teal clair : en-tête des jours de SEMAINE
+  enteteWE: "FFD8DDDA", // gris-vert : en-tête samedi / dimanche / férié
+  station:  "FFF1EFE8", // beige clair : libellés des stations
+  garde:    "FF9FE1CB", // teal pâle : gardes / tour
   congeA:   "FFFCE4D6", // orange clair : congé annuel
   congeS:   "FFF8CBAD", // orange : congé scientifique
   repos_garde: "FFE4DFEC", // mauve clair : repos de garde (auto)
@@ -1483,7 +1494,7 @@ const XL = {
   autre:    "FFF2F2F2", // gris très clair : indispo / autre
   auto:     "FFF7F7F7", // fond des cellules auto-remplies (vs vides éditables)
   ferme:    "FFC8C8C8", // gris : unité fermée (Labo le week-end / férié, fermetures M17)
-  congres:  "FFFFD966", // orange : en-tête d'un jour de congrès (M17)
+  congres:  "FFFAC775", // ambre : en-tête d'un jour de congrès (M17)
   trait:    "FFB0B0B0",
 };
 
@@ -1560,10 +1571,10 @@ function nomsPref(prefs, date, types, nomFn) {
    `periodes` (Module 17, optionnel) : congrès (en-tête orange + libellé) et
    fermetures d'unités (cellule « Fermé » comme le Labo le week-end). */
 function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes) {
-  // Largeur des colonnes de jours. On affiche des PRÉNOMS courts (cf.
-  // construireNomsCourts) → 16 suffit largement pour qu'un prénom (voire
-  // « Camille B. ») tienne sur UNE seule ligne, tout en gardant un tableau compact.
-  const LARG_JOUR = 16;
+  // Largeur des colonnes de jours. On affiche des NOMS DE FAMILLE courts (cf.
+  // construireNomsCourts) → 18 pour qu'un nom (voire « De Visscher C. »)
+  // tienne sur une seule ligne, tout en gardant un tableau compact.
+  const LARG_JOUR = 18;
   // Paramètres de hauteur. IMPORTANT : dès qu'on fixe row.height, ExcelJS écrit
   // customHeight="1" et Excel n'auto-ajuste PLUS la ligne. Il faut donc estimer
   // une hauteur TOUJOURS ≥ au besoin réel, sinon le texte multi-lignes (wrapText)
@@ -1580,20 +1591,41 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes) {
   ws.getColumn(1).width = 28; // assez large pour que les libellés tiennent sur 1 ligne
   for (let c = 2; c <= 8; c++) ws.getColumn(c).width = LARG_JOUR;
 
-  // En-tête : col A vide + 7 dates. Un jour de CONGRÈS (M17) est surligné
-  // en orange, avec le nom du congrès en 2e ligne de l'en-tête.
-  const head = ws.getRow(1);
+  // VOLETS FIGÉS : la colonne des postes + le titre et l'en-tête restent
+  // visibles au défilement. IMPRESSION : paysage, ajusté à la largeur de page.
+  ws.views = [{ state: "frozen", xSplit: 1, ySplit: 2 }];
+  ws.pageSetup = {
+    orientation: "landscape", paperSize: 9, // A4
+    fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+  };
+
+  // Ligne 1 — TITRE fusionné sur toute la largeur : « semaine du … au … ».
+  ws.mergeCells(1, 1, 1, 8);
+  const cTitre = ws.getCell(1, 1);
+  cTitre.value = "Planning USI — semaine du " +
+    jours[0].slice(8, 10) + "/" + jours[0].slice(5, 7) + " au " +
+    jours[6].slice(8, 10) + "/" + jours[6].slice(5, 7) + "/" + jours[6].slice(0, 4);
+  cTitre.font = { bold: true, size: 12, color: { argb: "FFE1F5EE" } };
+  cTitre.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
+  cTitre.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XL.titre } };
+  ws.getRow(1).height = 24;
+
+  // Ligne 2 — en-tête des jours : SEMAINE en teal clair, WEEK-END/FÉRIÉ en
+  // gris, jour de CONGRÈS (M17) en ambre avec le nom du congrès en 2e ligne.
+  const head = ws.getRow(2);
   styleCellule(head.getCell(1), XL.entete);
   let enteteCongres = false;
   jours.forEach((iso, i) => {
     const cell = head.getCell(2 + i);
     const congres = congresISO(iso, periodes);
+    const we = estWeekendOuFerieISO(iso);
     cell.value = congres ? libelleJour(iso, i) + "\n" + congres : libelleJour(iso, i);
-    cell.font = { bold: true };
-    styleCellule(cell, congres ? XL.congres : XL.entete);
+    cell.font = { bold: true, color: { argb: congres ? "FF633806" : (we ? "FF444441" : "FF085041") } };
+    styleCellule(cell, congres ? XL.congres : (we ? XL.enteteWE : XL.entete));
+    cell.alignment = { wrapText: true, vertical: "middle", horizontal: "center" };
     if (congres) enteteCongres = true;
   });
-  if (enteteCongres) head.height = 2 * PT_PAR_LIGNE + 6; // place pour la 2e ligne
+  head.height = enteteCongres ? 2 * PT_PAR_LIGNE + 6 : 20; // place pour la 2e ligne
 
   // Définition des lignes (label, couleur, fonction de contenu par date).
   // Drapeaux possibles : estLabo (fermé le week-end), ligneVide (ligne vierge
@@ -1626,9 +1658,9 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes) {
   lignes.push({ label: "Indispo / formation / autre", fill: XL.autre,
     get: (d) => nomsPref(prefs, d, ["indispo", "formation", "autre"], nomFn) });
 
-  // Écriture des lignes.
+  // Écriture des lignes (à partir de la ligne 3 : titre + en-tête au-dessus).
   lignes.forEach((lg, r) => {
-    const row = ws.getRow(2 + r);
+    const row = ws.getRow(3 + r);
     const lab = row.getCell(1);
 
     // Ligne vierge éditable (sous une unité) : cellules blanches bordées.
@@ -1670,7 +1702,10 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes) {
     // Hauteur explicite GÉNÉREUSE (cf. note ci-dessus) : ~18 pt par ligne visible
     // + marge, minimum 30 pt pour que les lignes vides du gabarit restent
     // confortables à remplir à la main et que rien ne soit jamais écrasé.
-    row.height = Math.max(30, maxLignes * PT_PAR_LIGNE + 8);
+    // Les lignes de STATION réservent d'office la place de DEUX noms (un 2e
+    // médecin peut être ajouté à la main dans la même cellule — révision).
+    const minH = lg.code ? (2 * PT_PAR_LIGNE + 6) : 30;
+    row.height = Math.max(minH, maxLignes * PT_PAR_LIGNE + 8);
   });
 }
 
@@ -1708,30 +1743,31 @@ function normaliserTexte(s) {
   return (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 }
 
-/* Construit un libellé COURT par doctor_id pour l'export planning : le PRÉNOM
-   seul, sauf si plusieurs médecins partagent le même prénom → on ajoute alors le
-   plus petit préfixe du nom de famille (suivi d'un point) qui les rend uniques
-   (« Camille B. », et si deux « Camille B… » → « Camille Be. » / « Camille Ben. »).
-   La détection d'homonymie porte sur TOUS les médecins connus (carteMedecins). */
+/* Construit un libellé COURT par doctor_id pour l'export planning : le NOM DE
+   FAMILLE seul (révision : plus officiel que le prénom), sauf si plusieurs
+   médecins partagent le même nom → on ajoute alors le plus petit préfixe du
+   PRÉNOM (suivi d'un point) qui les rend uniques (« Dupont C. » / « Dupont L. »,
+   et si même initiale → « Dupont Ca. » / « Dupont Cl. »). La détection
+   d'homonymie porte sur TOUS les médecins connus (carteMedecins). */
 function construireNomsCourts(carte) {
   const meds = Object.keys(carte).map((id) => {
     const { prenom, nom } = prenomEtNom(carte[id] && carte[id].name);
-    return { id, prenom, nom };
+    return { id, prenom, nom: nom || prenom }; // nom unique (un seul mot) : on le garde
   });
   const groupes = {};
   meds.forEach((m) => {
-    const cle = normaliserTexte(m.prenom);
+    const cle = normaliserTexte(m.nom);
     (groupes[cle] = groupes[cle] || []).push(m);
   });
   const resultat = {};
   Object.values(groupes).forEach((groupe) => {
-    if (groupe.length === 1) { resultat[groupe[0].id] = groupe[0].prenom; return; }
-    // Homonymie de prénom : on allonge le préfixe du nom jusqu'à unicité.
+    if (groupe.length === 1) { resultat[groupe[0].id] = groupe[0].nom; return; }
+    // Homonymie de nom de famille : on allonge le préfixe du prénom jusqu'à unicité.
     let longueur = 1;
     while (true) {
       const affichages = groupe.map((m) => {
-        const pref = m.nom.slice(0, longueur);
-        return pref ? m.prenom + " " + pref + "." : m.prenom;
+        const pref = m.prenom.slice(0, longueur);
+        return pref ? m.nom + " " + pref + "." : m.nom;
       });
       const uniques = new Set(affichages.map(normaliserTexte));
       if (uniques.size === affichages.length || longueur >= 12) {
@@ -1842,6 +1878,9 @@ async function exporterExcelRecap() {
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Récap " + ms + "-" + b.annee);
+  // Volets figés (noms + en-tête) et impression paysage ajustée.
+  ws.views = [{ state: "frozen", xSplit: 1, ySplit: 1 }];
+  ws.pageSetup = { orientation: "landscape", paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
   ws.getColumn(1).width = 22;
   for (let j = 1; j <= nbJours; j++) ws.getColumn(1 + j).width = 6;
   ["Gardes", "WE", "Tours", "Off", "Repos", "Heures"].forEach((_, k) => { ws.getColumn(1 + nbJours + 1 + k).width = 9; });
@@ -2022,6 +2061,13 @@ function rendreDemandes(demandes) {
   const vide = demandes.length === 0;
   demandesTable.classList.toggle("hidden", vide);
   demandesEmpty.classList.toggle("hidden", !vide);
+
+  // Pastille de comptage sur l'onglet « Demandes ».
+  const badge = document.getElementById("tab-badge-demandes");
+  if (badge) {
+    badge.textContent = demandes.length;
+    badge.classList.toggle("hidden", vide);
+  }
 
   demandes.forEach((d) => {
     const tr = document.createElement("tr");
@@ -2402,6 +2448,7 @@ function majCompteurs() {
     const reduction = joursConge * (cibleHebdo / jt.length);
     return {
       name: m.name || "", grade: GRADE_LABELS[m.grade] || m.grade || "",
+      gradeCode: m.grade, // pour la pastille colorée
       heures: st.heures, cible: Math.max(0, Math.round(cibleBrute - reduction)),
       cibleBrute: Math.round(cibleBrute), reductionConge: Math.round(reduction), joursConge,
       gardes: st.gardes, weekends: st.weekends, tours: st.tours, offs: st.offs, repos: st.repos,
@@ -2424,7 +2471,13 @@ function majCompteurs() {
     const tr = document.createElement("tr");
     const tdNum = document.createElement("td"); tdNum.textContent = i + 1; tdNum.className = "num-liste"; tr.appendChild(tdNum);
     const tdNom = document.createElement("td"); tdNom.textContent = lg.name; tr.appendChild(tdNom);
-    const tdGrade = document.createElement("td"); tdGrade.textContent = lg.grade; tr.appendChild(tdGrade);
+    // Grade en pastille colorée (résident = mauve, A/S = sarcelle).
+    const tdGrade = document.createElement("td");
+    const badgeG = document.createElement("span");
+    badgeG.className = "badge " + (lg.gradeCode === "resident" ? "badge-grade-resident" : "badge-grade-as");
+    badgeG.textContent = lg.grade;
+    tdGrade.appendChild(badgeG);
+    tr.appendChild(tdGrade);
     const tdH = document.createElement("td");
     tdH.textContent = lg.heures + " h";
     tdH.className = lg.heures > lg.cible ? "depasse" : "ok";
@@ -2899,6 +2952,33 @@ function basculerVuePlanning(vue) {
 }
 if (vueCalendrierBtn) vueCalendrierBtn.addEventListener("click", () => basculerVuePlanning("calendrier"));
 if (vueGrilleBtn) vueGrilleBtn.addEventListener("click", () => basculerVuePlanning("grille"));
+
+
+/* ===================================================================== */
+/* Navigation par ONGLETS (refonte graphique)                            */
+/* --------------------------------------------------------------------- */
+/* Un seul panneau visible à la fois : Planning (tous), Demandes /        */
+/* Congrès & fermetures / Médecins (admin), Mes préférences (médecin).   */
+/* Les zones admin-zone / doctor-zone gardent le contrôle par RÔLE ;     */
+/* les onglets ne gèrent que l'affichage.                                */
+/* ===================================================================== */
+
+const ONGLETS = ["planning", "demandes", "periodes", "medecins", "prefs"];
+
+function basculerOnglet(nom) {
+  ONGLETS.forEach((t) => {
+    const p = document.getElementById("panel-" + t);
+    if (p) p.classList.toggle("hidden", t !== nom);
+  });
+  document.querySelectorAll("#tabs-nav .tab").forEach((b) =>
+    b.classList.toggle("actif", b.dataset.tab === nom));
+  // Le calendrier, rendu dans un panneau parfois masqué, doit recalculer
+  // sa taille quand on revient sur l'onglet Planning.
+  if (nom === "planning" && calendrier) calendrier.updateSize();
+}
+
+document.querySelectorAll("#tabs-nav .tab").forEach((b) =>
+  b.addEventListener("click", () => basculerOnglet(b.dataset.tab)));
 
 /* Navigation mois dans la grille (pilote le calendrier ; datesSet
    reconstruit la grille automatiquement). */

@@ -60,10 +60,30 @@
     <!-- VUE 2 : espace connecté (placeholder Module 1)-->
     <!-- Les modules suivants rempliront ces zones.    -->
     <!-- ============================================= -->
-    <section id="app-view" class="card hidden">
-      <h1>Bienvenue</h1>
-      <p id="welcome-text"></p>
-      <p>Rôle détecté : <strong id="role-text"></strong></p>
+    <section id="app-view" class="card card-app hidden">
+
+      <!-- ===== En-tête d'application (refonte graphique) ===== -->
+      <header class="app-header">
+        <span class="app-brand">Planning Soins Intensifs</span>
+        <span class="app-user">
+          <span id="welcome-text"></span>
+          <span id="role-text" class="role-badge"></span>
+          <button id="logout-btn" class="btn-logout" type="button">Se déconnecter</button>
+        </span>
+      </header>
+
+      <!-- ===== Navigation par onglets (visibilité selon le rôle) ===== -->
+      <nav id="tabs-nav" class="tabs">
+        <button type="button" class="tab actif" data-tab="planning">Planning</button>
+        <button type="button" class="tab tab-admin hidden" data-tab="demandes">Demandes
+          <span id="tab-badge-demandes" class="tab-badge hidden"></span></button>
+        <button type="button" class="tab tab-admin hidden" data-tab="periodes">Congrès &amp; fermetures</button>
+        <button type="button" class="tab tab-admin hidden" data-tab="medecins">Médecins</button>
+        <button type="button" class="tab tab-doctor hidden" data-tab="prefs">Mes préférences</button>
+      </nav>
+
+      <!-- ============ ONGLET PLANNING (tous) ============ -->
+      <div id="panel-planning" class="tab-panel">
 
       <!-- ===== Espace PLANNING : calendrier + grille (Module 4/6) — visible par tous ===== -->
       <div id="planning-zone">
@@ -122,8 +142,9 @@
         </div>
       </div>
 
-      <!-- ===== Espace ADMIN : génération + ajustements + publication (Module 5/6) ===== -->
-      <div id="admin-zone" class="hidden">
+      <!-- ===== Outils ADMIN du planning (génération, compteurs, conflits) :
+                 restent dans l'onglet Planning, masqués pour les médecins ===== -->
+      <div id="admin-planning" class="hidden">
         <div class="zone-header">
           <h2>Planning du mois affiché</h2>
           <span id="planning-statut" class="statut-badge statut-aucun">—</span>
@@ -175,8 +196,14 @@
         <!-- Conflits détectés sur le mois affiché -->
         <div class="zone-header"><h3 class="sous-titre">Conflits détectés</h3></div>
         <div id="conflits-zone" class="zone-info">Aucun planning chargé.</div>
+      </div><!-- /admin-planning -->
+      </div><!-- /panel-planning -->
 
-        <!-- Demandes à valider (Module 10) -->
+      <!-- ============ ONGLETS ADMIN ============ -->
+      <div id="admin-zone" class="hidden">
+
+        <!-- Onglet DEMANDES (Module 10) -->
+        <div id="panel-demandes" class="tab-panel hidden">
         <div class="zone-header">
           <h3 class="sous-titre">Demandes à valider</h3>
           <button id="refresh-demandes-btn" class="mini secondary">Rafraîchir</button>
@@ -189,8 +216,10 @@
           <tbody id="demandes-tbody"></tbody>
         </table>
         <p id="demandes-empty" class="zone-info">Aucune demande en attente. ✅</p>
+        </div><!-- /panel-demandes -->
 
-        <!-- Congrès & fermetures d'unités (Module 17) — saisie ADMIN uniquement -->
+        <!-- Onglet CONGRÈS & FERMETURES (Module 17) — saisie ADMIN uniquement -->
+        <div id="panel-periodes" class="tab-panel hidden">
         <div class="zone-header">
           <h3 class="sous-titre">Congrès &amp; fermetures d'unités</h3>
           <button id="add-periode-btn" class="mini secondary">+ Ajouter</button>
@@ -255,8 +284,10 @@
           <tbody id="periodes-tbody"></tbody>
         </table>
         <p id="periodes-empty" class="zone-info">Aucun congrès ni fermeture d'unité saisie.</p>
+        </div><!-- /panel-periodes -->
 
-        <!-- ===== Espace ADMIN : gestion des médecins (Module 2) ===== -->
+        <!-- Onglet MÉDECINS (Module 2) -->
+        <div id="panel-medecins" class="tab-panel hidden">
         <div class="zone-header">
           <h2>Médecins</h2>
           <button id="add-doctor-btn">+ Ajouter un médecin</button>
@@ -370,10 +401,12 @@
           <tbody id="doctors-tbody"></tbody>
         </table>
         <p id="doctors-empty" class="zone-info hidden">Aucun médecin enregistré pour l'instant.</p>
-      </div>
+        </div><!-- /panel-medecins -->
+      </div><!-- /admin-zone -->
 
-      <!-- ===== Espace MÉDECIN : préférences (Module 3) ===== -->
+      <!-- ===== Onglet MES PRÉFÉRENCES (Module 3) — médecins ===== -->
       <div id="doctor-zone" class="hidden">
+        <div id="panel-prefs" class="tab-panel hidden">
         <div class="zone-header">
           <h2>Mes préférences</h2>
         </div>
@@ -434,9 +467,8 @@
           <tbody id="prefs-tbody"></tbody>
         </table>
         <p id="prefs-empty" class="zone-info hidden">Aucune préférence encodée pour l'instant.</p>
-      </div>
-
-      <button id="logout-btn" class="secondary">Se déconnecter</button>
+        </div><!-- /panel-prefs -->
+      </div><!-- /doctor-zone -->
     </section>
 
     <!-- ============================================= -->
