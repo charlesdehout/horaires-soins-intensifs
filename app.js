@@ -587,15 +587,25 @@ async function inviterMedecin(med) {
       },
       body: JSON.stringify({ email: med.email, redirectTo: REDIRECT_AUTH }),
     });
-    const out = await res.json().catch(() => ({}));
+    // On lit le corps en TEXTE d'abord : si la réponse n'est pas du JSON
+    // (erreur de passerelle, 401/404, page d'erreur…), on l'affiche quand même.
+    const raw = await res.text();
+    let out = {};
+    try { out = raw ? JSON.parse(raw) : {}; } catch (e) { out = {}; }
     if (!res.ok) {
-      window.alert("Échec de l'invitation : " + (out.error || ("HTTP " + res.status)) +
-        "\n\n(Si l'erreur mentionne la fonction, vérifie qu'elle est bien déployée — voir GUIDE_AUTH.md.)");
+      const detail = out.error || out.message || out.msg || (raw && raw.slice(0, 300)) || "(réponse vide)";
+      window.alert(
+        "Échec de l'invitation — HTTP " + res.status + " : " + detail +
+        "\n\nVérifie dans Supabase :\n" +
+        "• Edge Functions → inviter-medecin → Logs (le vrai message)\n" +
+        "• SMTP Brevo configuré + expéditeur validé (étape B du GUIDE_AUTH.md)\n" +
+        "• ton compte a bien role='admin' dans la table doctors");
       return;
     }
     window.alert("Invitation envoyée à " + (out.email || med.email) + ".");
   } catch (e) {
-    window.alert("Impossible de joindre la fonction d'invitation : " + e.message);
+    window.alert("Impossible de joindre la fonction d'invitation : " + e.message +
+      "\n(Souvent : fonction non déployée, mauvais nom, ou blocage CORS.)");
   }
 }
 
