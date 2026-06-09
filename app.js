@@ -1328,17 +1328,21 @@ function nomsPref(prefs, date, types, nomFn) {
 
 /* Construit une feuille « semaine » au gabarit Erasme. */
 function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
-  const LARG_JOUR = 18; // largeur des colonnes de jours (réduit les retours à la ligne)
+  // Largeur des colonnes de jours : assez large pour qu'un « Prénom Nom » complet
+  // (ex. « Laureline De Visscher ») tienne sur UNE seule ligne dans la cellule.
+  const LARG_JOUR = 24;
   // Paramètres de hauteur. IMPORTANT : dès qu'on fixe row.height, ExcelJS écrit
   // customHeight="1" et Excel n'auto-ajuste PLUS la ligne. Il faut donc estimer
-  // une hauteur GÉNÉREUSE, sinon le texte multi-lignes (wrapText) est tronqué et
-  // les lignes paraissent « écrasées » tant qu'on ne ré-ajuste pas à la main.
-  // - CHARS_PAR_LIGNE : capacité PRUDENTE d'une colonne de 18 (Calibri/Aptos 11,
-  //   majuscules/accents/traits d'union retournent à la ligne plus tôt que la
-  //   moyenne) → on sous-estime volontairement pour garder de la marge.
+  // une hauteur TOUJOURS ≥ au besoin réel, sinon le texte multi-lignes (wrapText)
+  // est rogné en bas (aligné en haut) et les lignes paraissent « écrasées » tant
+  // qu'on ne ré-ajuste pas la hauteur à la main.
+  // - CHARS_PAR_LIGNE : capacité PRUDENTE d'une cellule, dérivée de la largeur
+  //   réelle (≈ 0,8 × largeur, car majuscules/accents/traits d'union prennent plus
+  //   de place que le « 0 » de référence). On sous-estime volontairement → on
+  //   surestime le nombre de lignes → marge de sécurité, jamais de rognage.
   // - PT_PAR_LIGNE : hauteur confortable d'une ligne de texte (besoin réel ≈ 16 pt,
-  //   on prend 18 pour ne jamais rogner le bas du texte aligné en haut).
-  const CHARS_PAR_LIGNE = 14;
+  //   on prend 18 pour garder une marge).
+  const CHARS_PAR_LIGNE = Math.floor(LARG_JOUR * 0.8);
   const PT_PAR_LIGNE = 18;
   ws.getColumn(1).width = 28; // assez large pour que les libellés tiennent sur 1 ligne
   for (let c = 2; c <= 8; c++) ws.getColumn(c).width = LARG_JOUR;
