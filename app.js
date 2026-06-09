@@ -1099,6 +1099,32 @@ async function construireEvenements(debutISO, finISO) {
     });
   }
 
+  // --- 3) Congrès & fermetures d'unités en arrière-plan (Module 17) ---
+  // Visibles par TOUS (lecture RLS ouverte). Silencieux si la table n'existe
+  // pas encore (module17 SQL non lancé).
+  const { data: periodesCal, error: errPer } = await sb
+    .from("special_periods")
+    .select("type, label, unite, start_date, end_date")
+    .lte("start_date", fin)
+    .gte("end_date", debut);
+  if (errPer) {
+    console.warn("Périodes spéciales non affichées :", errPer.message);
+  } else {
+    (periodesCal || []).forEach((p) => {
+      const estCongres = p.type === "congres";
+      const lib = estCongres
+        ? "Congrès : " + p.label
+        : "Unité fermée : " + (POSTE_LABELS[p.unite] || p.unite) + " (" + p.label + ")";
+      events.push({
+        start: p.start_date,
+        end: lendemainDe(p.end_date),
+        display: "background",
+        backgroundColor: estCongres ? "rgba(255,153,0,0.20)" : "rgba(110,110,110,0.25)",
+        extendedProps: { tooltip: lib },
+      });
+    });
+  }
+
   return events;
 }
 
@@ -1242,8 +1268,11 @@ async function genererPlanningPourMoisAffiche() {
     .gte("end_date", debutMois);
   if (e2) { genererBtn.disabled = false; return messageGeneration("Erreur lecture préférences : " + e2.message, "error"); }
 
+  // 2bis) Congrès & fermetures d'unités chevauchant le mois (Module 17).
+  const periodes = await periodesSur(debutMois, finMois);
+
   // 3) Génération (algorithme pur, planning.js).
-  const res = genererPlanning({ annee, mois, medecins: medecins || [], preferences: prefs || [] });
+  const res = genererPlanning({ annee, mois, medecins: medecins || [], preferences: prefs || [], periodes });
 
   // 4) Remplace le brouillon du mois : on efface shifts du mois + schedules du mois.
   await sb.from("shifts").delete().gte("date", debutMois).lte("date", finMois);
@@ -1369,8 +1398,11 @@ async function genererTrimestrePourMoisAffiche() {
     .gte("end_date", debutTrim);
   if (e2) { genererTrimBtn.disabled = false; return messageGeneration("Erreur lecture préférences : " + e2.message, "error"); }
 
+  // 4bis) Congrès & fermetures d'unités chevauchant le trimestre (Module 17).
+  const periodes = await periodesSur(debutTrim, finTrim);
+
   // 5) Génération (algorithme pur, planning.js).
-  const res = genererTrimestre({ annee, trimestre, medecins: medecins || [], preferences: prefs || [] });
+  const res = genererTrimestre({ annee, trimestre, medecins: medecins || [], preferences: prefs || [], periodes });
 
   // 6) Écriture mois par mois : on remplace chaque brouillon (shifts + schedule),
   //    puis on insère les shifts du mois rattachés à son schedule_id.
@@ -1450,7 +1482,8 @@ const XL = {
   off:      "FFFFE699", // jaune : off-clinic
   autre:    "FFF2F2F2", // gris très clair : indispo / autre
   auto:     "FFF7F7F7", // fond des cellules auto-remplies (vs vides éditables)
-  ferme:    "FFC8C8C8", // gris : unité fermée (Labo le week-end / férié)
+  ferme:    "FFC8C8C8", // gris : unité fermée (Labo le week-end / férié, fermetures M17)
+  congres:  "FFFFD966", // orange : en-tête d'un jour de congrès (M17)
   trait:    "FFB0B0B0",
 };
 
@@ -1488,6 +1521,19 @@ function libelleJour(iso, idx) {
   return JOURS_COURTS[idx] + " " + iso.slice(8, 10) + "/" + iso.slice(5, 7);
 }
 
+/* ----- Module 17 — aides « périodes spéciales » (exports + grille) ----- */
+/* L'unité `code` est-elle fermée (fermeture admin) à la date `iso` ? */
+function uniteFermeeISO(code, iso, periodes) {
+  return (periodes || []).some((p) =>
+    p.type === "fermeture" && p.unite === code && p.start_date <= iso && iso <= p.end_date);
+}
+/* Libellé(s) du/des congrès couvrant la date `iso`, ou null. */
+function congresISO(iso, periodes) {
+  const c = (periodes || []).filter((p) =>
+    p.type === "congres" && p.start_date <= iso && iso <= p.end_date);
+  return c.length ? c.map((p) => p.label).join(", ") : null;
+}
+
 /* Applique bordure + alignement à une cellule. */
 function styleCellule(cell, fillArgb) {
   cell.border = {
@@ -1510,8 +1556,10 @@ function nomsPref(prefs, date, types, nomFn) {
     .map((p) => nomFn(p.doctor_id));
 }
 
-/* Construit une feuille « semaine » au gabarit Erasme. */
-function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
+/* Construit une feuille « semaine » au gabarit Erasme.
+   `periodes` (Module 17, optionnel) : congrès (en-tête orange + libellé) et
+   fermetures d'unités (cellule « Fermé » comme le Labo le week-end). */
+function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes) {
   // Largeur des colonnes de jours. On affiche des PRÉNOMS courts (cf.
   // construireNomsCourts) → 16 suffit largement pour qu'un prénom (voire
   // « Camille B. ») tienne sur UNE seule ligne, tout en gardant un tableau compact.
@@ -1532,15 +1580,20 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
   ws.getColumn(1).width = 28; // assez large pour que les libellés tiennent sur 1 ligne
   for (let c = 2; c <= 8; c++) ws.getColumn(c).width = LARG_JOUR;
 
-  // En-tête : col A vide + 7 dates.
+  // En-tête : col A vide + 7 dates. Un jour de CONGRÈS (M17) est surligné
+  // en orange, avec le nom du congrès en 2e ligne de l'en-tête.
   const head = ws.getRow(1);
   styleCellule(head.getCell(1), XL.entete);
+  let enteteCongres = false;
   jours.forEach((iso, i) => {
     const cell = head.getCell(2 + i);
-    cell.value = libelleJour(iso, i);
+    const congres = congresISO(iso, periodes);
+    cell.value = congres ? libelleJour(iso, i) + "\n" + congres : libelleJour(iso, i);
     cell.font = { bold: true };
-    styleCellule(cell, XL.entete);
+    styleCellule(cell, congres ? XL.congres : XL.entete);
+    if (congres) enteteCongres = true;
   });
+  if (enteteCongres) head.height = 2 * PT_PAR_LIGNE + 6; // place pour la 2e ligne
 
   // Définition des lignes (label, couleur, fonction de contenu par date).
   // Drapeaux possibles : estLabo (fermé le week-end), ligneVide (ligne vierge
@@ -1552,7 +1605,7 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
     ["USI 5", "usi5"], ["USI Bordet", "bordet"], ["Labo de choc", "labo_choc"],
   ];
   stations.forEach(([lib, code]) => {
-    lignes.push({ label: lib, fill: XL.station, estLabo: code === "labo_choc",
+    lignes.push({ label: lib, fill: XL.station, estLabo: code === "labo_choc", code,
       get: (d) => nomsShift(shifts, d, (s) => s.poste === code && (s.shift_type === "jour" || s.shift_type === "garde_24h"), nomFn) });
     // 1 ligne vide éditable sous chaque unité (saisie manuelle).
     lignes.push({ ligneVide: true });
@@ -1595,7 +1648,9 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
     jours.forEach((iso, i) => {
       const cell = row.getCell(2 + i);
       // Spec §3.2 : le Labo de choc est FERMÉ le week-end et les jours fériés.
-      if (lg.estLabo && estWeekendOuFerieISO(iso)) {
+      // Module 17 : toute unité FERMÉE par l'admin l'est aussi sur sa période.
+      if ((lg.estLabo && estWeekendOuFerieISO(iso)) ||
+          (lg.code && uniteFermeeISO(lg.code, iso, periodes))) {
         cell.value = "Fermé";
         styleCellule(cell, XL.ferme);
         cell.font = { italic: true, color: { argb: "FF777777" } };
@@ -1628,15 +1683,16 @@ async function telechargerClasseur(wb, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-/* Charge shifts + préférences approuvées du mois affiché. */
+/* Charge shifts + préférences approuvées + périodes spéciales (M17) de la période. */
 async function donneesMoisExport(b) {
   const { data: shifts } = await sb.from("shifts")
     .select("date, shift_type, doctor_id, poste").gte("date", b.debut).lte("date", b.fin);
   const { data: prefs } = await sb.from("preferences")
     .select("doctor_id, start_date, end_date, pref_type").eq("status", "approuve")
     .lte("start_date", b.fin).gte("end_date", b.debut);
+  const periodes = await periodesSur(b.debut, b.fin); // congrès / fermetures
   if (!Object.keys(carteMedecins).length) await chargerCarteMedecins();
-  return { shifts: shifts || [], prefs: prefs || [] };
+  return { shifts: shifts || [], prefs: prefs || [], periodes };
 }
 
 /* Sépare un nom complet en prénom (1er mot) et nom (le reste).
@@ -1731,14 +1787,14 @@ function semainesDuTrimestre(annee, moisTrim) {
 async function exporterExcelTrimestre() {
   if (typeof ExcelJS === "undefined") { window.alert("ExcelJS non chargé (vérifie ta connexion)."); return; }
   const b = bornesTrimestreAffiche();
-  const { shifts, prefs } = await donneesMoisExport(b); // requête par plage debut/fin
+  const { shifts, prefs, periodes } = await donneesMoisExport(b); // requête par plage debut/fin
   const nomsCourts = construireNomsCourts(carteMedecins);
   const nomFn = (id) => nomsCourts[id] || (carteMedecins[id] && carteMedecins[id].name) || "?";
 
   const wb = new ExcelJS.Workbook();
   semainesDuTrimestre(b.annee, b.moisTrim).forEach((jours, i) => {
     const ws = wb.addWorksheet("Sem " + (i + 1));
-    construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn);
+    construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes);
   });
   const lib = b.annee + "_mois" + b.moisTrim[0] + "-" + b.moisTrim[2];
   await telechargerClasseur(wb, "planning_trimestre_" + lib + ".xlsx");
@@ -1748,7 +1804,7 @@ async function exporterExcelTrimestre() {
 async function exporterExcelPlanning() {
   if (typeof ExcelJS === "undefined") { window.alert("ExcelJS non chargé (vérifie ta connexion)."); return; }
   const b = bornesMoisAffiche();
-  const { shifts, prefs } = await donneesMoisExport(b);
+  const { shifts, prefs, periodes } = await donneesMoisExport(b);
   // Libellés courts (prénom, + initiale du nom si homonymie) pour densifier.
   const nomsCourts = construireNomsCourts(carteMedecins);
   const nomFn = (id) => nomsCourts[id] || (carteMedecins[id] && carteMedecins[id].name) || "?";
@@ -1756,7 +1812,7 @@ async function exporterExcelPlanning() {
   const wb = new ExcelJS.Workbook();
   semainesDuMois(b.annee, b.mois).forEach((jours, i) => {
     const ws = wb.addWorksheet("Sem " + (i + 1));
-    construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn);
+    construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes);
   });
   await telechargerClasseur(wb, "planning_" + b.annee + "-" + String(b.mois).padStart(2, "0") + ".xlsx");
 }
@@ -1869,7 +1925,7 @@ const cancelShiftBtn = document.getElementById("cancel-shift-btn");
 
 /* État du planning du mois affiché (rempli par rafraichirPanneauAdmin). */
 let planningMois = { annee: null, mois: null, schedule: null,
-                     shifts: [], medecins: [], preferences: [] };
+                     shifts: [], medecins: [], preferences: [], periodes: [] };
 let planningVerrouille = false; // vrai si le planning du mois est publié
 let shiftEnEdition = null;      // shift en cours d'édition (null = mode ajout)
 
@@ -1921,10 +1977,15 @@ async function rafraichirPanneauAdmin() {
     .lte("start_date", b.fin).gte("end_date", b.debut);
   planningMois.preferences = prefs || [];
 
+  // 5) Congrès & fermetures d'unités chevauchant le mois (Module 17) :
+  //    utilisés par validerPlanning (couverture assouplie / unités fermées).
+  planningMois.periodes = await periodesSur(b.debut, b.fin);
+
   majStatutEtBoutons();
   majCompteurs();
   majConflits();
   chargerDemandes();
+  chargerPeriodes(); // tableau « Congrès & fermetures » (toutes périodes)
   if (vueActive === "grille") construireGrille();
 }
 
@@ -2008,6 +2069,209 @@ async function demandesEnAttenteSur(debut, fin) {
     .lte("start_date", fin).gte("end_date", debut);
   if (error) { console.error("Erreur vérif demandes en attente :", error); return 0; }
   return (data || []).length;
+}
+
+/* ===================================================================== */
+/* MODULE 17 — Congrès & fermetures d'unités (saisie ADMIN, spec §1.3-1.4)*/
+/* --------------------------------------------------------------------- */
+/* - Congrès : couverture de jour ASSOUPLIE en semaine (regles.js →       */
+/*   COUVERTURE.congres_postes_vides) ; l'admin coche les participants →  */
+/*   une absence APPROUVÉE est créée pour chacun sur la période.          */
+/* - Fermeture : l'unité choisie n'est ni pourvue ni exigée (génération   */
+/*   + validation). Saisie réservée à l'admin (RLS, module17 SQL).        */
+/* ===================================================================== */
+
+const addPeriodeBtn      = document.getElementById("add-periode-btn");
+const periodeForm        = document.getElementById("periode-form");
+const spType             = document.getElementById("sp-type");
+const spLabel            = document.getElementById("sp-label");
+const spUnite            = document.getElementById("sp-unite");
+const spUniteWrap        = document.getElementById("sp-unite-wrap");
+const spStart            = document.getElementById("sp-start");
+const spEnd              = document.getElementById("sp-end");
+const spAbsType          = document.getElementById("sp-abstype");
+const spAbsTypeWrap      = document.getElementById("sp-abstype-wrap");
+const spParticipants     = document.getElementById("sp-participants");
+const spParticipantsWrap = document.getElementById("sp-participants-wrap");
+const cancelPeriodeBtn   = document.getElementById("cancel-periode-btn");
+const periodeFormMsg     = document.getElementById("periode-form-msg");
+const periodesTable      = document.getElementById("periodes-table");
+const periodesTbody      = document.getElementById("periodes-tbody");
+const periodesEmpty      = document.getElementById("periodes-empty");
+
+const PERIODE_TYPE_LABELS = { congres: "Congrès", fermeture: "Fermeture d'unité" };
+
+let periodesSpeciales = []; // cache de TOUTES les périodes (table admin)
+
+function messagePeriode(texte, type = "error") {
+  if (!periodeFormMsg) return;
+  periodeFormMsg.textContent = texte;
+  periodeFormMsg.className = "message " + type;
+}
+
+/* Charge toutes les périodes spéciales et les affiche dans le tableau. */
+async function chargerPeriodes() {
+  if (!medecinCourant || medecinCourant.role !== "admin") return;
+  const { data, error } = await sb.from("special_periods")
+    .select("id, type, label, unite, start_date, end_date")
+    .order("start_date", { ascending: true });
+  if (error) {
+    // Table absente tant que module17_periodes_speciales.sql n'a pas été lancé.
+    console.warn("Périodes spéciales indisponibles (lancer module17 SQL ?) :", error.message);
+    return;
+  }
+  periodesSpeciales = data || [];
+  rendrePeriodes();
+}
+
+function rendrePeriodes() {
+  if (!periodesTbody) return;
+  periodesTbody.innerHTML = "";
+  const vide = periodesSpeciales.length === 0;
+  periodesTable.classList.toggle("hidden", vide);
+  periodesEmpty.classList.toggle("hidden", !vide);
+
+  periodesSpeciales.forEach((p) => {
+    const tr = document.createElement("tr");
+    const cells = [
+      PERIODE_TYPE_LABELS[p.type] || p.type,
+      p.label,
+      p.unite ? (POSTE_LABELS[p.unite] || p.unite) : "—",
+      p.start_date, p.end_date,
+    ];
+    cells.forEach((v) => { const td = document.createElement("td"); td.textContent = v; tr.appendChild(td); });
+    const tdA = document.createElement("td");
+    tdA.className = "actions-cell";
+    const sup = document.createElement("button");
+    sup.textContent = "Supprimer"; sup.className = "mini danger";
+    sup.addEventListener("click", () => supprimerPeriode(p));
+    tdA.appendChild(sup);
+    tr.appendChild(tdA);
+    periodesTbody.appendChild(tr);
+  });
+}
+
+/* Adapte le formulaire au type choisi : fermeture → unité ; congrès →
+   participants + type d'absence. */
+function majChampsPeriode() {
+  const congres = spType.value === "congres";
+  spUniteWrap.classList.toggle("hidden", congres);
+  spAbsTypeWrap.classList.toggle("hidden", !congres);
+  spParticipantsWrap.classList.toggle("hidden", !congres);
+}
+if (spType) spType.addEventListener("change", majChampsPeriode);
+
+/* Remplit le sélecteur d'unités depuis POSTES_JOUR (regles.js). */
+function remplirSelectUnites() {
+  spUnite.innerHTML = "";
+  (typeof POSTES_JOUR !== "undefined" ? POSTES_JOUR : []).forEach((p) => {
+    const opt = document.createElement("option");
+    opt.value = p.code; opt.textContent = p.label;
+    spUnite.appendChild(opt);
+  });
+}
+
+/* Cases à cocher des participants (tous les médecins planifiables). */
+async function remplirParticipants() {
+  spParticipants.innerHTML = "";
+  const { data: meds } = await sb.from("doctors")
+    .select("id, name").neq("role", "admin").order("name", { ascending: true });
+  (meds || []).forEach((m) => {
+    const lab = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.className = "sp-part"; cb.value = m.id;
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(" " + m.name));
+    spParticipants.appendChild(lab);
+  });
+}
+
+if (addPeriodeBtn) addPeriodeBtn.addEventListener("click", async () => {
+  periodeForm.classList.remove("hidden");
+  messagePeriode("");
+  periodeForm.reset();
+  remplirSelectUnites();
+  await remplirParticipants();
+  majChampsPeriode();
+});
+if (cancelPeriodeBtn) cancelPeriodeBtn.addEventListener("click", () => {
+  periodeForm.classList.add("hidden");
+});
+
+/* Note utilisée pour retrouver les absences créées par un congrès. */
+function notePourCongres(label) { return "Congrès : " + label; }
+
+if (periodeForm) periodeForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  messagePeriode("");
+
+  const type = spType.value;
+  const label = spLabel.value.trim();
+  const start = spStart.value, end = spEnd.value;
+  if (!label || !start || !end) return messagePeriode("Libellé et dates obligatoires.");
+  if (end < start) return messagePeriode("La date de fin précède la date de début.");
+  if (type === "fermeture" && !spUnite.value) return messagePeriode("Choisis l'unité à fermer.");
+
+  const ligne = {
+    type, label,
+    unite: type === "fermeture" ? spUnite.value : null,
+    start_date: start, end_date: end,
+  };
+  const { error } = await sb.from("special_periods").insert(ligne);
+  if (error) return messagePeriode("Erreur : " + error.message);
+
+  // Congrès : créer les absences APPROUVÉES des participants cochés.
+  if (type === "congres") {
+    const coches = Array.from(spParticipants.querySelectorAll(".sp-part:checked")).map((c) => c.value);
+    if (coches.length) {
+      const prefs = coches.map((id) => ({
+        doctor_id: id, start_date: start, end_date: end,
+        pref_type: spAbsType.value, note: notePourCongres(label),
+        status: "approuve", decided_at: new Date().toISOString(),
+      }));
+      const { error: e2 } = await sb.from("preferences").insert(prefs);
+      if (e2) return messagePeriode("Période créée mais erreur sur les absences : " + e2.message);
+    }
+  }
+
+  periodeForm.classList.add("hidden");
+  await chargerPeriodes();
+  if (calendrier) calendrier.refetchEvents();
+  rafraichirPanneauAdmin();
+});
+
+/* Supprime une période ; pour un congrès, propose de supprimer aussi les
+   absences créées automatiquement (repérées par leur note + leurs dates). */
+async function supprimerPeriode(p) {
+  if (!window.confirm("Supprimer « " + p.label + " » (" + p.start_date + " → " + p.end_date + ") ?")) return;
+
+  const { error } = await sb.from("special_periods").delete().eq("id", p.id);
+  if (error) { window.alert("Erreur : " + error.message); return; }
+
+  if (p.type === "congres") {
+    const { data: liees } = await sb.from("preferences")
+      .select("id")
+      .eq("note", notePourCongres(p.label))
+      .eq("start_date", p.start_date).eq("end_date", p.end_date);
+    if (liees && liees.length &&
+        window.confirm("Supprimer aussi les " + liees.length + " absence(s) de participants créée(s) pour ce congrès ?")) {
+      await sb.from("preferences").delete().in("id", liees.map((x) => x.id));
+    }
+  }
+
+  await chargerPeriodes();
+  if (calendrier) calendrier.refetchEvents();
+  rafraichirPanneauAdmin();
+}
+
+/* Périodes spéciales chevauchant [debut, fin] — pour la génération/validation.
+   Renvoie [] si la table n'existe pas encore (module17 SQL non lancé). */
+async function periodesSur(debut, fin) {
+  const { data, error } = await sb.from("special_periods")
+    .select("type, label, unite, start_date, end_date")
+    .lte("start_date", fin).gte("end_date", debut);
+  if (error) { console.warn("Périodes spéciales indisponibles :", error.message); return []; }
+  return data || [];
 }
 
 /* Affiche le badge de statut et active/désactive les boutons. */
@@ -2192,6 +2456,7 @@ function calculerConflitsMois(shifts) {
   return validerPlanning({
     annee: planningMois.annee, mois: planningMois.mois,
     shifts, medecins: planningMois.medecins, preferences: planningMois.preferences,
+    periodes: planningMois.periodes, // congrès / fermetures (M17)
   });
 }
 
@@ -2534,16 +2799,21 @@ async function construireGrille() {
     (parJour[s.date] = parJour[s.date] || []).push(s);
   });
 
+  // Congrès & fermetures d'unités du mois (Module 17, visibles par tous).
+  const periodesGrille = await periodesSur(debut, fin);
+
   const editable = medecinCourant && medecinCourant.role === "admin" && !planningVerrouille;
   const lignes = grilleLignes();
 
-  // En-tête : coin + un th par jour (numéro + lettre du jour).
+  // En-tête : coin + un th par jour (numéro + lettre du jour, congrès surligné).
   let html = "<thead><tr><th class='grille-coin'>Poste \\ Jour</th>";
   for (let j = 1; j <= nbJours; j++) {
     const iso = annee + "-" + ms + "-" + String(j).padStart(2, "0");
     const dd = new Date(iso + "T00:00:00Z");
+    const congres = congresISO(iso, periodesGrille);
     const we = estWeekendOuFerieISO(iso) ? " grille-we" : "";
-    html += "<th class='grille-jour" + we + "'><span class='gj-num'>" + j +
+    const cg = congres ? " grille-congres' title='Congrès : " + escapeHtml(congres) : "";
+    html += "<th class='grille-jour" + we + cg + "'><span class='gj-num'>" + j +
             "</span><span class='gj-dow'>" + JOURS_FR[dd.getUTCDay()] + "</span></th>";
   }
   html += "</tr></thead><tbody>";
@@ -2558,6 +2828,12 @@ async function construireGrille() {
       const correspondants = shiftsPourLigne(ligne, duJour);
       const cls = "grille-cell" + we + (editable ? " editable" : "");
       const defaut = typeDefautLigne(ligne);
+      // Module 17 : unité fermée par l'admin → cellule « Fermé » (grisée).
+      if (ligne.type === "station" && uniteFermeeISO(ligne.code, iso, periodesGrille)) {
+        html += "<td class='grille-cell grille-ferme" + we + "' data-date='" + iso +
+                "'><span class='grille-ferme-txt'>Fermé</span></td>";
+        continue;
+      }
       let contenu = "";
       correspondants.forEach((s) => {
         const suff = (s.shift_type === "garde_24h" && s.poste) ? " (24h)"

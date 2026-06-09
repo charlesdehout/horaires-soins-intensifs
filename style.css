@@ -446,6 +446,12 @@ button.mini.danger:hover { background: #fdeaea; }
 .grille-cell.editable { cursor: pointer; }
 .grille-cell.editable:hover { outline: 2px solid var(--bleu); outline-offset: -2px; }
 
+/* Module 17 — congrès (en-tête surligné) et unité fermée (cellule grisée). */
+.grille-jour.grille-congres { background: #ffe2b3; }
+.grille-jour.grille-congres .gj-dow { color: #8a5a00; }
+.grille-cell.grille-ferme { background: #d9d9d9; }
+.grille-ferme-txt { font-style: italic; color: #777; font-size: 0.75rem; }
+
 /* Étiquette d'un médecin dans une cellule de la grille. */
 .grille-chip {
   display: inline-block;

@@ -357,5 +357,79 @@ test("dépendant : souhait souple, n'enfreint pas les contraintes dures", () => 
   assert(ce.length <= 1, "double affectation suite au souhait");
 });
 
+console.log("\n=== Module 17 — Congrès & fermetures d'unités ===");
+
+test("fermeture : la station fermée n'est ni pourvue ni exigée", () => {
+  const meds = equipe();
+  const periodes = [{ type: "fermeture", unite: "usi4", start_date: "2026-06-01", end_date: "2026-06-05", label: "test" }];
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: [], periodes });
+  // Aucun shift posé sur usi4 pendant la fermeture (lun 1er → ven 5 juin).
+  const surFermee = r.shifts.filter((s) => s.poste === "usi4" && s.date >= "2026-06-01" && s.date <= "2026-06-05");
+  assert.strictEqual(surFermee.length, 0, "shifts posés sur l'unité fermée : " + surFermee.length);
+  // Pas de conflit de couverture pendant la fermeture (6 postes suffisent).
+  const conf = r.conflits.filter((c) => c.date >= "2026-06-01" && c.date <= "2026-06-05" && /postes pourvus/.test(c.message));
+  assert.strictEqual(conf.length, 0, "conflits de couverture pendant la fermeture : " + conf.length);
+  // usi4 à nouveau pourvue après la réouverture (lundi 8 juin).
+  const apres = r.shifts.filter((s) => s.poste === "usi4" && s.date === "2026-06-08");
+  assert(apres.length >= 1, "usi4 non pourvue après réouverture");
+});
+
+test("validerPlanning : unité fermée non exigée, mais affectation dessus signalée", () => {
+  const meds = equipe();
+  const periodes = [{ type: "fermeture", unite: "usi1", start_date: "2026-06-01", end_date: "2026-06-01" }];
+  // Lundi 1er juin : 6 stations pourvues (sans usi1) + nuit conforme.
+  const shifts = [
+    { date: "2026-06-01", shift_type: "garde_nuit", doctor_id: "resident1", poste: null },
+    { date: "2026-06-01", shift_type: "garde_24h", doctor_id: "resident2", poste: "usi2" },
+    { date: "2026-06-01", shift_type: "jour", doctor_id: "resident3", poste: "usi3" },
+    { date: "2026-06-01", shift_type: "jour", doctor_id: "resident4", poste: "usi4" },
+    { date: "2026-06-01", shift_type: "jour", doctor_id: "resident5", poste: "usi5" },
+    { date: "2026-06-01", shift_type: "jour", doctor_id: "assistant_specialiste1", poste: "bordet" },
+    { date: "2026-06-01", shift_type: "jour", doctor_id: "assistant_specialiste2", poste: "labo_choc" },
+  ];
+  const ok = validerPlanning({ annee: 2026, mois: 6, shifts, medecins: meds, preferences: [], periodes });
+  assert(!ok.some((c) => c.date === "2026-06-01" && /stations pourvues/.test(c.message)),
+    "station fermée indûment exigée");
+  // Affectation manuelle sur l'unité fermée → conflit signalé.
+  const avec = shifts.concat([{ date: "2026-06-01", shift_type: "jour", doctor_id: "assistant_specialiste3", poste: "usi1" }]);
+  const ko = validerPlanning({ annee: 2026, mois: 6, shifts: avec, medecins: meds, preferences: [], periodes });
+  assert(ko.some((c) => /unité est fermée/.test(c.message)), "affectation sur unité fermée non signalée");
+});
+
+test("congrès en semaine : jusqu'à 2 stations vides tolérées (§3.2)", () => {
+  const meds = equipe();
+  const periodes = [{ type: "congres", start_date: "2026-06-01", end_date: "2026-06-04", label: "ISICEM" }];
+  // 5/7 stations + nuit conforme : toléré pendant le congrès…
+  const base = [
+    { date: "2026-06-01", shift_type: "garde_nuit", doctor_id: "resident1", poste: null },
+    { date: "2026-06-01", shift_type: "garde_24h", doctor_id: "resident2", poste: "usi1" },
+    { date: "2026-06-01", shift_type: "jour", doctor_id: "resident3", poste: "usi2" },
+    { date: "2026-06-01", shift_type: "jour", doctor_id: "resident4", poste: "usi3" },
+    { date: "2026-06-01", shift_type: "jour", doctor_id: "resident5", poste: "usi4" },
+    { date: "2026-06-01", shift_type: "jour", doctor_id: "assistant_specialiste1", poste: "usi5" },
+  ];
+  const ok = validerPlanning({ annee: 2026, mois: 6, shifts: base, medecins: meds, preferences: [], periodes });
+  assert(!ok.some((c) => c.date === "2026-06-01" && /stations pourvues/.test(c.message)),
+    "2 stations vides indûment signalées pendant le congrès");
+  // …mais 4/7 (3 vides) dépasse la tolérance → conflit.
+  const moins = base.filter((s) => s.poste !== "usi5");
+  const ko = validerPlanning({ annee: 2026, mois: 6, shifts: moins, medecins: meds, preferences: [], periodes });
+  assert(ko.some((c) => c.date === "2026-06-01" && /stations pourvues/.test(c.message)),
+    "dépassement de la tolérance congrès non signalé");
+  // Et hors congrès, 5/7 reste bien un conflit (rien d'assoupli).
+  const sans = validerPlanning({ annee: 2026, mois: 6, shifts: base, medecins: meds, preferences: [] });
+  assert(sans.some((c) => c.date === "2026-06-01" && /stations pourvues/.test(c.message)),
+    "couverture normale indûment assouplie hors congrès");
+});
+
+test("congrès un week-end : règles week-end inchangées (priorité week-end)", () => {
+  const meds = equipe();
+  const periodes = [{ type: "congres", start_date: "2026-06-13", end_date: "2026-06-14", label: "ISICARE" }]; // sam-dim
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: [], periodes });
+  const sam = r.shifts.filter((s) => s.date === "2026-06-13");
+  assert.strictEqual(sam.filter((s) => s.shift_type === "garde_24h").length, 2, "gardes 24h ≠ 2 le samedi de congrès");
+  assert.strictEqual(sam.filter((s) => s.shift_type === "twe").length, 1, "TWE ≠ 1 le samedi de congrès");
+});
+
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");
 process.exit(reussis === total ? 0 : 1);

@@ -48,6 +48,12 @@ const COUVERTURE = {
   min_nuit:       2,
   twe_weekend:    3,
   gardes_weekend: 2,
+  // Module 17 — CONGRÈS (ISICEM / ISICARE, spec §3.2) : un jour de congrès en
+  // SEMAINE, les 7 unités restent ouvertes mais la couverture est ASSOUPLIE :
+  // jusqu'à N stations peuvent rester vides sans que ce soit un conflit
+  // (beaucoup de médecins sont au congrès). Gardes de nuit inchangées.
+  // Un congrès tombant un week-end/férié suit les règles week-end normales.
+  congres_postes_vides: 2,
 };
 
 

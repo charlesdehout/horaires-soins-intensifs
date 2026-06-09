@@ -97,6 +97,11 @@
             <span class="legend-item"><span class="dot" style="background:#cf222e"></span>Indispo</span>
             <span class="legend-item"><span class="dot" style="background:#1f6feb"></span>Souhait</span>
           </span>
+          <span class="legend-group">
+            <strong>Périodes (fond) :</strong>
+            <span class="legend-item"><span class="dot" style="background:#ff9900"></span>Congrès</span>
+            <span class="legend-item"><span class="dot" style="background:#6e6e6e"></span>Unité fermée</span>
+          </span>
           <span id="legend-mine" class="legend-item hidden"><span class="dot dot-mine"></span>Mes shifts</span>
         </div>
 
@@ -184,6 +189,72 @@
           <tbody id="demandes-tbody"></tbody>
         </table>
         <p id="demandes-empty" class="zone-info">Aucune demande en attente. ✅</p>
+
+        <!-- Congrès & fermetures d'unités (Module 17) — saisie ADMIN uniquement -->
+        <div class="zone-header">
+          <h3 class="sous-titre">Congrès &amp; fermetures d'unités</h3>
+          <button id="add-periode-btn" class="mini secondary">+ Ajouter</button>
+        </div>
+        <p class="zone-info">
+          <strong>Congrès</strong> (ISICEM / ISICARE…) : en semaine, jusqu'à 2 stations
+          peuvent rester vides sans conflit ; coche les participants pour créer
+          automatiquement leurs absences (déjà approuvées).
+          <strong>Fermeture</strong> : l'unité choisie n'est plus à pourvoir sur la période
+          (poste en moins). Les deux sont pris en compte à la génération et visibles au calendrier.
+        </p>
+
+        <form id="periode-form" class="doctor-form hidden">
+          <div class="form-grid">
+            <div>
+              <label for="sp-type">Type</label>
+              <select id="sp-type">
+                <option value="congres">Congrès</option>
+                <option value="fermeture">Fermeture d'unité</option>
+              </select>
+            </div>
+            <div>
+              <label for="sp-label">Libellé</label>
+              <input type="text" id="sp-label" maxlength="80" placeholder="ex. ISICEM 2027" required />
+            </div>
+            <div id="sp-unite-wrap" class="hidden">
+              <label for="sp-unite">Unité fermée</label>
+              <select id="sp-unite"></select>
+            </div>
+            <div>
+              <label for="sp-start">Du</label>
+              <input type="date" id="sp-start" required />
+            </div>
+            <div>
+              <label for="sp-end">Au</label>
+              <input type="date" id="sp-end" required />
+            </div>
+            <div id="sp-abstype-wrap">
+              <label for="sp-abstype">Absence des participants</label>
+              <select id="sp-abstype">
+                <option value="conge_scientifique">Congé scientifique (décompte du quota)</option>
+                <option value="formation">Formation (hors quota)</option>
+              </select>
+            </div>
+            <div class="form-grid-full" id="sp-participants-wrap">
+              <label>Participants au congrès</label>
+              <div id="sp-participants" class="jours-travailles"></div>
+              <p class="form-hint">Une absence approuvée est créée pour chaque participant coché sur toute la période.</p>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="submit" id="save-periode-btn">Enregistrer</button>
+            <button type="button" id="cancel-periode-btn" class="secondary">Annuler</button>
+          </div>
+          <p id="periode-form-msg" class="message"></p>
+        </form>
+
+        <table id="periodes-table" class="data-table hidden">
+          <thead>
+            <tr><th>Type</th><th>Libellé</th><th>Unité</th><th>Du</th><th>Au</th><th></th></tr>
+          </thead>
+          <tbody id="periodes-tbody"></tbody>
+        </table>
+        <p id="periodes-empty" class="zone-info">Aucun congrès ni fermeture d'unité saisie.</p>
 
         <!-- ===== Espace ADMIN : gestion des médecins (Module 2) ===== -->
         <div class="zone-header">

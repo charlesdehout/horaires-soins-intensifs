@@ -19,8 +19,8 @@ plusieurs **contraintes dures (Niveau 1)** ne sont pas encore appliquées.
 |---|---|---|
 | 1.1 Année académique : 1er lundi d'octobre → dernier dimanche de septembre, 4 trimestres (T1 oct–déc, T2 jan–mars, T3 avr–juin, T4 juil–sept), planning par trimestre | ❌ | `genererTrimestre` utilise les **trimestres civils**. À corriger → bornes académiques. |
 | 1.2 Jours fériés belges, agissent comme weekend, modifiables par admin | ⚠️ | Fériés calculés (`joursFeriesBE`) et traités comme weekend ✅, mais **non éditables** par l'admin. |
-| 1.3 Congrès ISICEM / ISICARE (3–4 j, dates annuelles manuelles) | ❌ | Concept absent. Nouveau modèle + UI. |
-| 1.4 Fermetures temporaires d'unités (été/Noël), saisie admin, couverture adaptée | ❌ | Concept absent. |
+| 1.3 Congrès ISICEM / ISICARE (3–4 j, dates annuelles manuelles) | ✅ | **Module 17** : table `special_periods`, saisie admin, participants cochés → absences approuvées auto. |
+| 1.4 Fermetures temporaires d'unités (été/Noël), saisie admin, couverture adaptée | ✅ | **Module 17** : unité fermée ni pourvue ni exigée ; cumulable ; admin only (RLS). |
 
 ## 2. Personnel
 
@@ -41,8 +41,8 @@ plusieurs **contraintes dures (Niveau 1)** ne sont pas encore appliquées.
 |---|---|---|
 | 3.1 Semaine : 7 stations (USI 1–5, Bordet, Labo), min 1 médecin chacune | ✅ | Conforme (`POSTES_JOUR`, couverture 7). |
 | 3.2 Weekend/férié : **Labo fermé**, 6 unités, 3 médecins, jusqu'à 3 postes vides | ⚠️ | Le weekend n'assigne **aucune** station actuellement (juste gardes + tour). À enrichir pour l'export. |
-| 3.2 Congrès en semaine : 6 unités, 4 médecins, jusqu'à 2 vides | ❌ | Absent. |
-| Priorité férié/congrès tombant un weekend → règles weekend | ⚠️ | Férié = weekend ✅ ; congrès non géré. |
+| 3.2 Congrès en semaine : 6 unités, 4 médecins, jusqu'à 2 vides | ✅* | **Module 17** : 7 unités conservées (décision utilisateur ≠ spec), jusqu'à 2 vides tolérées (`congres_postes_vides`). |
+| Priorité férié/congrès tombant un weekend → règles weekend | ✅ | Férié = weekend ✅ ; congrès un weekend = règles weekend (M17, testé). |
 
 ## 4. Types de gardes
 
@@ -118,7 +118,7 @@ plusieurs **contraintes dures (Niveau 1)** ne sont pas encore appliquées.
 | Weekend travaillé = garde 24h **ou** tour le sam/dim | ✅ |
 | Férié **en semaine** : règles weekend mais **ne compte pas** comme weekend travaillé | ❌ → **corrigé dans ce lot** |
 | Férié un sam/dim : compte comme weekend | ✅ |
-| Congrès un weekend : compte comme weekend si planifié | ❌ |
+| Congrès un weekend : compte comme weekend si planifié | ✅ (M17 : comptage par sam/dim inchangé) |
 
 ## 8–10. Congés, off-clinic, désidératas
 

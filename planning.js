@@ -70,6 +70,48 @@ function plEstWeekendOuFerie(s) {
 function plLundiDe(s) { return plAdd(s, -(plJourSemaine(s) - 1)); }
 
 
+/* ------- Module 17 — Périodes spéciales (congrès / fermetures) --------- */
+/* Étend les périodes saisies par l'admin en index par date :
+     - congres : Set des dates de congrès (ISICEM / ISICARE…).
+     - fermees : { dateISO -> Set(codes de stations fermées ce jour) }.
+   periodes = [{ type:'congres'|'fermeture', unite, start_date, end_date }]. */
+function plIndexerPeriodes(periodes) {
+  const idx = { congres: new Set(), fermees: {} };
+  (periodes || []).forEach((p) => {
+    let d = p.start_date;
+    while (d <= p.end_date) {
+      if (p.type === "congres") idx.congres.add(d);
+      if (p.type === "fermeture" && p.unite) {
+        (idx.fermees[d] = idx.fermees[d] || new Set()).add(p.unite);
+      }
+      d = plAdd(d, 1);
+    }
+  });
+  return idx;
+}
+
+/* Stations OUVERTES un jour donné = toutes les stations moins celles d'une
+   fermeture d'unité couvrant la date (le poste fermé n'est ni pourvu ni exigé). */
+function plPostesOuverts(date, idx) {
+  const tous = plPostes().map((p) => p.code);
+  if (!idx || !idx.fermees[date]) return tous;
+  return tous.filter((c) => !idx.fermees[date].has(c));
+}
+
+/* Vrai si la date tombe pendant un congrès saisi par l'admin. */
+function plEstCongres(date, idx) {
+  return !!(idx && idx.congres.has(date));
+}
+
+/* Tolérance de stations vides un jour de SEMAINE : pendant un congrès,
+   jusqu'à `congres_postes_vides` stations peuvent rester vides (spec §3.2). */
+function plToleranceVides(date, idx) {
+  if (!plEstCongres(date, idx)) return 0;
+  const c = plCouv();
+  return (typeof c.congres_postes_vides === "number") ? c.congres_postes_vides : 2;
+}
+
+
 /* --------------------------- État mutable ------------------------------ */
 function plNouvelEtat(medecins) {
   const e = {
@@ -101,6 +143,9 @@ function plNouvelEtat(medecins) {
     // Module 12c : dernière date de GARDE (toutes gardes) par médecin, pour le
     // biais de concentration des gardes de nuit de semaine.
     derniereGarde: {},
+    // Module 17 : index des périodes spéciales (congrès / fermetures d'unités),
+    // rempli par genererPlanning / genererTrimestre via plIndexerPeriodes.
+    periodes: null,
   };
   medecins.forEach((m) => {
     e.indispo[m.id] = new Set();
@@ -381,7 +426,8 @@ function plAffecter(sortie, etat, date, type, doctorId, poste) {
    libre (continuité), sinon la première station libre. */
 function plChoisirStation(med, postes, plan, etat, cle) {
   const pref = etat.station[med.id][cle];
-  if (pref && !(pref in plan)) return pref;
+  // La station habituelle doit aussi être OUVERTE ce jour-là (fermetures, M17).
+  if (pref && postes.includes(pref) && !(pref in plan)) return pref;
   return postes.find((c) => !(c in plan)) || postes[0];
 }
 
@@ -389,7 +435,9 @@ function plChoisirStation(med, postes, plan, etat, cle) {
 /* ------------------------- Jour de SEMAINE ----------------------------- */
 function plGenererSemaine(date, medecins, etat, sortie, conflits) {
   const cle = plLundiDe(date);
-  const postes = plPostes().map((p) => p.code);
+  // Module 17 : seules les stations OUVERTES ce jour sont à pourvoir
+  // (une unité fermée par l'admin n'est ni pourvue ni exigée).
+  const postes = plPostesOuverts(date, etat.periodes);
   const libres = medecins.filter((m) => plDispo(m, date, etat));
   // Vivier pour les GARDES : on retire ceux qui ont déjà atteint le max
   // hebdomadaire (contrainte DURE, spec §6 N1).
@@ -430,7 +478,8 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits) {
   pool.forEach((m) => {
     if (Object.values(plan).includes(m.id)) return;
     const st = etat.station[m.id][cle];
-    if (st && !(st in plan)) plan[st] = m.id;
+    // La station de la semaine doit être OUVERTE ce jour (fermetures, M17).
+    if (st && postes.includes(st) && !(st in plan)) plan[st] = m.id;
   });
   // 2b) On comble les stations encore vides.
   postes.forEach((code) => {
@@ -443,9 +492,13 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits) {
   if (resNuit && !second) {
     conflits.push({ date, message: "Nuit : 2e médecin de garde indisponible (≥2 requis)." });
   }
+  // Module 17 : pendant un congrès, jusqu'à N stations vides sont TOLÉRÉES
+  // (spec §3.2) — on ne signale un conflit que sous le minimum assoupli.
   const remplies = postes.filter((c) => c in plan).length;
-  if (remplies < postes.length) {
-    conflits.push({ date, message: `Jour : ${remplies}/${postes.length} postes pourvus (effectif insuffisant).` });
+  const toleres = plToleranceVides(date, etat.periodes);
+  if (remplies < postes.length - toleres) {
+    conflits.push({ date, message: `Jour : ${remplies}/${postes.length} postes pourvus ` +
+      (toleres ? `(congrès : minimum ${postes.length - toleres}).` : `(effectif insuffisant).`) });
   }
 
   // 3) Affectations effectives.
@@ -549,7 +602,8 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits) {
 
 
 /* --------------------------- Point d'entrée ---------------------------- */
-/* opts = { annee, mois (1-12), medecins:[...], preferences:[...] }
+/* opts = { annee, mois (1-12), medecins:[...], preferences:[...],
+            periodes:[...] (Module 17 : congrès / fermetures, optionnel) }
    Renvoie { shifts, conflits, stats }. */
 function genererPlanning(opts) {
   const annee = opts.annee;
@@ -559,6 +613,7 @@ function genererPlanning(opts) {
 
   const etat = plNouvelEtat(medecins);
   plIndexerPreferences(preferences, etat);
+  etat.periodes = plIndexerPeriodes(opts.periodes); // congrès / fermetures (M17)
 
   const sortie = [];
   const conflits = [];
@@ -653,6 +708,7 @@ function genererTrimestre(opts) {
   // Les cumuls trimestriels restent dans *Total.
   const etat = plNouvelEtat(medecins);
   plIndexerPreferences(preferences, etat);
+  etat.periodes = plIndexerPeriodes(opts.periodes); // congrès / fermetures (M17)
 
   const sortie = [];
   const conflits = [];
@@ -879,7 +935,8 @@ function plBornesMois(annee, mois) {
 /* « conflits » de l'admin. Aucune dépendance DOM/Supabase.               */
 /*                                                                        */
 /* opts = { annee, mois (1-12), shifts:[{date,shift_type,doctor_id,poste}],*/
-/*          medecins:[...], preferences:[...] (optionnel) }               */
+/*          medecins:[...], preferences:[...] (optionnel),                */
+/*          periodes:[...] (Module 17 : congrès / fermetures, optionnel) }*/
 /* Renvoie un tableau de conflits : [{ date, message }].                  */
 /* ===================================================================== */
 function validerPlanning(opts) {
@@ -889,9 +946,9 @@ function validerPlanning(opts) {
   const medecins = opts.medecins || [];
   const conflits = [];
 
-  const postesCodes = plPostes().map((p) => p.code);
   const couv = plCouv();
   const bloquantes = plBloq();
+  const idxP = plIndexerPeriodes(opts.periodes); // congrès / fermetures (M17)
 
   // Index médecins par id.
   const medById = {};
@@ -958,20 +1015,33 @@ function validerPlanning(opts) {
         conflits.push({ date, message: `Week-end : ${nom(s.doctor_id)} a un shift de jour (incohérent).` });
       });
     } else {
-      // Jour de semaine : 7 stations + nuit ≥2 dont ≥1 résident.
+      // Jour de semaine : stations OUVERTES pourvues + nuit ≥2 dont ≥1 résident.
+      // Module 17 : une unité FERMÉE n'est pas exigée ; un jour de CONGRÈS,
+      // jusqu'à `congres_postes_vides` stations vides sont tolérées (§3.2).
+      const postesJour = plPostesOuverts(date, idxP);
       const occupants = {}; // code station -> [doctorId]
       duJour.forEach((s) => {
         if (s.poste) (occupants[s.poste] = occupants[s.poste] || []).push(s.doctor_id);
       });
-      const pourvues = postesCodes.filter((c) => occupants[c] && occupants[c].length >= 1);
-      if (pourvues.length < postesCodes.length) {
-        conflits.push({ date, message: `Jour : ${pourvues.length}/${postesCodes.length} stations pourvues.` });
+      const pourvues = postesJour.filter((c) => occupants[c] && occupants[c].length >= 1);
+      const toleres = plToleranceVides(date, idxP);
+      if (pourvues.length < postesJour.length - toleres) {
+        conflits.push({ date, message: `Jour : ${pourvues.length}/${postesJour.length} stations pourvues` +
+          (toleres ? ` (congrès : minimum ${postesJour.length - toleres})` : "") + `.` });
       }
-      postesCodes.forEach((c) => {
+      postesJour.forEach((c) => {
         if (occupants[c] && occupants[c].length > 1) {
           conflits.push({ date, message: `Jour : station ${c} affectée à ${occupants[c].length} médecins.` });
         }
       });
+      // Affectation sur une unité FERMÉE (retouche manuelle) : signalée.
+      if (idxP.fermees[date]) {
+        idxP.fermees[date].forEach((c) => {
+          if (occupants[c] && occupants[c].length > 0) {
+            conflits.push({ date, message: `Jour : station ${c} affectée alors que l'unité est fermée.` });
+          }
+        });
+      }
       if (gardes.length < couv.min_nuit) {
         conflits.push({ date, message: `Nuit : ${gardes.length}/${couv.min_nuit} médecin(s) de garde.` });
       }

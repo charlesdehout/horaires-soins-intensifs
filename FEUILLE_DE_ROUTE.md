@@ -69,12 +69,36 @@
   congé = −1 semaine de cible. Marqueur « * » + infobulle détaillant le calcul.
   `app.js` + `style.css`, pas de SQL.
 
+## ✅ Fait dans ce lot (juin 2026 — Module 17)
+
+- **Congrès ISICEM / ISICARE + fermetures d'unités** (spec §1.3, §1.4, §3.2) :
+  - Nouvelle table `special_periods` (**`sql/module17_periodes_speciales.sql`**,
+    idempotent) : type `congres` | `fermeture`, libellé, unité (si fermeture),
+    dates. Lecture pour tous, **écriture admin uniquement** (RLS).
+  - **Congrès** : saisie admin (dates manuelles annuelles). En SEMAINE, les
+    7 unités restent ouvertes mais jusqu'à **2 stations vides sont tolérées**
+    (paramètre `COUVERTURE.congres_postes_vides` dans regles.js) — décision
+    utilisateur (la spec disait 6 unités / Labo fermé). Un congrès tombant un
+    week-end suit les règles week-end normales (et compte comme week-end
+    travaillé si planifié, §7). **Participants cochés par l'admin** à la
+    création → une absence APPROUVÉE (congé scientifique ou formation, au
+    choix) est créée pour chacun ; à la suppression du congrès, l'app propose
+    de supprimer aussi ces absences (repérées par note + dates).
+  - **Fermeture d'unité** : l'admin choisit l'unité (n'importe laquelle des 7,
+    cumulable) et la période → le poste n'est **ni pourvu ni exigé** à la
+    génération et à la validation ; une affectation manuelle sur une unité
+    fermée est signalée en conflit. La continuité de station contourne
+    l'unité fermée.
+  - **Affichage** : fond orange (congrès) / gris (fermeture) au calendrier
+    (visibles par tous, infobulle), en-tête orange + libellé du congrès et
+    cellules « Fermé » dans la grille et les exports Excel (mois + trimestre).
+  - **Tests** : 4 nouveaux cas (fermeture génération/validation, tolérance
+    congrès, congrès week-end) → **35/35 verts**.
+
 ## 🔜 Reste à faire (par priorité)
 
 4. **Récup férié auto-crédit** (§8.2) + **désidératas** (quota 20/trimestre +
    priorités admin principal > secondaires > travailleurs). *Touche la base (SQL).*
-5. **Congrès ISICEM / ISICARE** (dates manuelles) + **fermetures d'unités**
-   (été/Noël) avec couverture adaptée. *Touche la base.*
 6. **Rotation trimestrielle des unités** (historique tracé, proposition modifiable).
 7. **Alertes absences simultanées** (§14 : 1–3 normal, 4–5 attention, 6+ critique ;
    ≥1 résident dispo la nuit) + **pré-placement manuel** respecté à la génération.
