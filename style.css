@@ -15,6 +15,12 @@
 
 * { box-sizing: border-box; }
 
+/* En-têtes triables du tableau des compteurs (Module 6). */
+.compteurs-table th.triable { cursor: pointer; user-select: none; white-space: nowrap; }
+.compteurs-table th.triable:hover { background: var(--gris-clair); }
+.compteurs-table th.tri-actif { color: var(--bleu); }
+.compteurs-table td.num-liste { color: #6e7781; text-align: right; width: 2.5em; }
+
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;

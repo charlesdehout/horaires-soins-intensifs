@@ -105,7 +105,8 @@
           <button id="ajouter-shift-btn" class="secondary">+ Ajouter un shift</button>
           <button id="publier-btn" class="secondary">✓ Publier</button>
           <button id="depublier-btn" class="secondary">↩ Repasser en brouillon</button>
-          <button id="export-planning-btn" class="secondary">⬇ Excel — Planning</button>
+          <button id="export-planning-btn" class="secondary">⬇ Excel — Planning (mois)</button>
+          <button id="export-trimestre-btn" class="secondary">⬇ Excel — Planning (trimestre)</button>
           <button id="export-recap-btn" class="secondary">⬇ Excel — Récap individuel</button>
         </div>
         <p class="zone-info">
@@ -120,7 +121,10 @@
         <div class="zone-header"><h3 class="sous-titre">Compteurs du mois</h3></div>
         <table id="compteurs-table" class="data-table compteurs-table">
           <thead>
+            <!-- En-tête (re)construit dynamiquement par majCompteurs() pour gérer
+                 la colonne « # » et le tri cliquable. -->
             <tr>
+              <th>#</th>
               <th>Médecin</th>
               <th>Grade</th>
               <th>Heures</th>
@@ -134,6 +138,7 @@
           </thead>
           <tbody id="compteurs-tbody"></tbody>
         </table>
+        <p id="compteurs-total" class="zone-info hidden"></p>
         <p id="compteurs-empty" class="zone-info hidden">Aucun shift sur le mois affiché.</p>
 
         <!-- Conflits détectés sur le mois affiché -->

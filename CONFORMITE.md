@@ -153,8 +153,17 @@ demandes, pré-placement, déclarations indépendants ❌).
 - **Export 2 — Récapitulatif individuel** ✅ : lignes = médecins, colonnes =
   jours, codes gardes/tours/congés/repos uniquement (pas la couverture des
   unités) + totaux gardes/week-ends/heures.
-- Restant : découpage par **trimestre** plutôt que mois ; postes vides montrés
-  explicitement les week-ends (Labo fermé) ; lignes vides supplémentaires par unité.
+- **Export par TRIMESTRE** ✅ (2026-06) : bouton « Excel — Planning (trimestre) »
+  en plus de l'export mois ; un onglet par semaine sur les ~13 semaines du
+  trimestre civil affiché (`exporterExcelTrimestre`, `semainesDuTrimestre`).
+- **Week-end / férié — Labo fermé** ✅ : les colonnes samedi/dimanche/férié
+  affichent « Fermé » (grisé) sur la ligne Labo de choc ; les autres unités
+  restent en cellules vides éditables (spec §3.2).
+- **Lignes vides par unité** ✅ : une ligne vierge éditable sous chaque station
+  (saisie manuelle d'un 2e médecin / d'une note), en plus de « Autres (saisie libre) ».
+- Affichage à l'écran — **Compteurs du mois** : colonne « # » (numéro de liste →
+  total de médecins), total affiché, et **tri croissant/décroissant** au clic sur
+  chaque colonne (nom, grade, heures, cible, gardes, week-ends, tours, off, repos).
 
 ## 14. Seuil d'alerte absences simultanées
 

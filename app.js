@@ -1262,8 +1262,9 @@ if (genererTrimBtn) genererTrimBtn.addEventListener("click", genererTrimestrePou
 /* MODULE 14 — Exports Excel (.xlsx) via ExcelJS (spec §13)              */
 /* ===================================================================== */
 
-const exportPlanningBtn = document.getElementById("export-planning-btn");
-const exportRecapBtn    = document.getElementById("export-recap-btn");
+const exportPlanningBtn  = document.getElementById("export-planning-btn");
+const exportTrimestreBtn = document.getElementById("export-trimestre-btn");
+const exportRecapBtn     = document.getElementById("export-recap-btn");
 
 /* Couleurs ARGB (préfixe FF = opaque) du gabarit. */
 const XL = {
@@ -1277,8 +1278,19 @@ const XL = {
   off:      "FFFFE699", // jaune : off-clinic
   autre:    "FFF2F2F2", // gris très clair : indispo / autre
   auto:     "FFF7F7F7", // fond des cellules auto-remplies (vs vides éditables)
+  ferme:    "FFC8C8C8", // gris : unité fermée (Labo le week-end / férié)
   trait:    "FFB0B0B0",
 };
+
+/* Vrai si la date ISO "AAAA-MM-JJ" est un samedi, dimanche ou jour férié belge.
+   Utilise joursFeriesBE (regles.js, global dans le navigateur). Sert à
+   l'affichage « Labo fermé » dans l'export planning (spec §3.2). */
+function estWeekendOuFerieISO(iso) {
+  const d = new Date(iso + "T00:00:00Z");
+  const j = d.getUTCDay(); // 0 = dimanche, 6 = samedi
+  if (j === 0 || j === 6) return true;
+  return (typeof joursFeriesBE === "function") && joursFeriesBE(d.getUTCFullYear()).has(iso);
+}
 
 /* Liste des semaines (lun→dim) couvrant un mois (1-12). */
 function semainesDuMois(annee, mois) {
@@ -1359,6 +1371,8 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
   });
 
   // Définition des lignes (label, couleur, fonction de contenu par date).
+  // Drapeaux possibles : estLabo (fermé le week-end), ligneVide (ligne vierge
+  // éditable insérée sous chaque unité pour la saisie manuelle d'un 2e médecin).
   const P = (codes) => (s) => codes.includes(s.shift_type);
   const lignes = [];
   const stations = [
@@ -1366,8 +1380,10 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
     ["USI 5", "usi5"], ["USI Bordet", "bordet"], ["Labo de choc", "labo_choc"],
   ];
   stations.forEach(([lib, code]) => {
-    lignes.push({ label: lib, fill: XL.station,
+    lignes.push({ label: lib, fill: XL.station, estLabo: code === "labo_choc",
       get: (d) => nomsShift(shifts, d, (s) => s.poste === code && (s.shift_type === "jour" || s.shift_type === "garde_24h"), nomFn) });
+    // 1 ligne vide éditable sous chaque unité (saisie manuelle).
+    lignes.push({ ligneVide: true });
   });
   lignes.push({ label: "Autres (saisie libre)", fill: null, get: () => [] });
   lignes.push({ label: "Garde de nuit (17h–9h)", fill: XL.garde, get: (d) => nomsShift(shifts, d, P(["garde_nuit"]), nomFn) });
@@ -1389,6 +1405,16 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
   lignes.forEach((lg, r) => {
     const row = ws.getRow(2 + r);
     const lab = row.getCell(1);
+
+    // Ligne vierge éditable (sous une unité) : cellules blanches bordées.
+    if (lg.ligneVide) {
+      styleCellule(lab, null);
+      lab.alignment = { vertical: "middle" };
+      jours.forEach((iso, i) => { styleCellule(row.getCell(2 + i), null); });
+      row.height = 30;
+      return;
+    }
+
     lab.value = lg.label; lab.font = { bold: true };
     styleCellule(lab, lg.fill);
     // Le libellé reste sur une seule ligne (pas de retour auto qui écraserait la ligne).
@@ -1396,6 +1422,14 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
     let maxLignes = 1;
     jours.forEach((iso, i) => {
       const cell = row.getCell(2 + i);
+      // Spec §3.2 : le Labo de choc est FERMÉ le week-end et les jours fériés.
+      if (lg.estLabo && estWeekendOuFerieISO(iso)) {
+        cell.value = "Fermé";
+        styleCellule(cell, XL.ferme);
+        cell.font = { italic: true, color: { argb: "FF777777" } };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        return;
+      }
       const noms = (lg.get(iso) || []).filter(Boolean);
       // Nombre de lignes VISIBLES de la cellule = somme des noms empilés, chacun
       // pouvant lui-même passer sur plusieurs lignes s'il est plus long que la
@@ -1480,6 +1514,62 @@ function construireNomsCourts(carte) {
     }
   });
   return resultat;
+}
+
+/* Bornes + mois du TRIMESTRE (civil) contenant le mois affiché. Le découpage
+   [1-3][4-6][7-9][10-12] coïncide avec les trimestres académiques (cf. app). */
+function bornesTrimestreAffiche() {
+  const d = calendrier.getDate();
+  const annee = d.getFullYear();
+  const moisAffiche = d.getMonth() + 1;
+  const trimestre = Math.floor((moisAffiche - 1) / 3) + 1;
+  const moisTrim = [0, 1, 2].map((k) => (trimestre - 1) * 3 + 1 + k);
+  const ms0 = String(moisTrim[0]).padStart(2, "0");
+  const ms2 = String(moisTrim[2]).padStart(2, "0");
+  return {
+    annee, trimestre, moisTrim,
+    debut: annee + "-" + ms0 + "-01",
+    fin: annee + "-" + ms2 + "-" + new Date(annee, moisTrim[2], 0).getDate(),
+  };
+}
+
+/* Liste des semaines (lun→dim) couvrant tout le trimestre (du 1er du 1er mois
+   au dernier jour du 3e mois). Les semaines de bord peuvent déborder légèrement
+   sur le mois voisin ; l'en-tête de chaque feuille affiche les dates exactes. */
+function semainesDuTrimestre(annee, moisTrim) {
+  const premier = new Date(Date.UTC(annee, moisTrim[0] - 1, 1));
+  const dernier = new Date(Date.UTC(annee, moisTrim[2], 0));
+  const d = new Date(premier);
+  const dow = d.getUTCDay() === 0 ? 7 : d.getUTCDay();
+  d.setUTCDate(d.getUTCDate() - (dow - 1)); // recule au lundi
+  const semaines = [];
+  while (d <= dernier) {
+    const jours = [];
+    for (let k = 0; k < 7; k++) {
+      const x = new Date(d); x.setUTCDate(x.getUTCDate() + k);
+      jours.push(x.toISOString().slice(0, 10));
+    }
+    semaines.push(jours);
+    d.setUTCDate(d.getUTCDate() + 7);
+  }
+  return semaines;
+}
+
+/* EXPORT 1 bis — Planning du TRIMESTRE : un onglet par semaine (~13). */
+async function exporterExcelTrimestre() {
+  if (typeof ExcelJS === "undefined") { window.alert("ExcelJS non chargé (vérifie ta connexion)."); return; }
+  const b = bornesTrimestreAffiche();
+  const { shifts, prefs } = await donneesMoisExport(b); // requête par plage debut/fin
+  const nomsCourts = construireNomsCourts(carteMedecins);
+  const nomFn = (id) => nomsCourts[id] || (carteMedecins[id] && carteMedecins[id].name) || "?";
+
+  const wb = new ExcelJS.Workbook();
+  semainesDuTrimestre(b.annee, b.moisTrim).forEach((jours, i) => {
+    const ws = wb.addWorksheet("Sem " + (i + 1));
+    construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn);
+  });
+  const lib = b.annee + "_mois" + b.moisTrim[0] + "-" + b.moisTrim[2];
+  await telechargerClasseur(wb, "planning_trimestre_" + lib + ".xlsx");
 }
 
 /* EXPORT 1 — Planning complet : un onglet par semaine du mois affiché. */
@@ -1574,6 +1664,7 @@ async function exporterExcelRecap() {
 }
 
 if (exportPlanningBtn) exportPlanningBtn.addEventListener("click", exporterExcelPlanning);
+if (exportTrimestreBtn) exportTrimestreBtn.addEventListener("click", exporterExcelTrimestre);
 if (exportRecapBtn) exportRecapBtn.addEventListener("click", exporterExcelRecap);
 
 
@@ -1589,6 +1680,7 @@ const depublierBtn    = document.getElementById("depublier-btn");
 const compteursTbody  = document.getElementById("compteurs-tbody");
 const compteursTable  = document.getElementById("compteurs-table");
 const compteursEmpty  = document.getElementById("compteurs-empty");
+const compteursTotal  = document.getElementById("compteurs-total");
 const conflitsZone    = document.getElementById("conflits-zone");
 
 /* Modale d'édition / d'ajout de shift. */
@@ -1767,7 +1859,56 @@ function majStatutEtBoutons() {
   if (depublierBtn) depublierBtn.disabled = !planningVerrouille;
 }
 
-/* Tableau des compteurs heures / gardes / week-ends par médecin. */
+/* Colonnes du tableau des compteurs. `num` = colonne numérique (tri arithmétique,
+   ordre décroissant en premier clic) ; `tri:false` = colonne non triable (le #). */
+const COMPTEURS_COLS = [
+  { key: "num",      label: "#",            tri: false },
+  { key: "name",     label: "Médecin",      num: false },
+  { key: "grade",    label: "Grade",        num: false },
+  { key: "heures",   label: "Heures",       num: true },
+  { key: "cible",    label: "Cible (mois)", num: true },
+  { key: "gardes",   label: "Gardes",       num: true },
+  { key: "weekends", label: "Week-ends",    num: true },
+  { key: "tours",    label: "Tours",        num: true },
+  { key: "offs",     label: "Off",          num: true },
+  { key: "repos",    label: "Repos",        num: true },
+];
+
+/* État de tri du tableau des compteurs : colonne + direction (1 asc / -1 desc).
+   Par défaut : tri alphabétique des médecins (croissant). */
+let compteursTri = { col: "name", dir: 1 };
+
+/* (Re)construit l'en-tête : libellés cliquables + flèche de tri sur la colonne active. */
+function rendreEnteteCompteurs() {
+  const thead = compteursTable.querySelector("thead");
+  if (!thead) return;
+  const tr = document.createElement("tr");
+  COMPTEURS_COLS.forEach((c) => {
+    const th = document.createElement("th");
+    const actif = compteursTri.col === c.key;
+    th.textContent = c.label + (actif ? (compteursTri.dir === 1 ? " ▲" : " ▼") : "");
+    if (c.tri !== false) {
+      th.classList.add("triable");
+      if (actif) th.classList.add("tri-actif");
+      th.addEventListener("click", () => {
+        if (compteursTri.col === c.key) {
+          compteursTri.dir *= -1;                 // même colonne → on inverse le sens
+        } else {
+          compteursTri.col = c.key;
+          compteursTri.dir = c.num ? -1 : 1;       // numérique → décroissant d'abord ; texte → croissant
+        }
+        majCompteurs();
+      });
+    }
+    tr.appendChild(th);
+  });
+  thead.innerHTML = "";
+  thead.appendChild(tr);
+}
+
+/* Tableau des compteurs heures / gardes / week-ends par médecin.
+   Colonne « # » (numéro de liste → le dernier numéro = total de médecins),
+   total affiché, et tri croissant/décroissant au clic sur chaque colonne. */
 function majCompteurs() {
   const stats = compterParMedecin(planningMois.shifts);
   const meds = planningMois.medecins;
@@ -1776,33 +1917,55 @@ function majCompteurs() {
   const vide = planningMois.shifts.length === 0;
   compteursTable.classList.toggle("hidden", vide);
   compteursEmpty.classList.toggle("hidden", !vide);
+  if (compteursTotal) compteursTotal.classList.toggle("hidden", vide);
   if (vide) return;
 
   // Nombre de semaines (approx.) du mois pour estimer la cible mensuelle.
   const nbJours = new Date(planningMois.annee, planningMois.mois, 0).getDate();
   const semaines = nbJours / 7;
 
-  meds.forEach((m) => {
+  // 1) Données par médecin (toutes les colonnes, prêtes au tri).
+  const lignes = meds.map((m) => {
     const st = stats[m.id] || { heures: 0, gardes: 0, weekends: 0, tours: 0, offs: 0, repos: 0 };
-    const cibleMois = Math.round((m.weekly_hours_target || 52) * semaines);
+    return {
+      name: m.name || "", grade: GRADE_LABELS[m.grade] || m.grade || "",
+      heures: st.heures, cible: Math.round((m.weekly_hours_target || 52) * semaines),
+      gardes: st.gardes, weekends: st.weekends, tours: st.tours, offs: st.offs, repos: st.repos,
+    };
+  });
+
+  // 2) Tri selon l'état courant (départage stable par nom).
+  const col = COMPTEURS_COLS.find((c) => c.key === compteursTri.col) || COMPTEURS_COLS[1];
+  lignes.sort((a, b) => {
+    let r = col.num
+      ? (a[col.key] || 0) - (b[col.key] || 0)
+      : String(a[col.key]).localeCompare(String(b[col.key]), "fr");
+    if (r === 0) r = String(a.name).localeCompare(String(b.name), "fr");
+    return r * compteursTri.dir;
+  });
+
+  // 3) En-tête (flèche de tri) + corps (numéro de liste + valeurs).
+  rendreEnteteCompteurs();
+  lignes.forEach((lg, i) => {
     const tr = document.createElement("tr");
-
-    const tdNom = document.createElement("td"); tdNom.textContent = m.name; tr.appendChild(tdNom);
-    const tdGrade = document.createElement("td");
-    tdGrade.textContent = GRADE_LABELS[m.grade] || m.grade; tr.appendChild(tdGrade);
-
+    const tdNum = document.createElement("td"); tdNum.textContent = i + 1; tdNum.className = "num-liste"; tr.appendChild(tdNum);
+    const tdNom = document.createElement("td"); tdNom.textContent = lg.name; tr.appendChild(tdNom);
+    const tdGrade = document.createElement("td"); tdGrade.textContent = lg.grade; tr.appendChild(tdGrade);
     const tdH = document.createElement("td");
-    tdH.textContent = st.heures + " h";
-    tdH.className = st.heures > cibleMois ? "depasse" : "ok";
+    tdH.textContent = lg.heures + " h";
+    tdH.className = lg.heures > lg.cible ? "depasse" : "ok";
     tr.appendChild(tdH);
-
-    const tdCible = document.createElement("td"); tdCible.textContent = cibleMois + " h"; tr.appendChild(tdCible);
-    [st.gardes, st.weekends, st.tours, st.offs, st.repos].forEach((v) => {
+    const tdCible = document.createElement("td"); tdCible.textContent = lg.cible + " h"; tr.appendChild(tdCible);
+    [lg.gardes, lg.weekends, lg.tours, lg.offs, lg.repos].forEach((v) => {
       const td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
     });
-
     compteursTbody.appendChild(tr);
   });
+
+  // 4) Total de médecins listés.
+  if (compteursTotal) {
+    compteursTotal.textContent = "Total : " + lignes.length + " médecin" + (lignes.length > 1 ? "s" : "");
+  }
 }
 
 /* Liste des conflits du mois (via la fonction pure validerPlanning). */
