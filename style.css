@@ -15,6 +15,11 @@
 
 * { box-sizing: border-box; }
 
+/* Lien auxiliaire sous le formulaire de connexion (mot de passe oublié). */
+.login-aux { margin: 0.5rem 0 0; font-size: 0.9rem; }
+.login-aux a { color: var(--bleu); text-decoration: none; }
+.login-aux a:hover { text-decoration: underline; }
+
 /* En-têtes triables du tableau des compteurs (Module 6). */
 .compteurs-table th.triable { cursor: pointer; user-select: none; white-space: nowrap; }
 .compteurs-table th.triable:hover { background: var(--gris-clair); }

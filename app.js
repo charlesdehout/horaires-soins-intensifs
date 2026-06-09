@@ -23,6 +23,16 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 /* --------------------------------------------------------------------- */
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+/* Hash de l'URL capturé AU CHARGEMENT, avant que supabase-js ne le consomme.
+   Sert à détecter qu'on arrive via un lien d'invitation / de réinitialisation
+   (#...type=invite ou type=recovery) pour afficher la page « définir le mot de
+   passe » plutôt que de connecter directement. */
+const URL_HASH_AU_CHARGEMENT = window.location.hash || "";
+
+/* URL de la page (sans hash) : cible des liens email d'invitation / reset.
+   Doit être autorisée dans Supabase → Authentication → URL Configuration. */
+const REDIRECT_AUTH = window.location.origin + window.location.pathname;
+
 
 /* --------------------------------------------------------------------- */
 /* Références aux éléments du DOM                                        */
@@ -37,6 +47,14 @@ const roleText    = document.getElementById("role-text");
 const adminZone   = document.getElementById("admin-zone");
 const doctorZone  = document.getElementById("doctor-zone");
 const logoutBtn   = document.getElementById("logout-btn");
+
+/* Références DOM — réinitialisation / définition du mot de passe */
+const forgotLink       = document.getElementById("forgot-password-link");
+const setPasswordView  = document.getElementById("set-password-view");
+const setPasswordForm  = document.getElementById("set-password-form");
+const newPassword      = document.getElementById("new-password");
+const newPasswordConf  = document.getElementById("new-password-confirm");
+const setPasswordMsg   = document.getElementById("set-password-message");
 
 /* Références DOM — gestion des médecins (Module 2) */
 const addDoctorBtn    = document.getElementById("add-doctor-btn");
@@ -198,6 +216,73 @@ logoutBtn.addEventListener("click", async () => {
   basculerVue(false);
   loginForm.reset();
   afficherMessage("");
+});
+
+
+/* ===================================================================== */
+/* AUTH — Invitation / mot de passe oublié / définition du mot de passe  */
+/* ===================================================================== */
+
+/* Affiche un message dans la vue « définir le mot de passe ». */
+function messageSetPassword(texte, type = "error") {
+  if (!setPasswordMsg) return;
+  setPasswordMsg.textContent = texte;
+  setPasswordMsg.className = "message " + type;
+}
+
+/* Bascule sur la vue « définir le mot de passe » (cache login + app). */
+function montrerDefinirMotDePasse() {
+  if (loginView) loginView.classList.add("hidden");
+  if (appView) appView.classList.add("hidden");
+  if (setPasswordView) setPasswordView.classList.remove("hidden");
+}
+
+/* Lien « Mot de passe oublié ? » : envoie un email de réinitialisation. */
+if (forgotLink) {
+  forgotLink.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const email = (document.getElementById("email").value || "").trim();
+    if (!email) {
+      afficherMessage("Entre d'abord ton email, puis clique « Mot de passe oublié ».", "info");
+      return;
+    }
+    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: REDIRECT_AUTH });
+    if (error) {
+      afficherMessage("Erreur : " + error.message);
+    } else {
+      afficherMessage("Si un compte existe pour cet email, un message de réinitialisation vient d'être envoyé.", "info");
+    }
+  });
+}
+
+/* Soumission du nouveau mot de passe (après lien d'invitation / de reset). */
+if (setPasswordForm) {
+  setPasswordForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    messageSetPassword("");
+    const p1 = newPassword.value;
+    const p2 = newPasswordConf.value;
+    if (p1.length < 8) { messageSetPassword("8 caractères minimum."); return; }
+    if (p1 !== p2) { messageSetPassword("Les deux mots de passe ne correspondent pas."); return; }
+
+    const { error } = await sb.auth.updateUser({ password: p1 });
+    if (error) { messageSetPassword("Erreur : " + error.message); return; }
+
+    messageSetPassword("Mot de passe enregistré. Accès à votre espace…", "info");
+    // Nettoie le hash du lien email puis ouvre l'espace.
+    history.replaceState(null, "", REDIRECT_AUTH);
+    setPasswordView.classList.add("hidden");
+    const { data: { user } } = await sb.auth.getUser();
+    const profil = user ? await chargerProfil(user) : null;
+    if (profil) afficherEspace(profil);
+    else basculerVue(false);
+  });
+}
+
+/* Supabase émet PASSWORD_RECOVERY quand on arrive via un lien de
+   réinitialisation : on affiche alors la page de définition du mot de passe. */
+sb.auth.onAuthStateChange((event) => {
+  if (event === "PASSWORD_RECOVERY") montrerDefinirMotDePasse();
 });
 
 
@@ -390,12 +475,19 @@ function rendreTableau(medecins) {
     btnEdit.className = "mini";
     btnEdit.addEventListener("click", () => ouvrirEdition(med));
 
+    const btnInvite = document.createElement("button");
+    btnInvite.textContent = "Inviter";
+    btnInvite.className = "mini";
+    btnInvite.title = "Envoyer un email d'invitation pour définir le mot de passe";
+    btnInvite.addEventListener("click", () => inviterMedecin(med));
+
     const btnDel = document.createElement("button");
     btnDel.textContent = "Supprimer";
     btnDel.className = "mini danger";
     btnDel.addEventListener("click", () => supprimerMedecin(med));
 
     tdActions.appendChild(btnEdit);
+    tdActions.appendChild(btnInvite);
     tdActions.appendChild(btnDel);
     tr.appendChild(tdActions);
 
@@ -474,6 +566,37 @@ async function supprimerMedecin(med) {
     return;
   }
   chargerMedecins();
+}
+
+/* Invite un médecin par email (via l'Edge Function inviter-medecin, qui détient
+   la clé service_role). Le médecin reçoit un lien pour définir son mot de passe. */
+async function inviterMedecin(med) {
+  if (!med.email) { window.alert("Ce médecin n'a pas d'email enregistré."); return; }
+  if (!window.confirm("Envoyer une invitation par email à " + med.email + " ?")) return;
+
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { window.alert("Session expirée, reconnecte-toi."); return; }
+
+  try {
+    const res = await fetch(SUPABASE_URL + "/functions/v1/inviter-medecin", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + session.access_token,
+        "apikey": SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ email: med.email, redirectTo: REDIRECT_AUTH }),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      window.alert("Échec de l'invitation : " + (out.error || ("HTTP " + res.status)) +
+        "\n\n(Si l'erreur mentionne la fonction, vérifie qu'elle est bien déployée — voir GUIDE_AUTH.md.)");
+      return;
+    }
+    window.alert("Invitation envoyée à " + (out.email || med.email) + ".");
+  } catch (e) {
+    window.alert("Impossible de joindre la fonction d'invitation : " + e.message);
+  }
 }
 
 
@@ -2416,6 +2539,13 @@ if (grilleNext) grilleNext.addEventListener("click", () => { if (calendrier) cal
 /* (évite de redemander le login à chaque rafraîchissement).             */
 /* --------------------------------------------------------------------- */
 (async function init() {
+  // Arrivée via un lien d'invitation / de réinitialisation reçu par email
+  // (#...type=invite ou type=recovery) : on affiche la page « définir le mot de
+  // passe » au lieu d'ouvrir directement l'espace.
+  if (/type=(invite|recovery)/.test(URL_HASH_AU_CHARGEMENT)) {
+    montrerDefinirMotDePasse();
+    return;
+  }
   const { data: { session } } = await sb.auth.getSession();
   if (session) {
     const profil = await chargerProfil(session.user);

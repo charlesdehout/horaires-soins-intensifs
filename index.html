@@ -26,8 +26,34 @@
         <button type="submit" id="login-btn">Se connecter</button>
       </form>
 
+      <p class="login-aux">
+        <a href="#" id="forgot-password-link">Mot de passe oublié ?</a>
+      </p>
+
       <!-- Zone de message (erreurs / infos) -->
       <p id="login-message" class="message" role="alert"></p>
+    </section>
+
+    <!-- ============================================= -->
+    <!-- VUE 1bis : définir / réinitialiser le mot de passe -->
+    <!-- (affichée après clic sur un lien d'invitation ou  -->
+    <!--  de réinitialisation reçu par email)              -->
+    <!-- ============================================= -->
+    <section id="set-password-view" class="card hidden">
+      <h1>Définir votre mot de passe</h1>
+      <p class="subtitle">Choisissez un mot de passe pour accéder à votre espace.</p>
+
+      <form id="set-password-form">
+        <label for="new-password">Nouveau mot de passe</label>
+        <input type="password" id="new-password" autocomplete="new-password" minlength="8" required />
+
+        <label for="new-password-confirm">Confirmez le mot de passe</label>
+        <input type="password" id="new-password-confirm" autocomplete="new-password" minlength="8" required />
+
+        <button type="submit" id="set-password-btn">Enregistrer le mot de passe</button>
+      </form>
+
+      <p id="set-password-message" class="message" role="alert"></p>
     </section>
 
     <!-- ============================================= -->
