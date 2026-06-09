@@ -723,13 +723,19 @@ function congesUtilises(type, anneeAcad) {
     .reduce((s, p) => s + joursOuvresDansAnnee(p.start_date, p.end_date, anneeAcad), 0);
 }
 
-/* Années académiques à afficher : académique courante + toute année comportant un congé. */
+/* Années académiques à afficher : l'académique COURANTE (qui « repart à zéro »
+   chaque 1er octobre) + toute année académique FUTURE déjà concernée par un
+   congé. Les années passées ne sont plus affichées : au passage à l'octobre
+   suivant, l'ancienne ligne disparaît et la nouvelle démarre à 0. */
 function anneesAvecConges() {
-  const annees = new Set([anneeAcademique(new Date())]);
+  const courante = anneeAcademique(new Date());
+  const annees = new Set([courante]);
   prefsCourantes.forEach((p) => {
     if (categorieConge(p.pref_type)) {
-      annees.add(anneeAcademique(new Date(p.start_date + "T00:00:00Z")));
-      annees.add(anneeAcademique(new Date(p.end_date + "T00:00:00Z")));
+      const a1 = anneeAcademique(new Date(p.start_date + "T00:00:00Z"));
+      const a2 = anneeAcademique(new Date(p.end_date + "T00:00:00Z"));
+      if (a1 >= courante) annees.add(a1);
+      if (a2 >= courante) annees.add(a2);
     }
   });
   return [...annees].sort((a, b) => a - b);
