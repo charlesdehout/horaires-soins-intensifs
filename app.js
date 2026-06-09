@@ -297,7 +297,6 @@ const HEURES_BASE = 52;
 const GRADE_LABELS = {
   resident: "Résident",
   assistant_specialiste: "Assistant spéc.",
-  specialiste: "Spécialiste",
 };
 
 /* Quota de base d'un type de congé : surcharge du médecin, sinon défaut (regles.js). */
@@ -387,7 +386,7 @@ function ouvrirEdition(med) {
   doctorId.value = med.id;
   dName.value = med.name || "";
   dEmail.value = med.email || "";
-  dGrade.value = med.grade || "specialiste";
+  dGrade.value = med.grade || "assistant_specialiste";
   dFte.value = med.fte ?? 1;
   dHours.value = med.weekly_hours_target ?? HEURES_BASE;
   dAdminLevel.value = med.admin_level || (med.role === "admin" ? "principal" : "aucun");

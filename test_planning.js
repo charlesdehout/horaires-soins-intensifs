@@ -14,7 +14,8 @@ function test(nom, fn) {
   catch (e) { console.log("  ❌ " + nom + "\n     " + e.message); }
 }
 
-/* --- Équipe de test : 6 résidents + 4 AS + 4 spécialistes = 14 médecins --- */
+/* --- Équipe de test : 6 résidents + 8 A/S = 14 médecins ---
+   (Le grade « Spécialiste » a été supprimé : les ex-spécialistes sont des A/S.) --- */
 function equipe() {
   const meds = [];
   const ajouter = (n, grade) => {
@@ -28,8 +29,7 @@ function equipe() {
     }
   };
   ajouter(6, "resident");
-  ajouter(4, "assistant_specialiste");
-  ajouter(4, "specialiste");
+  ajouter(8, "assistant_specialiste");
   return meds;
 }
 
