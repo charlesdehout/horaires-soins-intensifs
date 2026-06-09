@@ -2070,12 +2070,50 @@ function majCompteurs() {
   const nbJours = new Date(planningMois.annee, planningMois.mois, 0).getDate();
   const semaines = nbJours / 7;
 
+  // --- Congés ACCEPTÉS du mois → réduisent la cible horaire (révision) ---
+  // Un jour de congé accepté retire au médecin sa charge quotidienne attendue
+  // (= cible hebdo / nb de jours travaillables) : une semaine entière de congé
+  // diminue donc la cible d'exactement une semaine. On rassemble les jours de
+  // congé depuis les préférences APPROUVÉES et depuis les shifts d'absence
+  // « congé » du planning (dédupliqués par date).
+  const ms = String(planningMois.mois).padStart(2, "0");
+  const debutMois = planningMois.annee + "-" + ms + "-01";
+  const finMois = planningMois.annee + "-" + ms + "-" + String(nbJours).padStart(2, "0");
+  const CONGE_SET = new Set(["conge", "conge_annuel", "conge_extralegal", "conge_scientifique"]);
+  const congeJours = {}; // doctorId -> Set(dateISO) des jours de congé du mois
+  const ajouterConge = (id, date) => {
+    if (date < debutMois || date > finMois) return;
+    (congeJours[id] = congeJours[id] || new Set()).add(date);
+  };
+  (planningMois.preferences || []).forEach((p) => {
+    if (!CONGE_SET.has(p.pref_type)) return;
+    const deb = p.start_date < debutMois ? debutMois : p.start_date;
+    const fin = p.end_date > finMois ? finMois : p.end_date;
+    const d = new Date(deb + "T00:00:00Z");
+    const dFin = new Date(fin + "T00:00:00Z");
+    while (d <= dFin) { ajouterConge(p.doctor_id, d.toISOString().slice(0, 10)); d.setUTCDate(d.getUTCDate() + 1); }
+  });
+  (planningMois.shifts || []).forEach((s) => {
+    if (CONGE_SET.has(s.shift_type)) ajouterConge(s.doctor_id, s.date);
+  });
+
   // 1) Données par médecin (toutes les colonnes, prêtes au tri).
   const lignes = meds.map((m) => {
     const st = stats[m.id] || { heures: 0, gardes: 0, weekends: 0, tours: 0, offs: 0, repos: 0 };
+    const cibleHebdo = m.weekly_hours_target || 52;
+    const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
+    // Jours de congé tombant sur un jour travaillable du médecin.
+    let joursConge = 0;
+    if (congeJours[m.id]) congeJours[m.id].forEach((date) => {
+      const j = new Date(date + "T00:00:00Z").getUTCDay();
+      if (jt.includes(j === 0 ? 7 : j)) joursConge++;
+    });
+    const cibleBrute = cibleHebdo * semaines;
+    const reduction = joursConge * (cibleHebdo / jt.length);
     return {
       name: m.name || "", grade: GRADE_LABELS[m.grade] || m.grade || "",
-      heures: st.heures, cible: Math.round((m.weekly_hours_target || 52) * semaines),
+      heures: st.heures, cible: Math.max(0, Math.round(cibleBrute - reduction)),
+      cibleBrute: Math.round(cibleBrute), reductionConge: Math.round(reduction), joursConge,
       gardes: st.gardes, weekends: st.weekends, tours: st.tours, offs: st.offs, repos: st.repos,
     };
   });
@@ -2101,7 +2139,16 @@ function majCompteurs() {
     tdH.textContent = lg.heures + " h";
     tdH.className = lg.heures > lg.cible ? "depasse" : "ok";
     tr.appendChild(tdH);
-    const tdCible = document.createElement("td"); tdCible.textContent = lg.cible + " h"; tr.appendChild(tdCible);
+    const tdCible = document.createElement("td");
+    tdCible.textContent = lg.cible + " h";
+    if (lg.reductionConge > 0) {
+      // Cible réduite par les congés acceptés : on l'indique (valeur + infobulle).
+      tdCible.textContent = lg.cible + " h *";
+      tdCible.title = "Cible brute " + lg.cibleBrute + " h − " + lg.reductionConge +
+                      " h de congés acceptés (" + lg.joursConge + " j).";
+      tdCible.classList.add("cible-reduite");
+    }
+    tr.appendChild(tdCible);
     [lg.gardes, lg.weekends, lg.tours, lg.offs, lg.repos].forEach((v) => {
       const td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
     });

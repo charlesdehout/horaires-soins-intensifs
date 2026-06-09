@@ -331,6 +331,8 @@ button.mini.danger:hover { background: #fdeaea; }
 /* Compteurs par médecin */
 .compteurs-table td.depasse { color: var(--rouge); font-weight: 600; }
 .compteurs-table td.ok      { color: var(--vert); }
+/* Cible réduite par des congés acceptés (infobulle = détail du calcul). */
+.compteurs-table td.cible-reduite { color: var(--bleu, #1a5fb4); cursor: help; }
 
 /* Liste des conflits */
 #conflits-zone.conflits-ok { border-color: #b7e0c2; color: var(--vert); }

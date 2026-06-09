@@ -51,6 +51,11 @@
   (les 3 types : annuel, extra-légaux, scientifique). Remise à zéro automatique
   au 1er octobre (le consommé est dérivé des préférences). 100 % côté `app.js`,
   pas de SQL. Affichage « 2025–2026 ».
+- **Congé accepté → réduit la CIBLE horaire du mois** (compteurs admin) : chaque
+  jour de congé accepté (préférence approuvée ou shift congé) retire la charge
+  quotidienne attendue (cible hebdo / nb jours travaillables) → une semaine de
+  congé = −1 semaine de cible. Marqueur « * » + infobulle détaillant le calcul.
+  `app.js` + `style.css`, pas de SQL.
 
 ## 🔜 Reste à faire (par priorité)
 
