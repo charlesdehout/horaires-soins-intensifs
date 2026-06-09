@@ -688,15 +688,22 @@ function joursOuvresDansAnnee(debut, fin, anneeAcad) {
   return total;
 }
 
-/* Fraction de l'année ACADÉMIQUE (1 oct → 30 sep) couverte par le contrat (0 à 1). */
+/* Fraction de l'année ACADÉMIQUE (1 oct → 30 sep) couverte par le contrat (0 à 1).
+   Politique (révision) : on ne proratise QUE si le contrat couvre PARTIELLEMENT
+   l'année académique. S'il n'y a pas de dates de contrat OU si le contrat ne
+   chevauche PAS du tout l'année affichée (dates absentes/saisies pour une autre
+   période), on considère le médecin comme actif → quota PLEIN (fraction 1).
+   Cela évite un quota « 0 » trompeur qui bloquerait toute saisie de congé. */
 function fractionAnneeSousContrat(anneeAcad, med) {
   const debutAnnee = Date.UTC(anneeAcad, 9, 1);      // 1er octobre (mois index 9)
   const finAnnee = Date.UTC(anneeAcad + 1, 8, 30);   // 30 septembre (mois index 8)
+  // Pas de dates de contrat → année pleine.
+  if (!med.contract_start && !med.contract_end) return 1;
   let debut = med.contract_start ? Date.parse(med.contract_start + "T00:00:00Z") : debutAnnee;
   let fin = med.contract_end ? Date.parse(med.contract_end + "T00:00:00Z") : finAnnee;
   debut = Math.max(debut, debutAnnee);
   fin = Math.min(fin, finAnnee);
-  if (fin < debut) return 0;
+  if (fin < debut) return 1;   // aucun chevauchement → quota plein (et non 0)
   const jours = (fin - debut) / 86400000 + 1;
   const joursAnnee = (finAnnee - debutAnnee) / 86400000 + 1;
   return jours / joursAnnee;

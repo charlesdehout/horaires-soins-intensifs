@@ -50,7 +50,10 @@
   au contrat et contrôle bloquant basculés de l'année civile vers l'académique
   (les 3 types : annuel, extra-légaux, scientifique). Remise à zéro automatique
   au 1er octobre (le consommé est dérivé des préférences). 100 % côté `app.js`,
-  pas de SQL. Affichage « 2025–2026 ».
+  pas de SQL. Affichage « 2025–2026 ». Proration : quota PLEIN si le contrat
+  couvre toute l'année académique OU s'il ne la chevauche pas du tout (dates
+  absentes / hors période) ; proratisé seulement en couverture PARTIELLE (évite
+  un quota « 0 » qui bloquerait la saisie de congé).
 - **Congé accepté → réduit la CIBLE horaire du mois** (compteurs admin) : chaque
   jour de congé accepté (préférence approuvée ou shift congé) retire la charge
   quotidienne attendue (cible hebdo / nb jours travaillables) → une semaine de
