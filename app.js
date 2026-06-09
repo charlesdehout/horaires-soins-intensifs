@@ -675,6 +675,17 @@ function anneeAcademique(d) {
 /* Libellé d'affichage d'une année académique : « 2025–2026 ». */
 function labelAcad(a) { return a + "–" + (a + 1); }
 
+/* Année académique du MOIS ACTUELLEMENT AFFICHÉ dans le calendrier (et non de la
+   date système) : permet au médecin de naviguer vers un mois futur pour demander
+   ses congés à l'avance — le compteur bascule alors sur l'année académique visée.
+   Repli sur la date du jour tant que le calendrier n'est pas initialisé. */
+function anneeAcademiqueAffichee() {
+  const ref = (typeof calendrier !== "undefined" && calendrier && typeof calendrier.getDate === "function")
+    ? calendrier.getDate() : new Date();
+  const m = ref.getMonth();          // mois LOCAL (cohérent avec le reste du calendrier)
+  return (m >= 9) ? ref.getFullYear() : ref.getFullYear() - 1;
+}
+
 /* Jours ouvrés (lun–ven hors fériés) d'une plage tombant dans l'année ACADÉMIQUE. */
 function joursOuvresDansAnnee(debut, fin, anneeAcad) {
   let total = 0;
@@ -723,12 +734,12 @@ function congesUtilises(type, anneeAcad) {
     .reduce((s, p) => s + joursOuvresDansAnnee(p.start_date, p.end_date, anneeAcad), 0);
 }
 
-/* Années académiques à afficher : l'académique COURANTE (qui « repart à zéro »
-   chaque 1er octobre) + toute année académique FUTURE déjà concernée par un
-   congé. Les années passées ne sont plus affichées : au passage à l'octobre
-   suivant, l'ancienne ligne disparaît et la nouvelle démarre à 0. */
+/* Années académiques à afficher : l'académique du MOIS AFFICHÉ (qui « repart à
+   zéro » au passage du 1er octobre, y compris en naviguant vers un mois futur)
+   + toute année académique encore à venir déjà concernée par un congé. Les
+   années antérieures au mois affiché ne sont plus listées. */
 function anneesAvecConges() {
-  const courante = anneeAcademique(new Date());
+  const courante = anneeAcademiqueAffichee();
   const annees = new Set([courante]);
   prefsCourantes.forEach((p) => {
     if (categorieConge(p.pref_type)) {
@@ -1148,13 +1159,15 @@ async function initCalendrier() {
           shift_type: p.shiftType, doctor_id: p.doctorId, poste: p.poste,
         });
       },
-      // À chaque changement de mois/vue : rafraîchit le panneau admin.
+      // À chaque changement de mois/vue : rafraîchit le panneau admin et le
+      // compteur de congés (qui suit l'année académique du mois affiché).
       datesSet: () => {
         if (medecinCourant && medecinCourant.role === "admin") {
           rafraichirPanneauAdmin(); // rafraîchit aussi la grille si elle est visible
         } else if (vueActive === "grille") {
           construireGrille();
         }
+        majCompteurConges(); // le compteur suit le mois affiché (demande de congés à l'avance)
       },
     });
     calendrier.render();

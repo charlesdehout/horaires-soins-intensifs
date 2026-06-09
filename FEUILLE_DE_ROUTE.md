@@ -53,7 +53,10 @@
   pas de SQL. Affichage « 2025–2026 ». Proration : quota PLEIN si le contrat
   couvre toute l'année académique OU s'il ne la chevauche pas du tout (dates
   absentes / hors période) ; proratisé seulement en couverture PARTIELLE (évite
-  un quota « 0 » qui bloquerait la saisie de congé).
+  un quota « 0 » qui bloquerait la saisie de congé). Le compteur suit le MOIS
+  AFFICHÉ au calendrier (pas la date système) : naviguer au-delà du 1er octobre
+  bascule sur la nouvelle année académique (à 0) → permet de demander ses congés
+  à l'avance ; rafraîchi via `datesSet`.
 - **Congé accepté → réduit la CIBLE horaire du mois** (compteurs admin) : chaque
   jour de congé accepté (préférence approuvée ou shift congé) retire la charge
   quotidienne attendue (cible hebdo / nb jours travaillables) → une semaine de
