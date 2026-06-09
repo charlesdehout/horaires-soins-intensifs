@@ -321,5 +321,41 @@ test("off-clinic crédité comme heures de travail (10,5 h)", () => {
   assert.strictEqual(stats.x.heures, 10.5, "heures off-clinic = " + stats.x.heures);
 });
 
+console.log("\n=== Point 4 — Souhaits (désidératas « je veux travailler ») ===");
+
+const ABSENCES_TEST = ["recup", "repos_garde", "off", "conge_annuel", "conge_scientifique", "conge_extralegal"];
+
+test("indépendant : souhait de travailler honoré (quasi-bloquant)", () => {
+  const meds = equipe();
+  const ind = meds.find((m) => m.id === "assistant_specialiste8"); ind.statut = "independant";
+  const prefs = [
+    { doctor_id: ind.id, start_date: "2026-06-08", end_date: "2026-06-08", pref_type: "dispo" },
+    { doctor_id: ind.id, start_date: "2026-06-08", end_date: "2026-06-08", pref_type: "souhait" },
+  ];
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: prefs });
+  const w = r.shifts.filter((s) => s.doctor_id === ind.id && s.date === "2026-06-08" && !ABSENCES_TEST.includes(s.shift_type));
+  assert(w.length >= 1, "indépendant non planifié son jour de souhait");
+});
+
+test("indépendant résident : souhait de garde honoré", () => {
+  const meds = equipe();
+  const ind = meds.find((m) => m.id === "resident6"); ind.statut = "independant";
+  const prefs = [
+    { doctor_id: ind.id, start_date: "2026-06-08", end_date: "2026-06-08", pref_type: "dispo" },
+    { doctor_id: ind.id, start_date: "2026-06-08", end_date: "2026-06-08", pref_type: "souhait" },
+  ];
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: prefs });
+  const w = r.shifts.filter((s) => s.doctor_id === ind.id && s.date === "2026-06-08" && !ABSENCES_TEST.includes(s.shift_type));
+  assert(w.length >= 1, "résident indépendant non planifié son jour de souhait");
+});
+
+test("dépendant : souhait souple, n'enfreint pas les contraintes dures", () => {
+  const meds = equipe();
+  const prefs = [{ doctor_id: "resident1", start_date: "2026-06-10", end_date: "2026-06-10", pref_type: "souhait" }];
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: prefs });
+  const ce = r.shifts.filter((s) => s.doctor_id === "resident1" && s.date === "2026-06-10");
+  assert(ce.length <= 1, "double affectation suite au souhait");
+});
+
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");
 process.exit(reussis === total ? 0 : 1);

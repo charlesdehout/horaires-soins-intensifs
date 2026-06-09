@@ -204,8 +204,31 @@ function plScoreWeekend(id, etat) {
   return etat.nbWeekend[id];
 }
 
-function plTrier(liste, critere, etat) {
+/* ----- SOUHAITS / désidératas (« je veux TRAVAILLER ce jour ») ----- */
+/* Le médecin a-t-il déposé un souhait de travailler ce jour-là ? */
+function plSouhaite(m, date, etat) {
+  return !!(etat.souhait[m.id] && etat.souhait[m.id].has(date));
+}
+/* Souhait d'un INDÉPENDANT = QUASI-BLOQUANT (priorité ABSOLUE dans les tris) :
+   1 si indépendant ET souhaite ce jour, sinon 0. On sert ces médecins en
+   premier pour honorer leur disponibilité choisie. */
+function plSouhaitIndep(m, date, etat) {
+  return (m.statut === "independant" && plSouhaite(m, date, etat)) ? 1 : 0;
+}
+/* Souhait d'un DÉPENDANT = orientation SOUPLE : 1 si dépendant ET souhaite ce
+   jour. Sert seulement de DÉPARTAGE tardif (n'écrase pas l'équité). */
+function plSouhaitDep(m, date, etat) {
+  return (m.statut !== "independant" && plSouhaite(m, date, etat)) ? 1 : 0;
+}
+
+/* `date` (optionnel) active la prise en compte des souhaits du jour. */
+function plTrier(liste, critere, etat, date) {
   return liste.slice().sort((a, b) => {
+    // 1) Souhait INDÉPENDANT (quasi-bloquant) : priorité absolue.
+    if (date) {
+      const ia = plSouhaitIndep(a, date, etat), ib = plSouhaitIndep(b, date, etat);
+      if (ia !== ib) return ib - ia;
+    }
     if (critere === "garde") {
       const sa = plScoreGarde(a.id, etat), sb = plScoreGarde(b.id, etat);
       if (sa !== sb) return sa - sb;
@@ -217,6 +240,11 @@ function plTrier(liste, critere, etat) {
     const ra = etat.heures[a.id] / (a.weekly_hours_target || 52);
     const rb = etat.heures[b.id] / (b.weekly_hours_target || 52);
     if (ra !== rb) return ra - rb;
+    // 2) Souhait DÉPENDANT (souple) : départage avant le tri déterministe.
+    if (date) {
+      const sa = plSouhaitDep(a, date, etat), sb = plSouhaitDep(b, date, etat);
+      if (sa !== sb) return sb - sa;
+    }
     return String(a.id).localeCompare(String(b.id)); // déterministe
   });
 }
@@ -249,6 +277,9 @@ function plRecenceGarde(id, date, etat) {
    égalité de gardes → l'effet est réel sans coûter d'équité. */
 function plTrierGardeNuit(liste, date, etat) {
   return liste.slice().sort((a, b) => {
+    // Souhait INDÉPENDANT (quasi-bloquant) : priorité absolue, même sur l'équité.
+    const ia = plSouhaitIndep(a, date, etat), ib = plSouhaitIndep(b, date, etat);
+    if (ia !== ib) return ib - ia;
     const sa = plScoreGarde(a.id, etat), sb = plScoreGarde(b.id, etat);
     if (Math.abs(sa - sb) > PL_EPS) return sa - sb;            // équité d'abord (stricte)
     const ra = plRecenceGarde(a.id, date, etat), rb = plRecenceGarde(b.id, date, etat);
@@ -256,6 +287,9 @@ function plTrierGardeNuit(liste, date, etat) {
     const ha = etat.heures[a.id] / (a.weekly_hours_target || 52);
     const hb = etat.heures[b.id] / (b.weekly_hours_target || 52);
     if (ha !== hb) return ha - hb;
+    // Souhait DÉPENDANT (souple) : départage avant le tri déterministe.
+    const da = plSouhaitDep(a, date, etat), db = plSouhaitDep(b, date, etat);
+    if (da !== db) return db - da;
     return String(a.id).localeCompare(String(b.id)); // déterministe
   });
 }
@@ -320,7 +354,7 @@ function plPeutWeekend(id, date, etat) {
    aucun ne le respecte (la règle N2 est violable en dernier recours). */
 function plChoisirWE(liste, date, etat) {
   const ok = liste.filter((m) => plPeutWeekend(m.id, date, etat));
-  return plTrier(ok.length ? ok : liste, "weekend", etat)[0] || null;
+  return plTrier(ok.length ? ok : liste, "weekend", etat, date)[0] || null;
 }
 
 /* Enregistre un shift et met à jour l'état (heures, gardes, repos 12 h). */
@@ -391,7 +425,7 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits) {
     plan[st] = second.id;
     etat.station[second.id][cle] = st;
   }
-  const pool = plTrier(libres.filter((m) => !pris.has(m.id)), "jour", etat);
+  const pool = plTrier(libres.filter((m) => !pris.has(m.id)), "jour", etat, date);
   // 2a) Continuité : on replace chacun sur sa station de la semaine si libre.
   pool.forEach((m) => {
     if (Object.values(plan).includes(m.id)) return;

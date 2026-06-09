@@ -57,6 +57,12 @@
   AFFICHÉ au calendrier (pas la date système) : naviguer au-delà du 1er octobre
   bascule sur la nouvelle année académique (à 0) → permet de demander ses congés
   à l'avance ; rafraîchi via `datesSet`.
+- **Souhaits / désidératas effectifs (« je veux travailler ce jour »)** : le
+  souhait, jusque-là inerte, oriente désormais la génération. Pour un médecin
+  INDÉPENDANT il est QUASI-BLOQUANT (priorité absolue en tête des tris de gardes
+  nuit / week-end / jour) ; pour un DÉPENDANT il reste SOUPLE (départage tardif,
+  n'écrase pas l'équité). `planning.js` + tests. Aucune régression (27/27 + 3
+  tests souhait).
 - **Congé accepté → réduit la CIBLE horaire du mois** (compteurs admin) : chaque
   jour de congé accepté (préférence approuvée ou shift congé) retire la charge
   quotidienne attendue (cible hebdo / nb jours travaillables) → une semaine de
