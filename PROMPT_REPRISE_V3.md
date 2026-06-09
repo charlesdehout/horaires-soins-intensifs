@@ -91,23 +91,19 @@ Ne réécris pas ce qui existe, étends-le.
     appelée par l'app après `genererTrimestre` (plancher + ±1 garde). Le plancher
     a été retiré de `validerPlanning` (mensuel).
 - Paramètres ajustables dans `regles.js` → **`EQUITE`** = { plafond_hebdo: 60, plancher_ratio: 0.85 }.
+- **Export Excel — hauteurs de lignes corrigées** (2026-06) : `construireFeuilleSemaine`
+  calcule désormais la hauteur en tenant compte du retour à la ligne des noms longs
+  et des noms empilés (plus de texte coupé/écrasé) ; colonnes de jours élargies.
 
 ## Reste à faire (par priorité)
-1. **🐞 BUG EXPORT EXCEL « tout écrasé »** (priorité Charles) — à diagnostiquer
-   en premier. Le code (`construireFeuilleSemaine`, `exporterExcelRecap` dans
-   `app.js`) définit pourtant largeurs de colonnes (`getColumn().width`),
-   hauteurs de lignes et `wrapText`. **Me demander de décrire précisément le
-   symptôme** (colonnes trop étroites ? texte qui déborde/chevauche ? tout dans
-   une seule colonne ? noms longs coupés ?) et idéalement un export d'exemple,
-   avant de corriger.
-2. **Exports** : découpage par **trimestre** plutôt que mois ; postes vides
+1. **Exports** : découpage par **trimestre** plutôt que mois ; postes vides
    explicites le week-end (Labo fermé) ; lignes vides par unité.
-3. **M12c** : concentration des gardes de nuit sur une période du mois (N3).
-4. **Récup férié auto-crédit** (§8.2) + **désidératas** (quota 20/trimestre + priorités admin).
-5. **Congrès ISICEM/ISICARE** et **fermetures d'unités** (couverture adaptée).
-6. **Rotation trimestrielle des unités** (historique tracé).
-7. **Alertes absences simultanées** (§14) + pré-placement manuel.
-8. **Durcissement** : triggers SQL quotas/serveur ; empêcher l'auto-approbation.
+2. **M12c** : concentration des gardes de nuit sur une période du mois (N3).
+3. **Récup férié auto-crédit** (§8.2) + **désidératas** (quota 20/trimestre + priorités admin).
+4. **Congrès ISICEM/ISICARE** et **fermetures d'unités** (couverture adaptée).
+5. **Rotation trimestrielle des unités** (historique tracé).
+6. **Alertes absences simultanées** (§14) + pré-placement manuel.
+7. **Durcissement** : triggers SQL quotas/serveur ; empêcher l'auto-approbation.
 
 ## Note technique importante (environnement Cowork)
 Dans cet environnement, le **montage du dépôt dans le shell est souvent
@@ -124,5 +120,5 @@ passer après `git pull`** — c'est la validation de référence.
 - Réponds en français, de façon concise et directe.
 
 **Commence par lire `CONFORMITE.md`, `planning.js`, `regles.js` et `app.js`,
-confirme-moi que tu as le contexte, puis attaque-toi au bug d'export Excel
-(en me demandant d'abord de décrire le symptôme exact).**
+confirme-moi que tu as le contexte, puis propose le prochain module (export par
+trimestre conseillé).**

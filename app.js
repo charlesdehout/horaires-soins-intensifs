@@ -1328,8 +1328,20 @@ function nomsPref(prefs, date, types, nomFn) {
 
 /* Construit une feuille « semaine » au gabarit Erasme. */
 function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
+  const LARG_JOUR = 18; // largeur des colonnes de jours (réduit les retours à la ligne)
+  // Paramètres de hauteur. IMPORTANT : dès qu'on fixe row.height, ExcelJS écrit
+  // customHeight="1" et Excel n'auto-ajuste PLUS la ligne. Il faut donc estimer
+  // une hauteur GÉNÉREUSE, sinon le texte multi-lignes (wrapText) est tronqué et
+  // les lignes paraissent « écrasées » tant qu'on ne ré-ajuste pas à la main.
+  // - CHARS_PAR_LIGNE : capacité PRUDENTE d'une colonne de 18 (Calibri/Aptos 11,
+  //   majuscules/accents/traits d'union retournent à la ligne plus tôt que la
+  //   moyenne) → on sous-estime volontairement pour garder de la marge.
+  // - PT_PAR_LIGNE : hauteur confortable d'une ligne de texte (besoin réel ≈ 16 pt,
+  //   on prend 18 pour ne jamais rogner le bas du texte aligné en haut).
+  const CHARS_PAR_LIGNE = 14;
+  const PT_PAR_LIGNE = 18;
   ws.getColumn(1).width = 28; // assez large pour que les libellés tiennent sur 1 ligne
-  for (let c = 2; c <= 8; c++) ws.getColumn(c).width = 16;
+  for (let c = 2; c <= 8; c++) ws.getColumn(c).width = LARG_JOUR;
 
   // En-tête : col A vide + 7 dates.
   const head = ws.getRow(1);
@@ -1376,17 +1388,23 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
     styleCellule(lab, lg.fill);
     // Le libellé reste sur une seule ligne (pas de retour auto qui écraserait la ligne).
     lab.alignment = { wrapText: false, vertical: "middle" };
-    let maxNoms = 1;
+    let maxLignes = 1;
     jours.forEach((iso, i) => {
       const cell = row.getCell(2 + i);
       const noms = (lg.get(iso) || []).filter(Boolean);
-      maxNoms = Math.max(maxNoms, noms.length);
+      // Nombre de lignes VISIBLES de la cellule = somme des noms empilés, chacun
+      // pouvant lui-même passer sur plusieurs lignes s'il est plus long que la
+      // colonne (retour à la ligne auto ≈ LARG_JOUR caractères par ligne).
+      const lignesCell = noms.reduce((a, n) => a + Math.max(1, Math.ceil(n.length / CHARS_PAR_LIGNE)), 0);
+      maxLignes = Math.max(maxLignes, lignesCell);
       cell.value = noms.length ? noms.join("\n") : null;
       // Cellule auto-remplie distinguée des cellules vides (éditables).
       styleCellule(cell, noms.length ? XL.auto : null);
     });
-    // Hauteur ≈ 16 pt par nom empilé (≥ 22 pt pour une ligne mono-nom lisible).
-    row.height = Math.max(22, 16 * maxNoms);
+    // Hauteur explicite GÉNÉREUSE (cf. note ci-dessus) : ~18 pt par ligne visible
+    // + marge, minimum 30 pt pour que les lignes vides du gabarit restent
+    // confortables à remplir à la main et que rien ne soit jamais écrasé.
+    row.height = Math.max(30, maxLignes * PT_PAR_LIGNE + 8);
   });
 }
 
@@ -1451,7 +1469,7 @@ async function exporterExcelRecap() {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Récap " + ms + "-" + b.annee);
   ws.getColumn(1).width = 22;
-  for (let j = 1; j <= nbJours; j++) ws.getColumn(1 + j).width = 5;
+  for (let j = 1; j <= nbJours; j++) ws.getColumn(1 + j).width = 6;
   ["Gardes", "WE", "Tours", "Off", "Repos", "Heures"].forEach((_, k) => { ws.getColumn(1 + nbJours + 1 + k).width = 9; });
 
   // En-tête.
