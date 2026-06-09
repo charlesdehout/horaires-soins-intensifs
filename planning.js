@@ -487,10 +487,19 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits) {
   const wkey = plWeekendKey(date); // clé week-end (samedi) ou null si férié en semaine
 
   // Affectations + récupération après garde de week-end.
+  // Équité WEEK-END comptée en WEEK-ENDS DISTINCTS (clé = samedi), pas en jours :
+  // faire le samedi ET le dimanche du même week-end ne compte qu'une seule fois.
+  // (Sinon un binôme TWE sam+dim « pesait » double, faussant l'équilibrage.)
+  const majWE = (id) => {
+    if (!estVraiWeekend || !wkey) return;
+    if (!etat.weekendsTravailles[id].has(wkey)) {
+      etat.nbWeekend[id]++; etat.nbWeekendTotal[id]++; etat.weekendsTravailles[id].add(wkey);
+    }
+  };
   [g1, g2].forEach((g) => {
     if (!g) return;
     plAffecter(sortie, etat, date, "garde_24h", g.id, null);
-    if (estVraiWeekend) { etat.nbWeekend[g.id]++; etat.nbWeekendTotal[g.id]++; if (wkey) etat.weekendsTravailles[g.id].add(wkey); }
+    majWE(g.id);
     if (j === 6) {
       etat.bloque[g.id].add(plAdd(date, 2)); // samedi → lundi off (dimanche déjà repos 12 h)
     } else if (j === 7) {
@@ -500,7 +509,7 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits) {
   });
   if (t1) {
     plAffecter(sortie, etat, date, "twe", t1.id, null);
-    if (estVraiWeekend) { etat.nbWeekend[t1.id]++; etat.nbWeekendTotal[t1.id]++; if (wkey) etat.weekendsTravailles[t1.id].add(wkey); }
+    majWE(t1.id);
   }
 }
 
@@ -598,35 +607,53 @@ function genererTrimestre(opts) {
   const preferences = opts.preferences || [];
   const moisTrim = [0, 1, 2].map((k) => (trimestre - 1) * 3 + 1 + k); // ex. T2 -> [4,5,6]
 
-  // État partagé sur les 3 mois pour les HEURES, la continuité de station, les
-  // week-ends/mois, etc. MAIS l'équilibrage des GARDES et des WEEK-ENDS est
-  // pensé au MOIS (révision) : on remet à zéro les compteurs de sélection à
-  // chaque mois et on recalcule les poids = jours de présence DU MOIS, SANS FTE
-  // (le nombre de gardes ne dépend plus du temps de travail — seul le quota
-  // d'heures s'y adapte). Les cumuls trimestriels restent dans *Total.
+  // État partagé sur les 3 mois pour les HEURES, la continuité de station, etc.
+  // Deux horizons d'équilibrage distincts :
+  //   - GARDES : pensées au MOIS (révision) → compteurs remis à zéro et poids
+  //     recalculés chaque mois (= jours de présence DU MOIS, SANS FTE ; le nombre
+  //     de gardes ne dépend plus du temps de travail, seul le quota d'heures s'y
+  //     adapte).
+  //   - WEEK-ENDS : pensés sur le TRIMESTRE → poids = présence week-end du
+  //     trimestre, nbWeekend NON remis à zéro (charge lissée sur les 3 mois) et
+  //     comptée en WEEK-ENDS DISTINCTS (cf. plGenererWeekend / majWE).
+  // Les cumuls trimestriels restent dans *Total.
   const etat = plNouvelEtat(medecins);
   plIndexerPreferences(preferences, etat);
 
   const sortie = [];
   const conflits = [];
+  // POIDS WEEK-END = présence de week-end sur TOUT le trimestre. Les week-ends
+  // sont équilibrés sur le trimestre (pas de reset mensuel de nbWeekend) : la
+  // charge week-end est ainsi lissée d'un mois à l'autre. Les GARDES, elles,
+  // restent équilibrées au MOIS (révision) → reset mensuel ci-dessous.
+  etat.poidsWeekend = {};
+  medecins.forEach((m) => {
+    let dispoWeekend = 0;
+    const indispoSet = etat.indispo[m.id];
+    const dispoSet = etat.dispoDeclaree[m.id];
+    moisTrim.forEach((mois) => {
+      plDatesDuMois(annee, mois).forEach((date) => {
+        if (!plDispoStatique(m, date, indispoSet, dispoSet)) return;
+        const jr = plJourSemaine(date);
+        if (jr === 6 || jr === 7) dispoWeekend++;
+      });
+    });
+    etat.poidsWeekend[m.id] = dispoWeekend; // (plus de pondération par le fte)
+  });
   moisTrim.forEach((mois) => {
-    // Reset des compteurs de SÉLECTION + poids = présence du mois (sans fte).
+    // Reset MENSUEL des compteurs de GARDES + poids garde = présence du mois.
+    // nbWeekend N'EST PAS remis à zéro (équilibrage week-end trimestriel).
     etat.poidsGarde = {};
-    etat.poidsWeekend = {};
     medecins.forEach((m) => {
       etat.nbGardes[m.id] = 0;
-      etat.nbWeekend[m.id] = 0;
-      let dispo = 0, dispoWeekend = 0;
+      let dispo = 0;
       const indispoSet = etat.indispo[m.id];
       const dispoSet = etat.dispoDeclaree[m.id];
       plDatesDuMois(annee, mois).forEach((date) => {
         if (!plDispoStatique(m, date, indispoSet, dispoSet)) return;
         dispo++;
-        const jr = plJourSemaine(date);
-        if (jr === 6 || jr === 7) dispoWeekend++;
       });
       etat.poidsGarde[m.id] = dispo;          // gardes égales à présence égale
-      etat.poidsWeekend[m.id] = dispoWeekend; // (plus de pondération par le fte)
     });
     plDatesDuMois(annee, mois).forEach((date) => {
       if (plEstWeekendOuFerie(date)) plGenererWeekend(date, medecins, etat, sortie, conflits);

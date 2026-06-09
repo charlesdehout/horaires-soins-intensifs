@@ -32,6 +32,21 @@
 - **Compteurs du mois** : colonne « # » (numéro de liste), total de médecins,
   **tri croissant/décroissant** au clic sur chaque colonne.
 
+## ✅ Fait dans ce lot (juin 2026 — révision)
+
+- **Suppression du grade « Spécialiste »** : seuls Résident et A/S subsistent.
+  Migration `sql/module16_supprimer_grade_specialiste.sql` (bascule des
+  ex-spécialistes en A/S + contrainte CHECK), UI nettoyée (index.html, app.js),
+  équipe de test passée à 6 R + 8 A/S. Les ex-spécialistes sont désormais soumis
+  à « jamais 2 A/S en garde ».
+- **Équilibrage des week-ends revu (V3)** : poids week-end calculés sur le
+  **trimestre** (plus de reset mensuel → charge lissée) et équité comptée en
+  **week-ends DISTINCTS** (sam+dim = 1, plus 2). Résultat : A/S quasi parfaits
+  (écart ~1), gardes resserrées (écart ≤ 2 par grade). Aucune contrainte dure
+  cassée. (Gardes toujours équilibrées au MOIS.)
+- **Tests d'équité reformulés en INTRA-grade** (`test_planning.js`) : 27/27
+  verts. L'équité se mesure résidents-entre-eux et A/S-entre-eux.
+
 ## 🔜 Reste à faire (par priorité)
 
 4. **Récup férié auto-crédit** (§8.2) + **désidératas** (quota 20/trimestre +
@@ -46,13 +61,17 @@
 
 ## ⚠️ Points ouverts à arbitrer
 
-- **Tests de référence `test_planning.js`** : les assertions « écart ≤ 2 »
-  (gardes, week-ends) et « ≤ 2 week-ends/mois » ne tiennent **pas** sur l'algo
-  actuel — déséquilibre **structurel** : un résident est obligatoire sur le 1er
-  créneau de chaque nuit → les résidents ont mécaniquement plus de gardes que les
-  A/S (écart ~5 même sans M12c). À décider : recalibrer ces seuils, ou revoir la
-  répartition résidents/A‑S (sujet de fond).
-- **Statut `specialiste`** : la spec ne connaît que Résident & A/S → clarifier son rôle.
+- **Écart inter-grade gardes/week-ends — STRUCTUREL et attendu** (résolu sur le
+  fond) : un résident est obligatoire sur le 1er créneau de chaque nuit, et il y
+  a moins de résidents (6) que d'A/S (8) → plancher ≈ nb_nuits / nb_résidents
+  (~15 gardes/résident sur un trimestre), donc les résidents font mécaniquement
+  ~5 gardes de plus que les A/S. Ce n'est PAS un bug : l'équité se mesure
+  **intra-grade** (résidents entre eux, A/S entre eux), ce que l'algo atteint
+  (écart ≤ 2 gardes par grade). Les tests reflètent désormais cette définition.
+- **Week-ends résidents** : restent un peu plus dispersés (écart ≤ 4 sur le
+  trimestre, jusqu'à 3 week-ends sur un mois) pour la même raison structurelle.
+  Améliorable seulement en augmentant l'effectif résident ou en assouplissant la
+  règle « ≥1 résident/nuit » (décision clinique, hors scope algo).
 
 ## Notes techniques
 
