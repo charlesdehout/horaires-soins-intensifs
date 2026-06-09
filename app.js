@@ -1328,9 +1328,10 @@ function nomsPref(prefs, date, types, nomFn) {
 
 /* Construit une feuille « semaine » au gabarit Erasme. */
 function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn) {
-  // Largeur des colonnes de jours : assez large pour qu'un « Prénom Nom » complet
-  // (ex. « Laureline De Visscher ») tienne sur UNE seule ligne dans la cellule.
-  const LARG_JOUR = 24;
+  // Largeur des colonnes de jours. On affiche des PRÉNOMS courts (cf.
+  // construireNomsCourts) → 16 suffit largement pour qu'un prénom (voire
+  // « Camille B. ») tienne sur UNE seule ligne, tout en gardant un tableau compact.
+  const LARG_JOUR = 16;
   // Paramètres de hauteur. IMPORTANT : dès qu'on fixe row.height, ExcelJS écrit
   // customHeight="1" et Excel n'auto-ajuste PLUS la ligne. Il faut donc estimer
   // une hauteur TOUJOURS ≥ au besoin réel, sinon le texte multi-lignes (wrapText)
@@ -1432,12 +1433,63 @@ async function donneesMoisExport(b) {
   return { shifts: shifts || [], prefs: prefs || [] };
 }
 
+/* Sépare un nom complet en prénom (1er mot) et nom (le reste).
+   Ex. "Laureline De Visscher" → { prenom: "Laureline", nom: "De Visscher" }. */
+function prenomEtNom(nomComplet) {
+  const parts = (nomComplet || "").trim().split(/\s+/);
+  const prenom = parts.shift() || "";
+  return { prenom, nom: parts.join(" ") };
+}
+
+/* Normalise une chaîne pour comparaison : minuscules, sans accents. */
+function normaliserTexte(s) {
+  return (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+
+/* Construit un libellé COURT par doctor_id pour l'export planning : le PRÉNOM
+   seul, sauf si plusieurs médecins partagent le même prénom → on ajoute alors le
+   plus petit préfixe du nom de famille (suivi d'un point) qui les rend uniques
+   (« Camille B. », et si deux « Camille B… » → « Camille Be. » / « Camille Ben. »).
+   La détection d'homonymie porte sur TOUS les médecins connus (carteMedecins). */
+function construireNomsCourts(carte) {
+  const meds = Object.keys(carte).map((id) => {
+    const { prenom, nom } = prenomEtNom(carte[id] && carte[id].name);
+    return { id, prenom, nom };
+  });
+  const groupes = {};
+  meds.forEach((m) => {
+    const cle = normaliserTexte(m.prenom);
+    (groupes[cle] = groupes[cle] || []).push(m);
+  });
+  const resultat = {};
+  Object.values(groupes).forEach((groupe) => {
+    if (groupe.length === 1) { resultat[groupe[0].id] = groupe[0].prenom; return; }
+    // Homonymie de prénom : on allonge le préfixe du nom jusqu'à unicité.
+    let longueur = 1;
+    while (true) {
+      const affichages = groupe.map((m) => {
+        const pref = m.nom.slice(0, longueur);
+        return pref ? m.prenom + " " + pref + "." : m.prenom;
+      });
+      const uniques = new Set(affichages.map(normaliserTexte));
+      if (uniques.size === affichages.length || longueur >= 12) {
+        groupe.forEach((m, i) => { resultat[m.id] = affichages[i]; });
+        break;
+      }
+      longueur++;
+    }
+  });
+  return resultat;
+}
+
 /* EXPORT 1 — Planning complet : un onglet par semaine du mois affiché. */
 async function exporterExcelPlanning() {
   if (typeof ExcelJS === "undefined") { window.alert("ExcelJS non chargé (vérifie ta connexion)."); return; }
   const b = bornesMoisAffiche();
   const { shifts, prefs } = await donneesMoisExport(b);
-  const nomFn = (id) => (carteMedecins[id] && carteMedecins[id].name) || "?";
+  // Libellés courts (prénom, + initiale du nom si homonymie) pour densifier.
+  const nomsCourts = construireNomsCourts(carteMedecins);
+  const nomFn = (id) => nomsCourts[id] || (carteMedecins[id] && carteMedecins[id].name) || "?";
 
   const wb = new ExcelJS.Workbook();
   semainesDuMois(b.annee, b.mois).forEach((jours, i) => {
