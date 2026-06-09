@@ -148,16 +148,16 @@ test("équité week-ends : équipe homogène => écart max ≤ 2 week-ends", () 
   assert(ecart <= 2, "écart de week-ends trop grand : " + ecart + " (" + w.join(",") + ")");
 });
 
-test("proportionnalité : un mi-temps (fte 0.5) reçoit moins de gardes qu'un temps plein", () => {
+test("gardes indépendantes du FTE : un mi-temps présent tous les jours ≈ autant de gardes", () => {
   const medsP = equipe();
-  medsP[0].fte = 0.5;                     // resident1 à mi-temps
-  medsP[0].jours_travailles = [1, 2, 3];  // dispo réduite
+  medsP[0].fte = 0.5;                     // resident1 à mi-temps MAIS présent tous les jours
+  // jours_travailles inchangé (présence identique aux autres) → mêmes gardes attendues.
   const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: medsP, preferences: [] });
   const mi = r.stats.find((s) => s.id === "resident1").gardes;
-  // Moyenne des autres résidents (temps plein).
   const autres = r.stats.filter((s) => /^resident/.test(s.id) && s.id !== "resident1").map((s) => s.gardes);
   const moyAutres = autres.reduce((a, b) => a + b, 0) / autres.length;
-  assert(mi <= moyAutres, "mi-temps gardes=" + mi + " > moyenne temps plein=" + moyAutres.toFixed(1));
+  // Le FTE ne doit PLUS réduire les gardes : écart faible attendu (≤ 2).
+  assert(Math.abs(mi - moyAutres) <= 2, "mi-temps gardes=" + mi + " vs moyenne résidents=" + moyAutres.toFixed(1) + " (devrait être ~égal)");
 });
 
 console.log("\n=== Module 8 — Règles dures (spec Calabro) ===");

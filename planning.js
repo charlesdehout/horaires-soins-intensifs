@@ -74,7 +74,11 @@ function plLundiDe(s) { return plAdd(s, -(plJourSemaine(s) - 1)); }
 function plNouvelEtat(medecins) {
   const e = {
     indispo: {}, souhait: {}, bloque: {}, assigneJour: {},
-    nbGardes: {}, nbWeekend: {}, heures: {}, station: {},
+    // nbGardes / nbWeekend = compteurs de SÉLECTION : en mode trimestriel ils
+    // sont REMIS À ZÉRO à chaque mois (équilibrage MENSUEL des gardes, demandé
+    // par la révision). Les cumuls pour les statistiques sont *Total ci-dessous.
+    nbGardes: {}, nbWeekend: {}, nbGardesTotal: {}, nbWeekendTotal: {},
+    heures: {}, station: {},
     // Heures par semaine ISO (lundi) et par médecin : { id: { lundiISO: h } }.
     // Sert au PLAFOND 60 h/semaine souple (Module 12, priorité N2).
     heuresSemaine: {},
@@ -104,6 +108,8 @@ function plNouvelEtat(medecins) {
     e.bloque[m.id] = new Set();
     e.nbGardes[m.id] = 0;
     e.nbWeekend[m.id] = 0;
+    e.nbGardesTotal[m.id] = 0;
+    e.nbWeekendTotal[m.id] = 0;
     e.heures[m.id] = 0;
     e.gardesSemaine[m.id] = {};
     e.heuresSemaine[m.id] = {};
@@ -327,6 +333,7 @@ function plAffecter(sortie, etat, date, type, doctorId, poste) {
   etat.heuresSemaine[doctorId][lkH] = (etat.heuresSemaine[doctorId][lkH] || 0) + PL_HEURES[type];
   if (type === "garde_nuit" || type === "garde_24h") {
     etat.nbGardes[doctorId]++;
+    etat.nbGardesTotal[doctorId]++; // cumul (stats), indépendant des resets mensuels
     const lk = plLundiDe(date);
     etat.gardesSemaine[doctorId][lk] = (etat.gardesSemaine[doctorId][lk] || 0) + 1;
     etat.bloque[doctorId].add(plAdd(date, 1)); // repos 12 h → lendemain off
@@ -483,7 +490,7 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits) {
   [g1, g2].forEach((g) => {
     if (!g) return;
     plAffecter(sortie, etat, date, "garde_24h", g.id, null);
-    if (estVraiWeekend) { etat.nbWeekend[g.id]++; if (wkey) etat.weekendsTravailles[g.id].add(wkey); }
+    if (estVraiWeekend) { etat.nbWeekend[g.id]++; etat.nbWeekendTotal[g.id]++; if (wkey) etat.weekendsTravailles[g.id].add(wkey); }
     if (j === 6) {
       etat.bloque[g.id].add(plAdd(date, 2)); // samedi → lundi off (dimanche déjà repos 12 h)
     } else if (j === 7) {
@@ -493,7 +500,7 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits) {
   });
   if (t1) {
     plAffecter(sortie, etat, date, "twe", t1.id, null);
-    if (estVraiWeekend) { etat.nbWeekend[t1.id]++; if (wkey) etat.weekendsTravailles[t1.id].add(wkey); }
+    if (estVraiWeekend) { etat.nbWeekend[t1.id]++; etat.nbWeekendTotal[t1.id]++; if (wkey) etat.weekendsTravailles[t1.id].add(wkey); }
   }
 }
 
@@ -591,35 +598,36 @@ function genererTrimestre(opts) {
   const preferences = opts.preferences || [];
   const moisTrim = [0, 1, 2].map((k) => (trimestre - 1) * 3 + 1 + k); // ex. T2 -> [4,5,6]
 
-  // État PARTAGÉ sur les 3 mois (les compteurs ne se réinitialisent pas).
+  // État partagé sur les 3 mois pour les HEURES, la continuité de station, les
+  // week-ends/mois, etc. MAIS l'équilibrage des GARDES et des WEEK-ENDS est
+  // pensé au MOIS (révision) : on remet à zéro les compteurs de sélection à
+  // chaque mois et on recalcule les poids = jours de présence DU MOIS, SANS FTE
+  // (le nombre de gardes ne dépend plus du temps de travail — seul le quota
+  // d'heures s'y adapte). Les cumuls trimestriels restent dans *Total.
   const etat = plNouvelEtat(medecins);
   plIndexerPreferences(preferences, etat);
 
-  // --- Poids d'équité : jours de présence sur le trimestre entier ---
-  etat.poidsGarde = {};
-  etat.poidsWeekend = {};
-  medecins.forEach((m) => {
-    let dispoTotal = 0, dispoWeekend = 0;
-    const indispoSet = etat.indispo[m.id];
-    const dispoSet = etat.dispoDeclaree[m.id];
-    moisTrim.forEach((mois) => {
-      plDatesDuMois(annee, mois).forEach((date) => {
-        if (!plDispoStatique(m, date, indispoSet, dispoSet)) return;
-        dispoTotal++;
-        // Poids week-end aligné sur le comptage (§7) : samedis/dimanches réels.
-        const jr = plJourSemaine(date);
-        if (jr === 6 || jr === 7) dispoWeekend++;
-      });
-    });
-    const fte = (typeof m.fte === "number" && m.fte > 0) ? m.fte : 1;
-    etat.poidsGarde[m.id] = fte * dispoTotal;
-    etat.poidsWeekend[m.id] = fte * dispoWeekend;
-  });
-
-  // --- Génération jour par jour sur les 3 mois, état partagé ---
   const sortie = [];
   const conflits = [];
   moisTrim.forEach((mois) => {
+    // Reset des compteurs de SÉLECTION + poids = présence du mois (sans fte).
+    etat.poidsGarde = {};
+    etat.poidsWeekend = {};
+    medecins.forEach((m) => {
+      etat.nbGardes[m.id] = 0;
+      etat.nbWeekend[m.id] = 0;
+      let dispo = 0, dispoWeekend = 0;
+      const indispoSet = etat.indispo[m.id];
+      const dispoSet = etat.dispoDeclaree[m.id];
+      plDatesDuMois(annee, mois).forEach((date) => {
+        if (!plDispoStatique(m, date, indispoSet, dispoSet)) return;
+        dispo++;
+        const jr = plJourSemaine(date);
+        if (jr === 6 || jr === 7) dispoWeekend++;
+      });
+      etat.poidsGarde[m.id] = dispo;          // gardes égales à présence égale
+      etat.poidsWeekend[m.id] = dispoWeekend; // (plus de pondération par le fte)
+    });
     plDatesDuMois(annee, mois).forEach((date) => {
       if (plEstWeekendOuFerie(date)) plGenererWeekend(date, medecins, etat, sortie, conflits);
       else plGenererSemaine(date, medecins, etat, sortie, conflits);
@@ -643,10 +651,8 @@ function genererTrimestre(opts) {
   const stats = medecins.map((m) => ({
     id: m.id,
     heures: Math.round(etat.heures[m.id] * 10) / 10,
-    gardes: etat.nbGardes[m.id],
-    weekends: etat.nbWeekend[m.id],
-    poidsGarde: etat.poidsGarde[m.id],
-    poidsWeekend: etat.poidsWeekend[m.id],
+    gardes: etat.nbGardesTotal[m.id],     // cumul trimestriel (les nbGardes sont resetés au mois)
+    weekends: etat.nbWeekendTotal[m.id],
   }));
 
   return { shifts: sortie, conflits, stats, mois: moisTrim };
@@ -1063,10 +1069,6 @@ function validerEquite(shifts, medecins) {
   const medById = {};
   (medecins || []).forEach((m) => { medById[m.id] = m; });
   const nom = (id) => (medById[id] && medById[id].name) ? medById[id].name : "?";
-  const fteDe = (id) => {
-    const m = medById[id];
-    return (m && typeof m.fte === "number" && m.fte > 0) ? m.fte : 1;
-  };
   // Date d'ancrage = 1er jour présent dans les shifts (pour le tri d'affichage).
   let dateAncre = null;
   shifts.forEach((s) => { if (!dateAncre || s.date < dateAncre) dateAncre = s.date; });
@@ -1100,18 +1102,20 @@ function validerEquite(shifts, medecins) {
     });
   }
 
-  // --- Équité des gardes ±1 (proportionnelle au fte) ---
+  // --- Équité des gardes ±1 : nombre de gardes ÉGAL pour tous (le FTE ne réduit
+  //     plus les gardes ; seul le quota d'heures s'y adapte). L'attendu est donc
+  //     la moyenne simple, sans pondération. ---
   const actifsG = Object.keys(gardes);
   if (actifsG.length >= 2) {
-    let totalG = 0, totalFte = 0;
-    actifsG.forEach((id) => { totalG += gardes[id]; totalFte += fteDe(id); });
+    let totalG = 0;
+    actifsG.forEach((id) => { totalG += gardes[id]; });
+    const attendu = totalG / actifsG.length;
     actifsG.forEach((id) => {
-      const attendu = totalFte > 0 ? totalG * fteDe(id) / totalFte : 0;
       const ecart = gardes[id] - attendu;
       if (ecart > 1) {
-        conflits.push({ date: dateAncre, message: `${nom(id)} : ${gardes[id]} gardes sur le trimestre (≈${Math.round(attendu * 10) / 10} attendues à disponibilité égale, écart > 1 — N2 indicatif).` });
+        conflits.push({ date: dateAncre, message: `${nom(id)} : ${gardes[id]} gardes (≈${Math.round(attendu * 10) / 10} attendues, écart > 1 — N2 indicatif).` });
       } else if (ecart < -1) {
-        conflits.push({ date: dateAncre, message: `${nom(id)} : ${gardes[id]} gardes sur le trimestre (≈${Math.round(attendu * 10) / 10} attendues, déficit > 1 — N2 indicatif).` });
+        conflits.push({ date: dateAncre, message: `${nom(id)} : ${gardes[id]} gardes (≈${Math.round(attendu * 10) / 10} attendues, déficit > 1 — N2 indicatif).` });
       }
     });
   }

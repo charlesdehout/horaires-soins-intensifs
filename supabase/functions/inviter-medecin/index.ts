@@ -12,7 +12,7 @@
 // Variables d'environnement (injectées automatiquement par Supabase) :
 //   SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY
 //
-// Déploiement : voir GUIDE_AUTH_RESEND.md (création de la fonction dans le
+// Déploiement : voir GUIDE_AUTH.md (création de la fonction dans le
 // dashboard Supabase, aucune ligne de commande nécessaire).
 // =====================================================================
 
