@@ -466,7 +466,10 @@ function genererPlanning(opts) {
 
   // Matérialise les repos de garde (visibles, non comptabilisés).
   const bM = plBornesMois(annee, mois);
-  materialiserRepos(sortie, (d) => d >= bM.debut && d <= bM.fin).forEach((r) => sortie.push(r));
+  const dansMois = (d) => d >= bM.debut && d <= bM.fin;
+  materialiserRepos(sortie, dansMois).forEach((r) => sortie.push(r));
+  // Repos compensatoires couplés (double garde de week-end), après les repos.
+  materialiserReposCouples(sortie, dansMois).forEach((r) => sortie.push(r));
 
   // Placement automatique des off-clinic (§9), une fois le planning posé.
   const offs = genererOffClinic({ annee, mois, medecins, shifts: sortie, preferences });
@@ -570,7 +573,10 @@ function genererTrimestre(opts) {
   // Repos de garde matérialisés sur tout le trimestre (avant l'off-clinic).
   const bDeb = plBornesMois(annee, moisTrim[0]).debut;
   const bFin = plBornesMois(annee, moisTrim[2]).fin;
-  materialiserRepos(sortie, (d) => d >= bDeb && d <= bFin).forEach((r) => sortie.push(r));
+  const dansTrim = (d) => d >= bDeb && d <= bFin;
+  materialiserRepos(sortie, dansTrim).forEach((r) => sortie.push(r));
+  // Repos compensatoires couplés sur tout le trimestre, après les repos.
+  materialiserReposCouples(sortie, dansTrim).forEach((r) => sortie.push(r));
 
   // Off-clinic (§9) : droit calculé par MOIS, posé après la génération.
   moisTrim.forEach((mois) => {
@@ -693,6 +699,41 @@ function materialiserRepos(shifts, dansPeriode) {
       if (occupe.has(cle) || ajoutes.has(cle)) return;
       ajoutes.add(cle);
       out.push({ date: d, shift_type: "repos_garde", poste: null, doctor_id: s.doctor_id });
+    });
+  });
+  return out;
+}
+
+/* REPOS COMPENSATOIRE COUPLÉ (Module 12b, spec N2). Quand un médecin enchaîne
+   DEUX gardes sur un même week-end, il a droit à un repos compensatoire en
+   début de semaine suivante, EN PLUS du repos post-garde :
+     - garde le JEUDI soir + garde le SAMEDI 24 h  → repos le LUNDI suivant.
+     - garde le VENDREDI soir + garde le DIMANCHE 24 h → repos le MARDI suivant.
+   (jeudi+2 = samedi ; jeudi+4 = lundi · vendredi+2 = dimanche ; vendredi+4 = mardi)
+   Produit des shifts « repos_garde » (non comptabilisés), dédupliqués : si le
+   jour porte déjà un repos/shift, on n'ajoute rien. À appeler APRÈS
+   materialiserRepos (pour la déduplication). dansPeriode(date) -> bool. */
+function materialiserReposCouples(shifts, dansPeriode) {
+  const estGarde = (t) => t === "garde_nuit" || t === "garde_24h";
+  const gardeJour = {}; // id -> Set(dates de garde)
+  shifts.forEach((s) => {
+    if (!estGarde(s.shift_type)) return;
+    (gardeJour[s.doctor_id] = gardeJour[s.doctor_id] || new Set()).add(s.date);
+  });
+  const occupe = new Set(shifts.map((s) => s.doctor_id + "|" + s.date));
+  const ajoutes = new Set();
+  const out = [];
+  Object.keys(gardeJour).forEach((id) => {
+    gardeJour[id].forEach((d) => {
+      const j = plJourSemaine(d);
+      // jeudi (4) ou vendredi (5) couplé à la garde du surlendemain (samedi/dimanche).
+      if ((j !== 4 && j !== 5) || !gardeJour[id].has(plAdd(d, 2))) return;
+      const reposJour = plAdd(d, 4); // lundi (depuis jeudi) ou mardi (depuis vendredi)
+      if (dansPeriode && !dansPeriode(reposJour)) return;
+      const cle = id + "|" + reposJour;
+      if (occupe.has(cle) || ajoutes.has(cle)) return;
+      ajoutes.add(cle);
+      out.push({ date: reposJour, shift_type: "repos_garde", poste: null, doctor_id: id });
     });
   });
   return out;
@@ -939,34 +980,86 @@ function validerPlanning(opts) {
     });
   });
 
-  // ---- 6) Plancher d'équilibre horaire (Module 12, N2 — indicatif) ----
-  // Charge relative = heures de travail / cible hebdo. On signale les médecins
-  // nettement sous la charge MOYENNE du groupe (< plancher_ratio × moyenne).
-  const heuresTotales = {}; // id -> heures de travail (hors absences)
+  // NB : l'équité fine (plancher horaire + ±1 garde) s'évalue sur l'ENSEMBLE
+  // du trimestre, pas au mois → voir validerEquite(), appelée par l'app sur le
+  // planning trimestriel complet.
+
+  // Tri par date pour un affichage lisible.
+  conflits.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return conflits;
+}
+
+
+/* =====================================================================
+   MODULE 12 — Équité fine évaluée sur le TRIMESTRE (priorité N2)
+   ---------------------------------------------------------------------
+   L'équilibrage est pensé sur l'ensemble du trimestre (état partagé de
+   genererTrimestre). Cette fonction PURE produit des avertissements
+   INDICATIFS (non bloquants) à partir de TOUS les shifts du trimestre :
+     - Plancher horaire : médecins nettement sous la charge moyenne.
+     - Équité des gardes : écart > 1 vs le nombre attendu (proportionnel
+       au fte / à la disponibilité).
+   À appeler avec l'ensemble des shifts du trimestre. Renvoie [{date,message}].
+   ===================================================================== */
+function validerEquite(shifts, medecins) {
+  const eq = plEquite();
+  const conflits = [];
+  const medById = {};
+  (medecins || []).forEach((m) => { medById[m.id] = m; });
+  const nom = (id) => (medById[id] && medById[id].name) ? medById[id].name : "?";
+  const fteDe = (id) => {
+    const m = medById[id];
+    return (m && typeof m.fte === "number" && m.fte > 0) ? m.fte : 1;
+  };
+  // Date d'ancrage = 1er jour présent dans les shifts (pour le tri d'affichage).
+  let dateAncre = null;
+  shifts.forEach((s) => { if (!dateAncre || s.date < dateAncre) dateAncre = s.date; });
+  dateAncre = dateAncre || "";
+
+  // --- Heures de travail totales par médecin (hors absences/repos) ---
+  const heuresTotales = {};
+  const gardes = {};
   shifts.forEach((s) => {
     let h = PL_HEURES[s.shift_type] || 0;
-    if (s.shift_type === "off") h = PL_HEURES_OFFCLINIC;
-    if (h <= 0) return;
-    heuresTotales[s.doctor_id] = (heuresTotales[s.doctor_id] || 0) + h;
+    if (s.shift_type === "off") h = PL_HEURES_OFFCLINIC; // off-clinic = travail
+    if (h > 0) heuresTotales[s.doctor_id] = (heuresTotales[s.doctor_id] || 0) + h;
+    if (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h") {
+      gardes[s.doctor_id] = (gardes[s.doctor_id] || 0) + 1;
+    }
   });
+
+  // --- Plancher horaire (charge relative à la cible) ---
   const charges = Object.keys(heuresTotales).map((id) => {
-    const med = medById[id];
-    const cible = (med && med.weekly_hours_target) ? med.weekly_hours_target : 52;
+    const cible = (medById[id] && medById[id].weekly_hours_target) ? medById[id].weekly_hours_target : 52;
     return { id, charge: heuresTotales[id] / cible, heures: heuresTotales[id] };
   });
   if (charges.length >= 2) {
     const moyenne = charges.reduce((a, c) => a + c.charge, 0) / charges.length;
-    const seuil = eqV.plancher_ratio * moyenne;
-    const dateMois = annee + "-" + String(mois).padStart(2, "0") + "-01";
+    const seuil = eq.plancher_ratio * moyenne;
     charges.forEach((c) => {
       if (moyenne > 0 && c.charge < seuil) {
         const pct = Math.round((c.charge / moyenne) * 100);
-        conflits.push({ date: dateMois, message: `${nom(c.id)} : sous le plancher d'équilibre (${Math.round(c.heures * 10) / 10} h, ~${pct} % de la charge moyenne).` });
+        conflits.push({ date: dateAncre, message: `${nom(c.id)} : sous le plancher d'équilibre du trimestre (${Math.round(c.heures * 10) / 10} h, ~${pct} % de la charge moyenne).` });
       }
     });
   }
 
-  // Tri par date pour un affichage lisible.
+  // --- Équité des gardes ±1 (proportionnelle au fte) ---
+  const actifsG = Object.keys(gardes);
+  if (actifsG.length >= 2) {
+    let totalG = 0, totalFte = 0;
+    actifsG.forEach((id) => { totalG += gardes[id]; totalFte += fteDe(id); });
+    actifsG.forEach((id) => {
+      const attendu = totalFte > 0 ? totalG * fteDe(id) / totalFte : 0;
+      const ecart = gardes[id] - attendu;
+      if (ecart > 1) {
+        conflits.push({ date: dateAncre, message: `${nom(id)} : ${gardes[id]} gardes sur le trimestre (≈${Math.round(attendu * 10) / 10} attendues à disponibilité égale, écart > 1 — N2 indicatif).` });
+      } else if (ecart < -1) {
+        conflits.push({ date: dateAncre, message: `${nom(id)} : ${gardes[id]} gardes sur le trimestre (≈${Math.round(attendu * 10) / 10} attendues, déficit > 1 — N2 indicatif).` });
+      }
+    });
+  }
+
   conflits.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   return conflits;
 }
@@ -1001,5 +1094,5 @@ function compterParMedecin(shifts) {
 
 /* ------------- Export pour Node (tests). Sans effet en navigateur. ------ */
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, compterParMedecin };
+  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, validerEquite, compterParMedecin };
 }

@@ -87,9 +87,9 @@ plusieurs **contraintes dures (Niveau 1)** ne sont pas encore appliquées.
 | Règle | Statut |
 |---|---|
 | Max 2 weekends/mois/personne (compensable) | ✅ **appliqué** — priorité à la génération + signalement dans `validerPlanning` (un week-end = sam/dim, le binôme sam+dim compte pour 1) |
-| Gardes ±1 entre tous | ⚠️ **M12a** : équité des gardes **sans biais de grade** appliquée (le 2e créneau de garde n'est plus réservé aux A/S → A/S et Résidents à égalité par déficit ; 2 Résidents possibles ensemble). ±1 strict reste à venir (M12b). |
+| Gardes ±1 entre tous | ✅ **M12a/b** : équité **sans biais de grade** (2e créneau non réservé aux A/S, 2 Résidents possibles) + sélection par déficit qui minimise l'écart + **alerte `validerEquite`** si écart > 1 (proportionnel au fte), évaluée **sur le trimestre**. |
 | Volume horaire similaire | ✅ **M12a** : tri par charge horaire relative (plancher) + alerte « sous le plancher d'équilibre » dans `validerPlanning`. |
-| Repos compensatoire vendredi+dimanche → mardi ; jeudi+samedi → lundi | ⚠️ (récup weekend présente mais pas liée au couple garde jeudi/vendredi) → **M12b**. |
+| Repos compensatoire vendredi+dimanche → mardi ; jeudi+samedi → lundi | ✅ **M12b** : `materialiserReposCouples` pose un `repos_garde` supplémentaire (jeudi soir + samedi 24h → lundi ; vendredi soir + dimanche 24h → mardi), dédupliqué. |
 | **Max 60 h/semaine** (compensable la semaine suivante) | ✅ **M12a** : suivi des heures par semaine ISO + plafond **souple** (on évite >60 h, fallback en dernier recours) + avertissement indicatif dans `validerPlanning`. |
 | Pré-placements admin respectés | ❌ |
 | Désidératas admin principal = priorité absolue | ❌ |
@@ -202,8 +202,16 @@ du plus structurant au plus cosmétique :
      et jamais 2 A/S.
    - ✅ **Plafond 60 h/semaine** souple (compensable) + suivi `heuresSemaine` +
      avertissement indicatif.
-   **M12b — à venir :** ±1 garde strict, repos compensatoires couplés
-   (vendredi+dimanche → mardi ; jeudi+samedi → lundi), concentration des gardes de nuit.
+   **M12b — FAIT (2026-06) :**
+   - ✅ **Repos compensatoire couplé** (`materialiserReposCouples`) : repos_garde
+     supplémentaire jeudi+samedi → lundi, vendredi+dimanche → mardi.
+   - ✅ **±1 garde** en souple + alerte : `validerEquite` signale les écarts de
+     gardes > 1 (proportionnels au fte).
+   - ✅ **Équilibrage évalué sur le TRIMESTRE** : `validerEquite(shifts, medecins)`
+     (plancher horaire + équité des gardes) est appelée par l'app sur l'ENSEMBLE
+     du trimestre généré, pas au mois. Le plancher a été retiré de `validerPlanning`
+     (mensuel) ; seul le plafond 60 h/semaine y reste (valable à toute échelle).
+   **M12c — à venir :** concentration des gardes de nuit sur une période du mois (N3).
 6. **M13 — Rotation trimestrielle des unités** + historique.
 7. **M14 — Exports Excel** (Export 1 + Export 2) selon §13.
 8. **M15 — Alertes absences simultanées** + pré-placement manuel.

@@ -1228,16 +1228,28 @@ async function genererTrimestrePourMoisAffiche() {
     return messageGeneration("Erreur d'écriture du trimestre : " + (err.message || err), "error");
   }
 
-  // 7) Résumé + rafraîchissement.
+  // 7) Résumé + rafraîchissement. L'équité fine (plancher horaire + ±1 garde)
+  //    s'évalue sur TOUT le trimestre (équilibrage trimestriel) via validerEquite.
   genererTrimBtn.disabled = false;
+  const alertesEquite = (typeof validerEquite === "function")
+    ? validerEquite(res.shifts, medecins || []) : [];
   const nbConf = res.conflits.length;
   const base = "Trimestre " + libelleTrim + " généré : " + res.shifts.length + " shifts. ";
-  if (nbConf === 0) {
+  if (nbConf === 0 && alertesEquite.length === 0) {
     messageGeneration(base + "Aucun conflit. ✅", "info");
   } else {
     const apercu = res.conflits.slice(0, 8).map((c) => c.date + " — " + c.message).join("<br>");
-    messageGeneration(base + "<strong>" + nbConf + " conflit(s)</strong> à arbitrer :<br>" +
-      apercu + (nbConf > 8 ? "<br>…" : ""), "error");
+    const apEq = alertesEquite.slice(0, 6).map((c) => "⚖️ " + c.message).join("<br>");
+    let html = base;
+    if (nbConf > 0) {
+      html += "<strong>" + nbConf + " conflit(s)</strong> à arbitrer :<br>" + apercu + (nbConf > 8 ? "<br>…" : "");
+    }
+    if (alertesEquite.length > 0) {
+      html += (nbConf > 0 ? "<br><br>" : "") +
+        "<strong>Équité trimestrielle (" + alertesEquite.length + ", indicatif) :</strong><br>" +
+        apEq + (alertesEquite.length > 6 ? "<br>…" : "");
+    }
+    messageGeneration(html, nbConf > 0 ? "error" : "info");
   }
   calendrier.refetchEvents();
   rafraichirPanneauAdmin();
