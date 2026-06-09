@@ -95,6 +95,29 @@
   - **Tests** : 4 nouveaux cas (fermeture génération/validation, tolérance
     congrès, congrès week-end) → **35/35 verts**.
 
+## ✅ Fait dans ce lot (juin 2026 — refonte graphique)
+
+- **Site — refonte « sarcelle médical »** (aucun changement de logique métier) :
+  - **En-tête d'application** (titre, nom + badge de rôle, déconnexion) et
+    **navigation par onglets** : Planning (tous, avec les outils admin du mois),
+    Demandes (avec pastille de comptage), Congrès & fermetures, Médecins
+    (admin) ; Mes préférences (médecin). Barre d'onglets collante ;
+    `calendrier.updateSize()` au retour sur l'onglet Planning.
+  - **Palette teal** centralisée dans `:root` (style.css) — les anciens noms
+    `--bleu`/`--bleu-fonce` restent des alias. Tableaux zébrés + en-têtes
+    teintés, badges de grade (résident mauve / A/S sarcelle), boutons et
+    FullCalendar assortis.
+- **Exports Excel retravaillés** :
+  - **Noms de FAMILLE** (plus le prénom) dans le planning ; initiale du prénom
+    ajoutée en cas d'homonymie (« Dupont C. » / « Dupont L. »).
+  - Colonnes élargies (18) et lignes de station avec **hauteur mini de 2 noms**
+    (un 2e médecin peut être écrit à la main dans la même cellule).
+  - **Ligne de titre fusionnée** par feuille (« semaine du … au … »),
+    **volets figés** (colonne des postes + en-têtes), en-têtes différenciés
+    semaine / week-end-férié / congrès, **impression paysage** ajustée à la
+    largeur (planning + récap individuel).
+  - Vérifié sous Node avec ExcelJS (écriture + relecture du classeur).
+
 ## 🔜 Reste à faire (par priorité)
 
 4. **Récup férié auto-crédit** (§8.2) + **désidératas** (quota 20/trimestre +
