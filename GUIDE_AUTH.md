@@ -75,7 +75,7 @@ Les liens d'invitation / de réinitialisation doivent ramener vers **ton app**.
 3. **Colle tout le contenu** de `supabase/functions/inviter-medecin/index.ts` dans l'éditeur.
 4. **Deploy**.
 5. Rien à configurer côté secrets : Supabase fournit automatiquement `SUPABASE_URL`, `SUPABASE_ANON_KEY` et `SUPABASE_SERVICE_ROLE_KEY` à la fonction.
-6. Laisse l'option **Verify JWT** activée (par défaut) : la fonction est appelée avec ton jeton d'admin.
+6. **DÉSACTIVE l'option « Verify JWT »** (parfois « Enforce JWT verification ») pour cette fonction. ⚠️ Si elle reste activée, la passerelle rejette le **pré-vol CORS** du navigateur (`OPTIONS` sans en-tête) → erreur `UNAUTHORIZED_NO_AUTH_HEADER` au clic sur « Inviter ». C'est sans risque : la fonction vérifie elle-même le jeton (`getUser`) et le rôle `admin` en interne.
 
 ---
 

@@ -74,7 +74,17 @@ Deno.serve(async (req) => {
       email.trim().toLowerCase(),
       options,
     );
-    if (error) return reponse({ error: error.message }, 400);
+    if (error) {
+      // Détail enrichi : message + code + statut (utile quand l'erreur est vide,
+      // typiquement un échec d'envoi d'email = SMTP non/mal configuré).
+      console.error("inviteUserByEmail error:", error);
+      const detail = error.message || error.code || error.name ||
+        (() => { try { return JSON.stringify(error); } catch { return String(error); } })();
+      const indiceSmtp = (error.status === 500 || !error.message)
+        ? " — vérifie le SMTP (Authentication → Emails → SMTP) : un envoi d'email échoué donne souvent une erreur vide."
+        : "";
+      return reponse({ error: detail + indiceSmtp, code: error.code, status: error.status }, 400);
+    }
 
     return reponse({ ok: true, email: data?.user?.email || email });
   } catch (e) {
