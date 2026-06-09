@@ -64,6 +64,16 @@ const COUVERTURE = {
 const EQUITE = {
   plafond_hebdo:  60,
   plancher_ratio: 0.85,
+  // Module 12c — CONCENTRATION des gardes de nuit en semaine (préférence N3,
+  // souple). « Tendance légère à enchaîner » : à déficit de gardes quasi égal,
+  // on privilégie le médecin qui a déjà gardé récemment, pour regrouper un peu
+  // ses gardes plutôt que de les éparpiller. SOUPLE et BORNÉE : le bonus de
+  // récence vaut toujours MOINS qu'une garde d'écart de déficit, donc l'équité
+  // (N2) reste prioritaire — on ne fait jamais passer quelqu'un qui a une garde
+  // de retard. Ne s'applique qu'aux gardes de nuit de SEMAINE (pas le week-end).
+  concentration_nuits: true, // activer/désactiver le biais
+  concentration_coeff: 0.5,  // intensité ∈ ]0,1[ (0,5 = discret ; <1 garantit la borne)
+  fenetre_nuits:       14,    // « récent » = dernière garde ≤ 14 jours avant
 };
 
 

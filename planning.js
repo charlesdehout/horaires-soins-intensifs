@@ -94,6 +94,9 @@ function plNouvelEtat(medecins) {
     // null => plTrier reste en mode mensuel (compte brut). Sinon =>
     // tri par déficit relatif : compte / poids (proportionnel à la dispo).
     poidsGarde: null, poidsWeekend: null,
+    // Module 12c : dernière date de GARDE (toutes gardes) par médecin, pour le
+    // biais de concentration des gardes de nuit de semaine.
+    derniereGarde: {},
   };
   medecins.forEach((m) => {
     e.indispo[m.id] = new Set();
@@ -107,11 +110,17 @@ function plNouvelEtat(medecins) {
     e.weekendsTravailles[m.id] = new Set();
     e.dispoDeclaree[m.id] = new Set(); // jours déclarés dispo (résidents indépendants)
     e.station[m.id] = {}; // { lundiISO: codeStation }
+    e.derniereGarde[m.id] = null; // Module 12c
   });
   // Paramètres d'équité (Module 12), figés à la création de l'état.
   const eq = plEquite();
   e.plafondHebdo = eq.plafond_hebdo;
   e.plancherRatio = eq.plancher_ratio;
+  // Paramètres de concentration des gardes de nuit (Module 12c). Repli prudent
+  // si la config ne les expose pas (compatibilité ascendante).
+  e.concentrationNuits = eq.concentration_nuits !== false && eq.concentration_coeff > 0;
+  e.concentrationCoeff = (typeof eq.concentration_coeff === "number") ? eq.concentration_coeff : 0;
+  e.fenetreNuits = (typeof eq.fenetre_nuits === "number" && eq.fenetre_nuits > 0) ? eq.fenetre_nuits : 14;
   return e;
 }
 
@@ -176,25 +185,66 @@ function plDispo(m, date, etat) {
    présence sur le trimestre → la distribution devient proportionnelle à
    la disponibilité de chacun. Sans poids (mode mensuel), comportement
    inchangé (compte brut). */
+const PL_EPS = 1e-9;
+/* Score de déficit de GARDES d'un médecin (plus bas = plus prioritaire à servir).
+   Mode trimestriel : compte / poids (déficit relatif). Mode mensuel : compte brut. */
+function plScoreGarde(id, etat) {
+  if (etat.poidsGarde) return etat.nbGardes[id] / Math.max(etat.poidsGarde[id] || 0, PL_EPS);
+  return etat.nbGardes[id];
+}
+/* Score de déficit de WEEK-ENDS (même logique que plScoreGarde). */
+function plScoreWeekend(id, etat) {
+  if (etat.poidsWeekend) return etat.nbWeekend[id] / Math.max(etat.poidsWeekend[id] || 0, PL_EPS);
+  return etat.nbWeekend[id];
+}
+
 function plTrier(liste, critere, etat) {
-  const EPS = 1e-9;
-  function scoreGarde(id) {
-    if (etat.poidsGarde) return etat.nbGardes[id] / Math.max(etat.poidsGarde[id] || 0, EPS);
-    return etat.nbGardes[id];
-  }
-  function scoreWeekend(id) {
-    if (etat.poidsWeekend) return etat.nbWeekend[id] / Math.max(etat.poidsWeekend[id] || 0, EPS);
-    return etat.nbWeekend[id];
-  }
   return liste.slice().sort((a, b) => {
     if (critere === "garde") {
-      const sa = scoreGarde(a.id), sb = scoreGarde(b.id);
+      const sa = plScoreGarde(a.id, etat), sb = plScoreGarde(b.id, etat);
       if (sa !== sb) return sa - sb;
     }
     if (critere === "weekend") {
-      const sa = scoreWeekend(a.id), sb = scoreWeekend(b.id);
+      const sa = plScoreWeekend(a.id, etat), sb = plScoreWeekend(b.id, etat);
       if (sa !== sb) return sa - sb;
     }
+    const ra = etat.heures[a.id] / (a.weekly_hours_target || 52);
+    const rb = etat.heures[b.id] / (b.weekly_hours_target || 52);
+    if (ra !== rb) return ra - rb;
+    return String(a.id).localeCompare(String(b.id)); // déterministe
+  });
+}
+
+/* ----- Module 12c : CONCENTRATION des gardes de nuit en semaine (N3) ----- */
+
+/* Écart en JOURS entre deux dates ISO (a - b, positif si a après b). */
+function plDiffJours(a, b) { return (plParse(a) - plParse(b)) / 86400000; }
+
+/* Bonus de « récence » d'un médecin pour la date courante (≥ 0). Vaut 0 si la
+   concentration est désactivée, si le médecin n'a pas encore gardé, ou si sa
+   dernière garde est trop ancienne (> fenêtre). Sinon, d'autant plus grand que
+   la dernière garde est récente. BORNÉ : toujours < « une garde » de déficit
+   (coeff < 1 × unité de déficit) → l'équité N2 reste prioritaire. */
+function plBonusConcentration(id, date, etat) {
+  if (!etat.concentrationNuits) return 0;
+  const last = etat.derniereGarde[id];
+  if (!last) return 0;
+  const gap = plDiffJours(date, last);
+  if (gap <= 0 || gap > etat.fenetreNuits) return 0;
+  const prox = (etat.fenetreNuits - gap) / etat.fenetreNuits;      // ∈ ]0,1[
+  const unite = (etat.poidsGarde && etat.poidsGarde[id])           // « valeur » d'une garde
+    ? (1 / etat.poidsGarde[id]) : 1;
+  return etat.concentrationCoeff * prox * unite;                   // < 1 × unite
+}
+
+/* Tri des candidats pour une garde de nuit de SEMAINE : score de déficit MOINS
+   le bonus de concentration (récence). Le bonus étant borné < une garde, ce tri
+   ne peut que départager des candidats déjà quasi à égalité d'équité. */
+function plTrierGardeNuit(liste, date, etat) {
+  return liste.slice().sort((a, b) => {
+    const sa = plScoreGarde(a.id, etat) - plBonusConcentration(a.id, date, etat);
+    const sb = plScoreGarde(b.id, etat) - plBonusConcentration(b.id, date, etat);
+    if (sa !== sb) return sa - sb;
     const ra = etat.heures[a.id] / (a.weekly_hours_target || 52);
     const rb = etat.heures[b.id] / (b.weekly_hours_target || 52);
     if (ra !== rb) return ra - rb;
@@ -278,6 +328,9 @@ function plAffecter(sortie, etat, date, type, doctorId, poste) {
     const lk = plLundiDe(date);
     etat.gardesSemaine[doctorId][lk] = (etat.gardesSemaine[doctorId][lk] || 0) + 1;
     etat.bloque[doctorId].add(plAdd(date, 1)); // repos 12 h → lendemain off
+    // Module 12c : mémorise la dernière garde (jours traités dans l'ordre
+    // chronologique → simple écrasement) pour le biais de concentration.
+    etat.derniereGarde[doctorId] = date;
   }
 }
 
@@ -310,9 +363,10 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits) {
   let resNuit = null, second = null;
   if (residents.length > 0) {
     const resPool = plFiltrerPlafond(residents, date, etat, PL_HEURES.garde_nuit);
-    resNuit = plTrier(resPool, "garde", etat)[0];
+    // Module 12c : tri par déficit + biais (borné) de concentration des nuits.
+    resNuit = plTrierGardeNuit(resPool, date, etat)[0];
     const reste = plFiltrerPlafond(libresG.filter((m) => m.id !== resNuit.id), date, etat, PL_HEURES.garde_24h);
-    second = plTrier(reste, "garde", etat)[0] || null;
+    second = plTrierGardeNuit(reste, date, etat)[0] || null;
   } else {
     conflits.push({ date, message: "Nuit : aucun résident disponible (≥1 obligatoire)." });
   }
