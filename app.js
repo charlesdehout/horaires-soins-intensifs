@@ -1102,7 +1102,7 @@ async function construireEvenements(debutISO, finISO) {
   // --- 1) Shifts de la période (planning) ---
   const { data: shifts, error: errShifts } = await sb
     .from("shifts")
-    .select("id, date, shift_type, doctor_id, schedule_id, poste")
+    .select("id, date, shift_type, doctor_id, schedule_id, poste, epingle")
     .gte("date", debut)
     .lt("date", fin);
 
@@ -1122,7 +1122,7 @@ async function construireEvenements(debutISO, finISO) {
       // Données du shift, attachées à chaque événement pour l'édition (Module 6).
       const propsBase = {
         estShift: true, shiftId: s.id, shiftType: s.shift_type,
-        doctorId: s.doctor_id, poste: s.poste || null, dateStr: s.date,
+        doctorId: s.doctor_id, poste: s.poste || null, dateStr: s.date, epingle: s.epingle,
       };
       const cls = estMien ? ["shift-mien"] : [];
 
@@ -1294,7 +1294,7 @@ async function initCalendrier() {
         if (!medecinCourant || medecinCourant.role !== "admin") return;
         ouvrirEditionShift({
           id: p.shiftId, date: p.dateStr,
-          shift_type: p.shiftType, doctor_id: p.doctorId, poste: p.poste,
+          shift_type: p.shiftType, doctor_id: p.doctorId, poste: p.poste, epingle: p.epingle,
         });
       },
       // À chaque changement de mois/vue : rafraîchit le panneau admin et le
@@ -1383,8 +1383,14 @@ async function genererPlanningPourMoisAffiche() {
   // 2bis) Congrès & fermetures d'unités chevauchant le mois (Module 17).
   const periodes = await periodesSur(debutMois, finMois);
 
+  // 2ter) Pré-placements ÉPINGLÉS (Module 19) : conservés et respectés à la génération.
+  const { data: epingles } = await sb.from("shifts")
+    .select("date, shift_type, doctor_id, poste")
+    .eq("epingle", true).gte("date", debutMois).lte("date", finMois);
+  const prePlaces = epingles || [];
+
   // 3) Génération (algorithme pur, planning.js).
-  const res = genererPlanning({ annee, mois, medecins: medecins || [], preferences: prefs || [], periodes });
+  const res = genererPlanning({ annee, mois, medecins: medecins || [], preferences: prefs || [], periodes, prePlaces });
 
   // 4) Remplace le brouillon du mois : on efface shifts du mois + schedules du mois.
   await sb.from("shifts").delete().gte("date", debutMois).lte("date", finMois);
@@ -1397,10 +1403,12 @@ async function genererPlanningPourMoisAffiche() {
     .single();
   if (e3) { genererBtn.disabled = false; return messageGeneration("Erreur création du planning : " + e3.message, "error"); }
 
-  // 5) Insertion des shifts générés.
+  // 5) Insertion des shifts générés (on remarque les pré-placements épinglés).
+  const cleEp = new Set(prePlaces.map((s) => s.date + "|" + s.doctor_id + "|" + s.shift_type + "|" + (s.poste || "")));
   const lignes = res.shifts.map((s) => ({
     date: s.date, shift_type: s.shift_type, poste: s.poste,
     doctor_id: s.doctor_id, schedule_id: sched.id,
+    epingle: cleEp.has(s.date + "|" + s.doctor_id + "|" + s.shift_type + "|" + (s.poste || "")),
   }));
   if (lignes.length) {
     const { error: e4 } = await sb.from("shifts").insert(lignes);
@@ -1513,8 +1521,15 @@ async function genererTrimestrePourMoisAffiche() {
   // 4bis) Congrès & fermetures d'unités chevauchant le trimestre (Module 17).
   const periodes = await periodesSur(debutTrim, finTrim);
 
+  // 4ter) Pré-placements ÉPINGLÉS (Module 19) : conservés et respectés.
+  const { data: epinglesT } = await sb.from("shifts")
+    .select("date, shift_type, doctor_id, poste")
+    .eq("epingle", true).gte("date", debutTrim).lte("date", finTrim);
+  const prePlaces = epinglesT || [];
+  const cleEp = new Set(prePlaces.map((s) => s.date + "|" + s.doctor_id + "|" + s.shift_type + "|" + (s.poste || "")));
+
   // 5) Génération (algorithme pur, planning.js).
-  const res = genererTrimestre({ annee, trimestre, medecins: medecins || [], preferences: prefs || [], periodes });
+  const res = genererTrimestre({ annee, trimestre, medecins: medecins || [], preferences: prefs || [], periodes, prePlaces });
 
   // 6) Écriture mois par mois : on remplace chaque brouillon (shifts + schedule),
   //    puis on insère les shifts du mois rattachés à son schedule_id.
@@ -1533,7 +1548,8 @@ async function genererTrimestrePourMoisAffiche() {
       const lignes = res.shifts
         .filter((s) => s.date >= b.debut && s.date <= b.fin)
         .map((s) => ({ date: s.date, shift_type: s.shift_type, poste: s.poste,
-                       doctor_id: s.doctor_id, schedule_id: sched.id }));
+                       doctor_id: s.doctor_id, schedule_id: sched.id,
+                       epingle: cleEp.has(s.date + "|" + s.doctor_id + "|" + s.shift_type + "|" + (s.poste || "")) }));
       if (lignes.length) {
         const { error: e4 } = await sb.from("shifts").insert(lignes);
         if (e4) throw e4;
@@ -2061,6 +2077,7 @@ const sDate          = document.getElementById("s-date");
 const sType          = document.getElementById("s-type");
 const sDoctor        = document.getElementById("s-doctor");
 const sPoste         = document.getElementById("s-poste");
+const sEpingle       = document.getElementById("s-epingle");
 const shiftFormMsg   = document.getElementById("shift-form-msg");
 const deleteShiftBtn = document.getElementById("delete-shift-btn");
 const cancelShiftBtn = document.getElementById("cancel-shift-btn");
@@ -2101,7 +2118,7 @@ async function rafraichirPanneauAdmin() {
 
   // 2) Shifts du mois.
   const { data: shifts } = await sb.from("shifts")
-    .select("id, date, shift_type, doctor_id, schedule_id, poste")
+    .select("id, date, shift_type, doctor_id, schedule_id, poste, epingle")
     .gte("date", b.debut).lte("date", b.fin);
   planningMois.shifts = shifts || [];
 
@@ -2618,12 +2635,20 @@ function calculerConflitsMois(shifts) {
 
 function majConflits() {
   const conflits = calculerConflitsMois(planningMois.shifts);
+  // §14 — alertes « absences simultanées » (informatif, sévérité colorée).
+  const alertesAbs = (typeof alertesAbsences === "function")
+    ? alertesAbsences({
+        annee: planningMois.annee, mois: planningMois.mois,
+        medecins: planningMois.medecins, preferences: planningMois.preferences,
+        shifts: planningMois.shifts,
+      })
+    : [];
   if (planningMois.shifts.length === 0) {
     conflitsZone.textContent = "Aucun planning chargé pour ce mois.";
     conflitsZone.className = "zone-info";
     return;
   }
-  if (conflits.length === 0) {
+  if (conflits.length === 0 && alertesAbs.length === 0) {
     conflitsZone.textContent = "Aucun conflit. ✅";
     conflitsZone.className = "zone-info conflits-ok";
     return;
@@ -2637,6 +2662,15 @@ function majConflits() {
     sp.className = "conflit-date"; sp.textContent = c.date + " — ";
     div.appendChild(sp);
     div.appendChild(document.createTextNode(c.message));
+    conflitsZone.appendChild(div);
+  });
+  alertesAbs.forEach((a) => {
+    const div = document.createElement("div");
+    div.className = "conflit-ligne alerte-" + a.niveau;
+    const sp = document.createElement("span");
+    sp.className = "conflit-date"; sp.textContent = a.date + " — ";
+    div.appendChild(sp);
+    div.appendChild(document.createTextNode((a.niveau === "critique" ? "🔴 " : "🟠 ") + a.message));
     conflitsZone.appendChild(div);
   });
 }
@@ -2692,6 +2726,7 @@ function ouvrirEditionShift(shift) {
   sType.value = shift.shift_type;
   remplirSelectMedecins(shift.doctor_id);
   remplirSelectPostes(shift.poste);
+  sEpingle.checked = !!shift.epingle;
   majEtatStation();
   deleteShiftBtn.classList.remove("hidden");
   ouvrirModaleShift();
@@ -2713,6 +2748,7 @@ function ouvrirAjoutShift(opts) {
   const posteDefaut = ("poste" in opts) ? opts.poste
     : ((typeof POSTES_JOUR !== "undefined" && POSTES_JOUR[0]) ? POSTES_JOUR[0].code : null);
   remplirSelectPostes(posteDefaut);
+  sEpingle.checked = false;
   majEtatStation();
   deleteShiftBtn.classList.add("hidden");
   ouvrirModaleShift();
@@ -2785,13 +2821,14 @@ shiftForm.addEventListener("submit", async (e) => {
     if (propose.id) {
       const { error } = await sb.from("shifts").update({
         date: propose.date, shift_type: propose.shift_type,
-        doctor_id: propose.doctor_id, poste: propose.poste,
+        doctor_id: propose.doctor_id, poste: propose.poste, epingle: sEpingle.checked,
       }).eq("id", propose.id);
       if (error) throw error;
     } else {
       const { error } = await sb.from("shifts").insert({
         date: propose.date, shift_type: propose.shift_type,
         doctor_id: propose.doctor_id, poste: propose.poste, schedule_id: scheduleId,
+        epingle: sEpingle.checked,
       });
       if (error) throw error;
     }
@@ -2955,7 +2992,7 @@ async function construireGrille() {
   // Données : médecins (noms) + shifts du mois.
   if (!Object.keys(carteMedecins).length) await chargerCarteMedecins();
   const { data: shifts, error } = await sb.from("shifts")
-    .select("id, date, shift_type, doctor_id, poste")
+    .select("id, date, shift_type, doctor_id, poste, epingle")
     .gte("date", debut).lte("date", fin);
   if (error) { console.error("Erreur grille :", error); return; }
 
@@ -3007,10 +3044,10 @@ async function construireGrille() {
                    : (ligne.type === "conges") ? (" " + (SHIFT_CONFIG[s.shift_type] ? SHIFT_CONFIG[s.shift_type].court : ""))
                    : "";
         const couleur = SHIFT_CONFIG[s.shift_type] ? SHIFT_CONFIG[s.shift_type].couleur : "#57606a";
-        contenu += "<span class='grille-chip' data-shiftid='" + s.id + "' " +
+        contenu += "<span class='grille-chip" + (s.epingle ? " epingle" : "") + "' data-shiftid='" + s.id + "' " +
                    "style='background:" + couleur + "' title='" +
-                   escapeHtml(nomCourt(s.doctor_id) + suff) + "'>" +
-                   escapeHtml(nomCourt(s.doctor_id)) + escapeHtml(suff) + "</span>";
+                   escapeHtml(nomCourt(s.doctor_id) + suff) + (s.epingle ? " (épinglé)" : "") + "'>" +
+                   (s.epingle ? "📌 " : "") + escapeHtml(nomCourt(s.doctor_id)) + escapeHtml(suff) + "</span>";
       });
       html += "<td class='" + cls + "' data-date='" + iso + "' data-type='" + defaut.type +
               "' data-poste='" + (defaut.poste || "") + "'>" + contenu + "</td>";
@@ -3037,7 +3074,7 @@ grilleTable.addEventListener("click", (e) => {
   const chip = e.target.closest(".grille-chip");
   if (chip) {
     const s = grilleShiftsById[chip.getAttribute("data-shiftid")];
-    if (s) ouvrirEditionShift({ id: s.id, date: s.date, shift_type: s.shift_type, doctor_id: s.doctor_id, poste: s.poste });
+    if (s) ouvrirEditionShift({ id: s.id, date: s.date, shift_type: s.shift_type, doctor_id: s.doctor_id, poste: s.poste, epingle: s.epingle });
     return;
   }
   const cell = e.target.closest(".grille-cell");

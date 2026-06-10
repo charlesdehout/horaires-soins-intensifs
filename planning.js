@@ -453,41 +453,73 @@ function plChoisirStation(med, postes, plan, etat, cle) {
 
 
 /* ------------------------- Jour de SEMAINE ----------------------------- */
-function plGenererSemaine(date, medecins, etat, sortie, conflits) {
+/* pp (Module 19) : pré-placements épinglés du jour. Sans pré-placement, le
+   comportement est STRICTEMENT identique à l'historique. */
+function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
+  pp = pp || [];
   const cle = plLundiDe(date);
   // Module 17 : seules les stations OUVERTES ce jour sont à pourvoir
   // (une unité fermée par l'admin n'est ni pourvue ni exigée).
   const postes = plPostesOuverts(date, etat.periodes);
-  const libres = medecins.filter((m) => plDispo(m, date, etat));
+
+  // 0) PRÉ-PLACEMENTS (Module 19) : on les pose tels quels et on construit
+  //    AUTOUR. Les médecins pré-placés sont marqués « occupés » → exclus des
+  //    sélections (plDispo). Les stations pré-placées pré-remplissent `plan`.
+  const ppDocs = new Set();
+  const plan = {}; // codeStation -> doctorId (inclut les stations pré-placées)
+  pp.forEach((s) => {
+    if (PL_HEURES[s.shift_type] !== undefined) {
+      plAffecter(sortie, etat, date, s.shift_type, s.doctor_id, s.poste || null);
+      if ((s.shift_type === "jour" || s.shift_type === "garde_24h") && s.poste) {
+        etat.station[s.doctor_id][cle] = s.poste; plan[s.poste] = s.doctor_id;
+      }
+    } else {
+      // Absence / repos épinglé : 0 h, pas de garde ; on marque juste occupé.
+      sortie.push({ date, shift_type: s.shift_type, poste: s.poste || null, doctor_id: s.doctor_id });
+      plMarquerAssigne(date, s.doctor_id, etat);
+    }
+    ppDocs.add(s.doctor_id);
+  });
+
+  const libres = medecins.filter((m) => plDispo(m, date, etat)); // pré-placés exclus (assignés)
   // Vivier pour les GARDES : on retire ceux qui ont déjà atteint le max
   // hebdomadaire (contrainte DURE, spec §6 N1).
   const libresG = libres.filter((m) => plGardesSemaine(m.id, date, etat) < PL_MAX_GARDES_SEMAINE);
   const residents = libresG.filter((m) => m.grade === "resident");
 
-  // 1) NUIT : ≥2 dont ≥1 résident, JAMAIS 2 A/S. Le résident démarre à 17 h
-  //    (garde_nuit) ; le 2e fait une garde 24 h qui occupe une station.
-  //    Module 12 — équité des gardes entre grades : le 2e créneau n'est PLUS
-  //    réservé aux A/S. On garantit un résident au 1er créneau (règle dure
-  //    « ≥1 résident » + « jamais 2 A/S »), puis on choisit le 2e par déficit
-  //    de gardes TOUTES CATÉGORIES confondues (A/S et Résidents à égalité).
-  //    Deux Résidents peuvent donc être de garde ensemble. Plafond 60 h souple.
+  // 1) NUIT : compléter jusqu'à 2 gardes dont ≥1 résident, JAMAIS 2 A/S, en
+  //    tenant compte des gardes déjà ÉPINGLÉES ce jour. Le résident démarre à
+  //    17 h (garde_nuit) ; le complément fait une garde 24 h occupant une station.
+  const ppGardes = pp.filter((s) => s.shift_type === "garde_nuit" || s.shift_type === "garde_24h");
+  const residentDejaNuit = ppGardes.some((s) => {
+    const m = medecins.find((x) => x.id === s.doctor_id); return m && m.grade === "resident";
+  });
   let resNuit = null, second = null;
-  if (residents.length > 0) {
-    const resPool = plFiltrerPlafond(residents, date, etat, PL_HEURES.garde_nuit);
-    // Module 12c : tri par déficit + biais (borné) de concentration des nuits.
-    resNuit = plTrierGardeNuit(resPool, date, etat)[0];
-    const reste = plFiltrerPlafond(libresG.filter((m) => m.id !== resNuit.id), date, etat, PL_HEURES.garde_24h);
-    second = plTrierGardeNuit(reste, date, etat)[0] || null;
-  } else {
-    conflits.push({ date, message: "Nuit : aucun résident disponible (≥1 obligatoire)." });
+  let manqueNuit = 2 - ppGardes.length;
+  if (manqueNuit > 0) {
+    if (residentDejaNuit) {
+      // un résident est déjà de garde (pré-placement) → on complète librement
+    } else if (residents.length > 0) {
+      const resPool = plFiltrerPlafond(residents, date, etat, PL_HEURES.garde_nuit);
+      // Module 12c : tri par déficit + biais (borné) de concentration des nuits.
+      resNuit = plTrierGardeNuit(resPool, date, etat)[0];
+      manqueNuit--;
+    } else {
+      conflits.push({ date, message: "Nuit : aucun résident disponible (≥1 obligatoire)." });
+      manqueNuit = 0; // pas de garde sans résident (comme l'historique)
+    }
+    if (manqueNuit > 0) {
+      const exclu = resNuit ? resNuit.id : null;
+      const reste = plFiltrerPlafond(libresG.filter((m) => m.id !== exclu), date, etat, PL_HEURES.garde_24h);
+      second = plTrierGardeNuit(reste, date, etat)[0] || null;
+    }
   }
 
   const pris = new Set();
   if (resNuit) pris.add(resNuit.id);
   if (second) pris.add(second.id);
 
-  // 2) JOUR : pourvoir les stations (continuité clinique d'abord).
-  const plan = {}; // codeStation -> doctorId
+  // 2) JOUR : la garde 24 h du complément occupe une station.
   if (second) {
     const st = plChoisirStation(second, postes, plan, etat, cle);
     plan[st] = second.id;
@@ -509,7 +541,8 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits) {
   });
 
   // Détection des conflits de couverture (contraintes dures non satisfaites).
-  if (resNuit && !second) {
+  const totalNuit = ppGardes.length + (resNuit ? 1 : 0) + (second ? 1 : 0);
+  if (totalNuit === 1) {
     conflits.push({ date, message: "Nuit : 2e médecin de garde indisponible (≥2 requis)." });
   }
   // Module 17 : pendant un congrès, jusqu'à N stations vides sont TOLÉRÉES
@@ -521,7 +554,7 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits) {
       (toleres ? `(congrès : minimum ${postes.length - toleres}).` : `(effectif insuffisant).`) });
   }
 
-  // 3) Affectations effectives.
+  // 3) Affectations effectives (les pré-placés sont déjà posés à l'étape 0).
   if (resNuit) plAffecter(sortie, etat, date, "garde_nuit", resNuit.id, null);
   if (second) {
     const st = Object.keys(plan).find((c) => plan[c] === second.id);
@@ -530,16 +563,34 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits) {
   Object.keys(plan).forEach((code) => {
     const id = plan[code];
     if (second && id === second.id) return; // déjà affecté en garde 24 h
+    if (ppDocs.has(id)) return;             // pré-placement déjà posé (étape 0)
     plAffecter(sortie, etat, date, "jour", id, code);
   });
 }
 
 
 /* --------------------- Jour de WEEK-END / FÉRIÉ ------------------------ */
-function plGenererWeekend(date, medecins, etat, sortie, conflits) {
+function plGenererWeekend(date, medecins, etat, sortie, conflits, pp) {
+  pp = pp || [];
   const couv = plCouv();
   const j = plJourSemaine(date);
-  const libres = medecins.filter((m) => plDispo(m, date, etat));
+
+  // 0) PRÉ-PLACEMENTS (Module 19) : absences posées et marquées ; gardes 24 h et
+  //    tour (TWE) épinglés pris comme DÉJÀ choisis (on complète le reste). Les
+  //    médecins pré-placés sont exclus des viviers de sélection.
+  const ppDocs = new Set();
+  pp.forEach((s) => {
+    if (plEstAbsence(s.shift_type)) {
+      sortie.push({ date, shift_type: s.shift_type, poste: s.poste || null, doctor_id: s.doctor_id });
+      plMarquerAssigne(date, s.doctor_id, etat);
+    }
+    if (s.shift_type === "garde_24h" || s.shift_type === "twe" || plEstAbsence(s.shift_type)) ppDocs.add(s.doctor_id);
+  });
+  const gardePinned = pp.filter((s) => s.shift_type === "garde_24h")
+    .map((s) => medecins.find((m) => m.id === s.doctor_id)).filter(Boolean);
+  const ppTweId = (pp.find((s) => s.shift_type === "twe") || {}).doctor_id || null;
+
+  const libres = medecins.filter((m) => plDispo(m, date, etat) && !ppDocs.has(m.id));
 
   if (libres.length < couv.twe_weekend) {
     conflits.push({ date, message: `Week-end : ${libres.length} médecin(s) dispo (${couv.twe_weekend} requis).` });
@@ -550,10 +601,15 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits) {
   // amenés à l'hôpital). S'il est dispo, on le réserve d'emblée au TWE et on
   // l'exclut de la sélection des gardes 24 h.
   let t1 = null;
-  const forceId = etat.tweForce[date];
-  if (forceId) {
-    t1 = libres.find((m) => m.id === forceId) || null;
-    if (!t1) conflits.push({ date, message: "Week-end : médecin du TWE de samedi indisponible le dimanche (règle binôme)." });
+  if (ppTweId) {
+    // Tour ÉPINGLÉ : il prime (et impose le binôme du dimanche, cf. plus bas).
+    t1 = medecins.find((m) => m.id === ppTweId) || null;
+  } else {
+    const forceId = etat.tweForce[date];
+    if (forceId) {
+      t1 = libres.find((m) => m.id === forceId) || null;
+      if (!t1) conflits.push({ date, message: "Week-end : médecin du TWE de samedi indisponible le dimanche (règle binôme)." });
+    }
   }
 
   // Vivier pour les gardes : tout le monde sauf le TWE imposé (sans garde),
@@ -578,23 +634,37 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits) {
     if (sNuit) coupleId = sNuit.doctor_id;
   }
 
+  // Gardes 24 h : on complète jusqu'à 2 en tenant compte de celles ÉPINGLÉES,
+  // en garantissant ≥1 résident (jamais 2 A/S via le résident garanti).
   let g1 = null, g2 = null;
-  if (residentsG.length > 0) {
-    g1 = plChoisirWE(plFiltrerPlafond(residentsG, date, etat, PL_HEURES.garde_24h), date, etat, coupleId);
-    const reste = plFiltrerPlafond(libresGarde.filter((m) => m.id !== g1.id), date, etat, PL_HEURES.garde_24h);
-    g2 = plChoisirWE(reste, date, etat, coupleId);
-  } else {
-    conflits.push({ date, message: "Week-end nuit : aucun résident disponible (≥1 obligatoire)." });
+  const residentDejaGarde = gardePinned.some((m) => m.grade === "resident");
+  let manqueG = 2 - gardePinned.length;
+  if (manqueG > 0) {
+    if (residentDejaGarde) {
+      // un résident est déjà de garde (pré-placement) → on complète librement
+    } else if (residentsG.length > 0) {
+      g1 = plChoisirWE(plFiltrerPlafond(residentsG, date, etat, PL_HEURES.garde_24h), date, etat, coupleId);
+      manqueG--;
+    } else {
+      conflits.push({ date, message: "Week-end nuit : aucun résident disponible (≥1 obligatoire)." });
+      manqueG = 0;
+    }
+    if (manqueG > 0) {
+      const exclu = g1 ? g1.id : null;
+      const reste = plFiltrerPlafond(libresGarde.filter((m) => m.id !== exclu), date, etat, PL_HEURES.garde_24h);
+      g2 = plChoisirWE(reste, date, etat, coupleId);
+    }
   }
 
-  // TWE-seul : l'imposé (binôme) sinon le plus prioritaire restant (même priorité N2).
+  // TWE-seul : l'imposé (binôme/épinglé) sinon le plus prioritaire restant.
   const pris = new Set([g1 && g1.id, g2 && g2.id, t1 && t1.id].filter(Boolean));
   if (!t1) t1 = plChoisirWE(plFiltrerPlafond(libres.filter((m) => !pris.has(m.id)), date, etat, PL_HEURES.twe), date, etat);
 
   // Samedi : on mémorise le binôme à imposer le dimanche.
   if (j === 6 && t1) etat.tweForce[plAdd(date, 1)] = t1.id;
 
-  if (g1 && !g2) conflits.push({ date, message: "Week-end : 2e garde 24 h indisponible." });
+  const totalG = gardePinned.length + (g1 ? 1 : 0) + (g2 ? 1 : 0);
+  if (totalG === 1) conflits.push({ date, message: "Week-end : 2e garde 24 h indisponible." });
   if (!t1) conflits.push({ date, message: "Week-end : médecin du tour (TWE) manquant." });
 
   // Un FÉRIÉ en semaine suit les règles de couverture du week-end mais NE
@@ -614,7 +684,7 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits) {
       etat.nbWeekend[id]++; etat.nbWeekendTotal[id]++; etat.weekendsTravailles[id].add(wkey);
     }
   };
-  [g1, g2].forEach((g) => {
+  gardePinned.concat([g1, g2]).forEach((g) => {
     if (!g) return;
     plAffecter(sortie, etat, date, "garde_24h", g.id, null);
     majWE(g.id);
@@ -632,9 +702,19 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits) {
 }
 
 
+/* Module 19 — Indexe les pré-placements (shifts ÉPINGLÉS par l'admin) par date.
+   prePlaces : [{ date, shift_type, doctor_id, poste }]. Ces shifts sont posés
+   tels quels et la génération construit AUTOUR (cf. plGenererSemaine/Weekend). */
+function plIndexerPrePlaces(prePlaces) {
+  const idx = {};
+  (prePlaces || []).forEach((s) => { (idx[s.date] = idx[s.date] || []).push(s); });
+  return idx;
+}
+
 /* --------------------------- Point d'entrée ---------------------------- */
 /* opts = { annee, mois (1-12), medecins:[...], preferences:[...],
-            periodes:[...] (Module 17 : congrès / fermetures, optionnel) }
+            periodes:[...] (Module 17 : congrès / fermetures, optionnel),
+            prePlaces:[...] (Module 19 : shifts épinglés, optionnel) }
    Renvoie { shifts, conflits, stats }. */
 function genererPlanning(opts) {
   const annee = opts.annee;
@@ -645,6 +725,7 @@ function genererPlanning(opts) {
   const etat = plNouvelEtat(medecins);
   plIndexerPreferences(preferences, etat);
   etat.periodes = plIndexerPeriodes(opts.periodes); // congrès / fermetures (M17)
+  const ppParDate = plIndexerPrePlaces(opts.prePlaces); // Module 19 : pré-placements épinglés
 
   const sortie = [];
   const conflits = [];
@@ -652,8 +733,9 @@ function genererPlanning(opts) {
 
   for (let j = 1; j <= nbJours; j++) {
     const date = annee + "-" + String(mois).padStart(2, "0") + "-" + String(j).padStart(2, "0");
-    if (plEstWeekendOuFerie(date)) plGenererWeekend(date, medecins, etat, sortie, conflits);
-    else plGenererSemaine(date, medecins, etat, sortie, conflits);
+    const pp = ppParDate[date] || [];
+    if (plEstWeekendOuFerie(date)) plGenererWeekend(date, medecins, etat, sortie, conflits, pp);
+    else plGenererSemaine(date, medecins, etat, sortie, conflits, pp);
   }
 
   // Matérialise les repos de garde (visibles, non comptabilisés).
@@ -740,6 +822,7 @@ function genererTrimestre(opts) {
   const etat = plNouvelEtat(medecins);
   plIndexerPreferences(preferences, etat);
   etat.periodes = plIndexerPeriodes(opts.periodes); // congrès / fermetures (M17)
+  const ppParDate = plIndexerPrePlaces(opts.prePlaces); // Module 19 : pré-placements épinglés
 
   const sortie = [];
   const conflits = [];
@@ -777,8 +860,9 @@ function genererTrimestre(opts) {
       etat.poidsGarde[m.id] = dispo;          // gardes égales à présence égale
     });
     plDatesDuMois(annee, mois).forEach((date) => {
-      if (plEstWeekendOuFerie(date)) plGenererWeekend(date, medecins, etat, sortie, conflits);
-      else plGenererSemaine(date, medecins, etat, sortie, conflits);
+      const pp = ppParDate[date] || [];
+      if (plEstWeekendOuFerie(date)) plGenererWeekend(date, medecins, etat, sortie, conflits, pp);
+      else plGenererSemaine(date, medecins, etat, sortie, conflits, pp);
     });
   });
 
@@ -1314,7 +1398,47 @@ function compterParMedecin(shifts) {
 }
 
 
+/* ===================================================================== */
+/* §14 — ALERTES « absences simultanées » (informatif, NON bloquant)      */
+/* --------------------------------------------------------------------- */
+/* Par jour du mois, compte les médecins ABSENTS (préférence bloquante OU  */
+/* shift d'absence posé, HORS repos de garde automatique) et gradue la     */
+/* sévérité : 1–3 normal (rien) · 4–5 attention (contournable) · 6+        */
+/* critique. Vérifie aussi qu'au moins 1 RÉSIDENT reste disponible la nuit.*/
+/* opts = { annee, mois, medecins, preferences, shifts }. Renvoie une liste */
+/* de { date, niveau ('attention'|'critique'), message }.                  */
+function alertesAbsences(opts) {
+  const annee = opts.annee, mois = opts.mois;
+  const medecins = opts.medecins || [];
+  const prefs = opts.preferences || [];
+  const shifts = opts.shifts || [];
+  const bloquantes = plBloq();
+  const residents = medecins.filter((m) => m.grade === "resident");
+  const out = [];
+  const ms = String(mois).padStart(2, "0");
+  const nbJours = new Date(Date.UTC(annee, mois, 0)).getUTCDate();
+  for (let j = 1; j <= nbJours; j++) {
+    const date = annee + "-" + ms + "-" + String(j).padStart(2, "0");
+    const absent = new Set();
+    prefs.forEach((p) => {
+      if (bloquantes.indexOf(p.pref_type) !== -1 && p.start_date <= date && p.end_date >= date)
+        absent.add(p.doctor_id);
+    });
+    shifts.forEach((s) => {
+      if (s.date === date && plEstAbsence(s.shift_type) && s.shift_type !== "repos_garde")
+        absent.add(s.doctor_id);
+    });
+    const n = absent.size;
+    if (n >= 6) out.push({ date, niveau: "critique", message: `Absences simultanées : ${n} médecins (critique, §14).` });
+    else if (n >= 4) out.push({ date, niveau: "attention", message: `Absences simultanées : ${n} médecins (attention, contournable, §14).` });
+    // Au moins 1 résident doit rester disponible pour la nuit (§14).
+    if (residents.length > 0 && residents.every((m) => absent.has(m.id)))
+      out.push({ date, niveau: "critique", message: "Aucun résident disponible pour la nuit (§14)." });
+  }
+  return out;
+}
+
 /* ------------- Export pour Node (tests). Sans effet en navigateur. ------ */
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, validerEquite, compterParMedecin, plTrier, plRangDesiderata };
+  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, validerEquite, compterParMedecin, plTrier, plRangDesiderata, alertesAbsences };
 }

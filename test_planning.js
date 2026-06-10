@@ -5,7 +5,7 @@
    ===================================================================== */
 
 const assert = require("assert");
-const { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, compterParMedecin, plTrier } = require("./planning.js");
+const { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, compterParMedecin, plTrier, alertesAbsences } = require("./planning.js");
 
 let reussis = 0, total = 0;
 function test(nom, fn) {
@@ -500,6 +500,77 @@ test("récup férié : une préférence recup_ferie rend le jour non planifiable
   const travail = r.shifts.filter((s) => s.date === D && s.doctor_id === cible &&
     ["jour", "garde_nuit", "garde_24h", "twe"].includes(s.shift_type));
   assert.strictEqual(travail.length, 0, "médecin planifié malgré la récup férié approuvée");
+});
+
+console.log("\n=== §14 — Alertes absences simultanées ===");
+
+function congesPour(ids, date) {
+  return ids.map((id) => ({ doctor_id: id, start_date: date, end_date: date, pref_type: "conge_annuel" }));
+}
+
+test("§14 : 4 absences le même jour → alerte ATTENTION", () => {
+  const D = "2026-06-10";
+  const prefs = congesPour(["assistant_specialiste1", "assistant_specialiste2",
+    "assistant_specialiste3", "assistant_specialiste4"], D);
+  const al = alertesAbsences({ annee: 2026, mois: 6, medecins: equipe(), preferences: prefs, shifts: [] });
+  const a = al.find((x) => x.date === D);
+  assert(a && a.niveau === "attention", "attention non émise (4 absences)");
+});
+
+test("§14 : 6 absences le même jour → alerte CRITIQUE", () => {
+  const D = "2026-06-10";
+  const prefs = congesPour(["assistant_specialiste1", "assistant_specialiste2", "assistant_specialiste3",
+    "assistant_specialiste4", "assistant_specialiste5", "assistant_specialiste6"], D);
+  const al = alertesAbsences({ annee: 2026, mois: 6, medecins: equipe(), preferences: prefs, shifts: [] });
+  assert(al.some((x) => x.date === D && x.niveau === "critique"), "critique non émise (6 absences)");
+});
+
+test("§14 : tous les résidents absents → alerte « aucun résident la nuit »", () => {
+  const D = "2026-06-10";
+  const prefs = congesPour(["resident1", "resident2", "resident3", "resident4", "resident5", "resident6"], D);
+  const al = alertesAbsences({ annee: 2026, mois: 6, medecins: equipe(), preferences: prefs, shifts: [] });
+  assert(al.some((x) => x.date === D && /aucun résident/i.test(x.message)), "alerte résident-nuit absente");
+});
+
+test("§14 : 3 absences → aucune alerte ce jour", () => {
+  const D = "2026-06-10";
+  const prefs = congesPour(["assistant_specialiste1", "assistant_specialiste2", "assistant_specialiste3"], D);
+  const al = alertesAbsences({ annee: 2026, mois: 6, medecins: equipe(), preferences: prefs, shifts: [] });
+  assert(!al.some((x) => x.date === D), "alerte indûment émise (3 absences)");
+});
+
+console.log("\n=== Module 19 — Pré-placements (shifts épinglés respectés) ===");
+
+test("pré-placement semaine : station épinglée conservée, pas de doublon", () => {
+  const D = "2026-06-03"; // mercredi
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: equipe(), preferences: [],
+    prePlaces: [{ date: D, shift_type: "jour", doctor_id: "assistant_specialiste1", poste: "usi3" }] });
+  const usi3 = r.shifts.filter((s) => s.date === D && s.poste === "usi3" && s.shift_type === "jour");
+  assert.strictEqual(usi3.length, 1, "usi3 doit avoir 1 occupant");
+  assert.strictEqual(usi3[0].doctor_id, "assistant_specialiste1", "pré-placement non conservé");
+  const sien = r.shifts.filter((s) => s.date === D && s.doctor_id === "assistant_specialiste1"
+    && ["jour", "garde_nuit", "garde_24h", "twe"].includes(s.shift_type));
+  assert.strictEqual(sien.length, 1, "médecin pré-placé double-booké");
+});
+
+test("pré-placement semaine : garde de nuit épinglée respectée (2 gardes, ≥1 résident)", () => {
+  const D = "2026-06-03";
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: equipe(), preferences: [],
+    prePlaces: [{ date: D, shift_type: "garde_nuit", doctor_id: "resident5", poste: null }] });
+  const g = r.shifts.filter((s) => s.date === D && (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h"));
+  assert(g.some((s) => s.doctor_id === "resident5" && s.shift_type === "garde_nuit"), "garde épinglée perdue");
+  assert.strictEqual(g.length, 2, "il faut exactement 2 gardes la nuit");
+  assert(g.some((s) => /^resident/.test(s.doctor_id)), "≥1 résident requis");
+});
+
+test("pré-placement week-end : garde 24h épinglée conservée + ≥1 résident", () => {
+  const SA = "2026-06-06"; // samedi
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: equipe(), preferences: [],
+    prePlaces: [{ date: SA, shift_type: "garde_24h", doctor_id: "assistant_specialiste2", poste: null }] });
+  const g = r.shifts.filter((s) => s.date === SA && s.shift_type === "garde_24h");
+  assert(g.some((s) => s.doctor_id === "assistant_specialiste2"), "garde WE épinglée perdue");
+  assert.strictEqual(g.length, 2, "2 gardes 24h le samedi");
+  assert(g.some((s) => /^resident/.test(s.doctor_id)), "≥1 résident requis le WE");
 });
 
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");

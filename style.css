@@ -450,6 +450,9 @@ button.mini.danger:hover { background: #fbeae8; }
 #conflits-zone.conflits-ok { border-color: #b7e0c2; color: var(--vert); }
 #conflits-zone .conflit-ligne { margin: 0.15rem 0; }
 #conflits-zone .conflit-date { font-weight: 700; }
+/* §14 — sévérité des alertes « absences simultanées ». */
+#conflits-zone .conflit-ligne.alerte-attention { color: var(--ambre); }
+#conflits-zone .conflit-ligne.alerte-critique  { color: var(--rouge); font-weight: 600; }
 
 /* Modale (overlay sombre + carte centrée) */
 .modal-overlay {
@@ -577,6 +580,13 @@ button.mini.danger:hover { background: #fbeae8; }
   font-weight: 600;
   cursor: pointer;
 }
+/* Module 19 — repère « épinglé » (pré-placement conservé à la régénération). */
+.grille-chip.epingle { outline: 2px solid #1f2328; outline-offset: -1px; }
+.epingle-label {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.85rem; margin: 0.5rem 0; color: var(--texte-doux);
+}
+.epingle-label input { width: auto; margin: 0; }
 
 /* Sur petit écran : formulaire en une colonne, en-tête compact. */
 @media (max-width: 600px) {

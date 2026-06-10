@@ -180,13 +180,43 @@
     (l'admin tranche). Couleur cyan (cf. récup).
   - **Tests** : 1 cas (récup férié approuvée → jour non planifiable) → **40/40**.
 
+## ✅ Fait dans ce lot (juin 2026 — §14 : alertes absences simultanées)
+
+- **Alertes « absences simultanées »** (`planning.js` + `app.js` + `style.css`,
+  **aucun SQL**) : fonction pure exportée **`alertesAbsences`** qui, par jour du
+  mois, compte les médecins absents (préférences bloquantes + shifts d'absence,
+  **hors repos de garde automatique**) et gradue : **1–3 normal** (rien) ·
+  **4–5 attention** (contournable) · **6+ critique**. Vérifie aussi qu'au moins
+  **1 résident reste disponible la nuit** (alerte critique sinon).
+  - Affichage dans la zone « conflits » de l'onglet Planning, **à part** des
+    conflits durs, avec sévérité colorée (🟠 attention / 🔴 critique). Informatif,
+    non bloquant.
+  - **Tests** : 4 cas (4→attention, 6→critique, tous résidents absents→nuit,
+    3→rien) → **44/44 verts**.
+
 ## 🔜 Reste à faire (par priorité)
 
 6. **Rotation trimestrielle des unités** (historique tracé, proposition modifiable).
-7. **Alertes absences simultanées** (§14 : 1–3 normal, 4–5 attention, 6+ critique ;
-   ≥1 résident dispo la nuit) + **pré-placement manuel** respecté à la génération.
 8. **Durcissement** : triggers SQL quotas côté serveur ; empêcher l'auto-approbation
    des demandes.
+
+## ✅ Fait dans ce lot (juin 2026 — Module 19 : pré-placement manuel)
+
+- **Pré-placements ÉPINGLÉS respectés à la génération** (`planning.js` + `app.js`
+  + `index.html` + `style.css` + **`sql/module19_preplacement.sql`**) :
+  - Nouvelle colonne **`shifts.epingle`** (bool, défaut false). L'admin coche
+    « 📌 Épingler » dans la modale d'un shift posé à la main ; seuls les épinglés
+    survivent à une (re)génération (les auto sont remplacés).
+  - **Algorithme** : `genererPlanning`/`genererTrimestre` acceptent `prePlaces`
+    (les épinglés). `plGenererSemaine` et `plGenererWeekend` posent ces shifts
+    TELS QUELS et **construisent autour** : médecins épinglés exclus des
+    sélections, stations/gardes/tour épinglés comptés, complétion du reste dans
+    le respect des règles dures (≥1 résident, jamais 2 A/S, binôme TWE, couplage,
+    récup). **Comportement strictement identique en l'absence de pré-placement.**
+  - Étendue complète : stations de jour, gardes de nuit/24 h, tour (TWE) et
+    absences peuvent être épinglés. Repère **📌** dans la grille.
+  - **Tests** : 3 cas (station semaine, garde nuit semaine, garde 24 h week-end)
+    → **47/47 verts**.
 
 ## ⚠️ Points ouverts à arbitrer
 
