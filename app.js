@@ -924,7 +924,7 @@ const SHIFT_CONFIG = {
   // 'repos_garde' = repos obligatoire post-garde (auto, NON comptabilisé) ;
   // 'recup' = repos / récupération posé manuellement (COMPTABILISÉ).
   repos_garde:        { label: "Repos de garde",      court: "Repos g.", couleur: "#6e5494", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
-  recup:              { label: "Repos",               court: "Repos", couleur: "#57606a", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
+  recup:              { label: "Récupération",        court: "Récup", couleur: "#0891b2", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
   off:                { label: "Off-clinique",        court: "Off",   couleur: "#9a6700", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
   conge_annuel:       { label: "Congé annuel",        court: "Congé", couleur: "#1a7f37", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
   conge_scientifique: { label: "Congé scientifique",  court: "Sci.",  couleur: "#0b6b63", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
@@ -2783,7 +2783,11 @@ function grilleLignes() {
   lignes.push({ label: "Garde de nuit", type: "garde_nuit" });
   lignes.push({ label: "Garde 24h (WE)", type: "garde_24h_we" });
   lignes.push({ label: "TWE", type: "twe" });
-  lignes.push({ label: "Absences / repos", type: "absence" });
+  // Repos / absences éclatés en lignes dédiées (Pt 5 — récup bien visible).
+  lignes.push({ label: "Récupération", type: "recup" });
+  lignes.push({ label: "Repos de garde", type: "repos_garde" });
+  lignes.push({ label: "Off-clinic", type: "off" });
+  lignes.push({ label: "Congés", type: "conges" });
   return lignes;
 }
 
@@ -2811,7 +2815,11 @@ function shiftsPourLigne(ligne, duJour) {
   if (ligne.type === "garde_nuit") return duJour.filter((s) => s.shift_type === "garde_nuit");
   if (ligne.type === "garde_24h_we") return duJour.filter((s) => s.shift_type === "garde_24h" && !s.poste);
   if (ligne.type === "twe") return duJour.filter((s) => s.shift_type === "twe");
-  if (ligne.type === "absence") return duJour.filter((s) => estShiftAbsence(s.shift_type));
+  if (ligne.type === "recup") return duJour.filter((s) => s.shift_type === "recup");
+  if (ligne.type === "repos_garde") return duJour.filter((s) => s.shift_type === "repos_garde");
+  if (ligne.type === "off") return duJour.filter((s) => s.shift_type === "off");
+  if (ligne.type === "conges") return duJour.filter((s) =>
+    s.shift_type === "conge_annuel" || s.shift_type === "conge_extralegal" || s.shift_type === "conge_scientifique");
   return [];
 }
 
@@ -2821,7 +2829,10 @@ function typeDefautLigne(ligne) {
   if (ligne.type === "garde_nuit") return { type: "garde_nuit", poste: null };
   if (ligne.type === "garde_24h_we") return { type: "garde_24h", poste: null };
   if (ligne.type === "twe") return { type: "twe", poste: null };
-  if (ligne.type === "absence") return { type: "recup", poste: null };
+  if (ligne.type === "recup") return { type: "recup", poste: null };
+  if (ligne.type === "repos_garde") return { type: "repos_garde", poste: null };
+  if (ligne.type === "off") return { type: "off", poste: null };
+  if (ligne.type === "conges") return { type: "conge_annuel", poste: null };
   return { type: "jour", poste: null };
 }
 
@@ -2890,7 +2901,7 @@ async function construireGrille() {
       let contenu = "";
       correspondants.forEach((s) => {
         const suff = (s.shift_type === "garde_24h" && s.poste) ? " (24h)"
-                   : estShiftAbsence(s.shift_type) ? (" " + (SHIFT_CONFIG[s.shift_type] ? SHIFT_CONFIG[s.shift_type].court : ""))
+                   : (ligne.type === "conges") ? (" " + (SHIFT_CONFIG[s.shift_type] ? SHIFT_CONFIG[s.shift_type].court : ""))
                    : "";
         const couleur = SHIFT_CONFIG[s.shift_type] ? SHIFT_CONFIG[s.shift_type].couleur : "#57606a";
         contenu += "<span class='grille-chip' data-shiftid='" + s.id + "' " +
