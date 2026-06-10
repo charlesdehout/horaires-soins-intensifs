@@ -118,10 +118,70 @@
     largeur (planning + récap individuel).
   - Vérifié sous Node avec ExcelJS (écriture + relecture du classeur).
 
+## ✅ Fait dans ce lot (juin 2026 — Pt 5 & Pt 6)
+
+- **Pt 5 — Récup bien visible** (aucun SQL ; `app.js` + `index.html`) :
+  - `recup` distingué de `repos_garde` : libellé « Récupération », code « Récup »,
+    couleur **cyan #0891b2** (avant : gris terne, peu distinct du mauve du repos
+    de garde) au calendrier et dans la grille.
+  - **Grille** : la ligne fourre-tout « Absences / repos » est éclatée en lignes
+    dédiées — **Récupération**, **Repos de garde**, **Off-clinic**, **Congés** ;
+    le clic sur une cellule vide pose le bon type selon la ligne. On voit d'un
+    coup d'œil qui est en récup chaque jour.
+  - **Légende corrigée** : avant, la puce « Récup » affichait en réalité le mauve
+    du repos de garde (et la vraie récup n'y figurait pas). Désormais deux entrées
+    distinctes : « Récup (comptée) » (cyan) et « Repos de garde » (mauve).
+  - Exports Excel inchangés (ils utilisent leurs propres remplissages `XL.*`).
+- **🐞 Pt 6 — Couplage des gardes** (`planning.js` + 1 test) :
+  - Le repos compensatoire couplé (jeudi-nuit + samedi-24h → lundi ;
+    vendredi-nuit + dimanche-24h → mardi) se déclenchait rarement car la
+    génération ne reliait pas la garde de nuit de l'avant-veille à la garde 24 h
+    du week-end. Ajout d'un **départage SOUPLE** dans `plTrier`/`plChoisirWE` :
+    à équité **strictement égale**, le médecin de la garde de nuit de l'avant-veille
+    est favorisé pour la garde 24 h → le repos couplé se matérialise plus souvent,
+    **sans dégrader l'équité intra-grade** (écart gardes A/S maintenu ≤ 2).
+  - Choix retenu : préférence souple (et non « forte »), car le couplage fort
+    portait l'écart de gardes A/S à 3. Le mécanisme privilégie le couplage chaque
+    fois que les ex æquo le permettent.
+  - **Tests** : nouveau cas « couplage nuit→24h week-end → repos couplé » →
+    **36/36 verts**.
+
+## ✅ Fait dans ce lot (juin 2026 — Pt 3a : désidératas)
+
+- **Priorités des désidératas** (`planning.js` + selects `app.js` + 3 tests) :
+  à souhait égal, **admin principal > secondaire > travailleur** (réutilise
+  `admin_level`, déjà en base — **aucun SQL**). Implémenté comme DÉPARTAGE entre
+  médecins souhaitant le même jour, dans `plTrier` et `plTrierGardeNuit` : la
+  priorité n'agit qu'entre souhaiteurs et **n'écrase pas l'équité**. `admin_level`
+  ajouté aux `select` doctors des deux générations (mois + trimestre).
+- **Quota 20/trimestre — INDICATIF (non bloquant)** (`app.js`) : compteur
+  « Désidératas T<n> AAAA : X/20 » sous les quotas de congés (trimestre **civil**
+  du mois affiché ; compté par souhait dont la date de début tombe dans le bloc),
+  + avertissement non bloquant à la saisie au-delà de 20. La saisie reste permise.
+- **Tests** : 3 cas (indépendant, dépendant, non-régression équité) → **39/39**.
+- **Note d'interprétation** : « admin principal = priorité absolue » est rendu par
+  un départage entre désidératas (le principal passe devant les autres souhaiteurs),
+  PAS par un passage devant l'équité. À renforcer si souhaité.
+
+## ✅ Fait dans ce lot (juin 2026 — Pt 3b : récup férié)
+
+- **Récup férié (jour compensatoire)** — **PAS d'auto-crédit** : un médecin qui
+  TRAVAILLE un jour férié (garde / tour / journée) a droit à **1 jour** de congé
+  compensatoire, à poser **dans les 6 semaines** qui suivent le férié, **validé
+  par l'admin** (workflow de demande).
+  - Nouveau `pref_type` **`recup_ferie`** : migration **`sql/module18_recup_ferie.sql`**
+    (idempotent, reconstruit le CHECK). À lancer dans le SQL Editor Supabase.
+  - **Bloquant une fois approuvé** : `recup_ferie` ajouté à `PREF_BLOQUANTES`
+    (regles.js) → jour non planifiable. Option ajoutée au sélecteur (index.html).
+  - **app.js** : calcul des **fériés travaillés** (depuis les shifts du médecin),
+    affichage « Récup fériés : posées/acquises + échéances à 6 sem. » sous les
+    quotas ; à la saisie, **blocage si aucun férié travaillé**, **alerte non
+    bloquante** si la date est hors des 6 semaines ou si le droit est dépassé
+    (l'admin tranche). Couleur cyan (cf. récup).
+  - **Tests** : 1 cas (récup férié approuvée → jour non planifiable) → **40/40**.
+
 ## 🔜 Reste à faire (par priorité)
 
-4. **Récup férié auto-crédit** (§8.2) + **désidératas** (quota 20/trimestre +
-   priorités admin principal > secondaires > travailleurs). *Touche la base (SQL).*
 6. **Rotation trimestrielle des unités** (historique tracé, proposition modifiable).
 7. **Alertes absences simultanées** (§14 : 1–3 normal, 4–5 attention, 6+ critique ;
    ≥1 résident dispo la nuit) + **pré-placement manuel** respecté à la génération.

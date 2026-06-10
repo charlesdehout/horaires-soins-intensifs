@@ -633,6 +633,7 @@ const PREF_LABELS = {
   formation: "Formation USI",
   autre: "Congé autre",
   demande_weekend: "Demande WE/férié",
+  recup_ferie: "Récup férié",
 };
 
 /* Affiche un message dans le formulaire de préférences */
@@ -659,6 +660,7 @@ async function chargerPreferences() {
   }
 
   prefsCourantes = data || [];
+  await chargerMesShifts();     // fériés travaillés → droits à récup férié
   majCompteurConges();          // met à jour l'affichage du quota
   rendrePreferences(prefsCourantes);
 }
@@ -761,6 +763,68 @@ function anneesAvecConges() {
   return [...annees].sort((a, b) => a - b);
 }
 
+/* ----- Désidératas : quota INDICATIF de 20 par trimestre CIVIL (§8–10) ----- */
+const QUOTA_DESIDERATAS = 20;
+const TRI_LABELS = ["T1 (jan–mars)", "T2 (avr–juin)", "T3 (juil–sept)", "T4 (oct–déc)"];
+/* Bornes ISO du trimestre civil (tri = 0..3). */
+function bornesTrimestreISO(annee, tri) {
+  const p = (n) => String(n).padStart(2, "0");
+  const m0 = tri * 3 + 1, m2 = m0 + 2;
+  const dernier = new Date(annee, m2, 0).getDate();
+  return { debut: annee + "-" + p(m0) + "-01", fin: annee + "-" + p(m2) + "-" + p(dernier) };
+}
+/* Nombre de désidératas (souhaits) encodés sur le trimestre civil donné
+   (compté par préférence dont la date de début tombe dans le bloc). */
+function desiderataUtilises(annee, tri) {
+  const b = bornesTrimestreISO(annee, tri);
+  return prefsCourantes.filter((p) => p.pref_type === "souhait" &&
+    p.start_date >= b.debut && p.start_date <= b.fin).length;
+}
+
+/* ----- Récup férié : 1 jour compensatoire par férié TRAVAILLÉ (Module 18) -----
+   À poser dans les 6 semaines après le férié, validé par l'admin. Pas d'auto-
+   crédit : le médecin dépose une demande 'recup_ferie' (workflow de validation). */
+const RECUP_FERIE_SEMAINES = 6;
+const SHIFTS_TRAVAILLES = ["jour", "garde_nuit", "garde_24h", "twe"];
+let mesShifts = []; // shifts du médecin connecté (pour repérer les fériés travaillés)
+
+async function chargerMesShifts() {
+  if (!medecinCourant) { mesShifts = []; return; }
+  const { data, error } = await sb.from("shifts")
+    .select("date, shift_type").eq("doctor_id", medecinCourant.id);
+  mesShifts = error ? [] : (data || []);
+}
+/* Jours fériés belges effectivement TRAVAILLÉS (garde/tour/journée) → 1 droit chacun. */
+function feriesTravailles() {
+  const vus = new Set(); const out = [];
+  mesShifts.forEach((s) => {
+    if (SHIFTS_TRAVAILLES.indexOf(s.shift_type) === -1 || vus.has(s.date)) return;
+    let ferie = false;
+    try { ferie = joursFeriesBE(parseInt(s.date.slice(0, 4), 10)).has(s.date); } catch (e) {}
+    if (ferie) { vus.add(s.date); out.push(s.date); }
+  });
+  return out.sort();
+}
+/* Date limite ISO (férié + 6 semaines) pour poser la récup. */
+function echeanceRecup(ferieISO) {
+  const d = new Date(ferieISO + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + RECUP_FERIE_SEMAINES * 7);
+  return d.toISOString().slice(0, 10);
+}
+/* Récup fériés déjà déposées (en attente ou approuvées). */
+function recupFeriesPosees() {
+  return prefsCourantes.filter((p) => p.pref_type === "recup_ferie").length;
+}
+/* Ligne d'affichage des droits à récup férié (vide si aucun férié travaillé). */
+function ligneRecupFerie() {
+  const fer = feriesTravailles();
+  if (!fer.length) return "";
+  const detail = fer.map((f) => f + " → avant le " + echeanceRecup(f)).join(" · ");
+  return "<br><strong>Récup fériés</strong> : " + recupFeriesPosees() + "/" + fer.length +
+    " posée(s) · férié(s) travaillé(s) : " + detail +
+    " <em>(1 jour/férié, à poser sous " + RECUP_FERIE_SEMAINES + " sem., validation admin)</em>";
+}
+
 /* Affiche les compteurs « X / Y jours ouvrés » par catégorie et par année académique. */
 function majCompteurConges() {
   if (!congesCompteur || !medecinCourant) return;
@@ -771,9 +835,20 @@ function majCompteurConges() {
     });
     return "<strong>" + labelAcad(annee) + "</strong> — " + parts.join(" · ");
   });
+  // Désidératas (souhaits) : quota INDICATIF de 20 par trimestre civil du mois affiché.
+  const refDes = (typeof calendrier !== "undefined" && calendrier && calendrier.getDate)
+    ? calendrier.getDate() : new Date();
+  const triAnnee = refDes.getFullYear();
+  const tri = Math.floor(refDes.getMonth() / 3);
+  const nDes = desiderataUtilises(triAnnee, tri);
+  const alerteDes = nDes > QUOTA_DESIDERATAS ? " <strong>⚠️ au-delà du quota indicatif</strong>" : "";
   congesCompteur.innerHTML =
     lignes.join("<br>") +
-    "<br><em>en jours ouvrés (lun–ven hors fériés) · année académique 1 oct → 30 sep</em>";
+    "<br><em>en jours ouvrés (lun–ven hors fériés) · année académique 1 oct → 30 sep</em>" +
+    "<br><strong>Désidératas</strong> " + TRI_LABELS[tri] + " " + triAnnee + " : " +
+    nDes + "/" + QUOTA_DESIDERATAS + alerteDes +
+    " <em>(souhaits ; quota indicatif, non bloquant)</em>" +
+    ligneRecupFerie();
   congesCompteur.classList.remove("hidden");
 }
 
@@ -863,6 +938,32 @@ prefForm.addEventListener("submit", async (e) => {
     }
   }
 
+  // Désidératas : avertissement INDICATIF si > 20 souhaits sur le trimestre (non bloquant).
+  let avertDesiderata = "";
+  if (pType.value === "souhait") {
+    const dd = new Date(debut + "T00:00:00Z");
+    const dejaDes = desiderataUtilises(dd.getUTCFullYear(), Math.floor(dd.getUTCMonth() / 3));
+    if (dejaDes + 1 > QUOTA_DESIDERATAS) {
+      avertDesiderata = " ⚠️ " + (dejaDes + 1) + " désidératas ce trimestre (quota indicatif : " + QUOTA_DESIDERATAS + ").";
+    }
+  }
+
+  // Récup férié : il faut avoir TRAVAILLÉ un férié ; la date doit tomber dans les
+  // 6 semaines qui suivent (alerte non bloquante hors fenêtre — l'admin tranche).
+  let avertRecup = "";
+  if (pType.value === "recup_ferie") {
+    const fer = feriesTravailles();
+    if (!fer.length) {
+      messageFormPref("Aucun jour férié travaillé : pas de droit à récup férié pour l'instant.");
+      return;
+    }
+    if (recupFeriesPosees() >= fer.length) {
+      avertRecup = " ⚠️ déjà " + recupFeriesPosees() + " récup férié pour " + fer.length + " férié(s) travaillé(s).";
+    } else if (!fer.some((f) => debut > f && debut <= echeanceRecup(f))) {
+      avertRecup = " ⚠️ hors des 6 semaines suivant un férié travaillé.";
+    }
+  }
+
   const payload = {
     doctor_id: medecinCourant.id,
     pref_type: pType.value,
@@ -885,7 +986,7 @@ prefForm.addEventListener("submit", async (e) => {
   }
 
   prefForm.reset();
-  messageFormPref("Préférence enregistrée.", "info");
+  messageFormPref("Préférence enregistrée." + avertDesiderata + avertRecup, "info");
   chargerPreferences();
 });
 
@@ -949,6 +1050,7 @@ const PREF_BG = {
   formation:          "rgba(13,148,136,0.16)",   // sarcelle clair
   autre:              "rgba(110,84,148,0.16)",   // mauve
   demande_weekend:    "rgba(31,111,235,0.12)",   // bleu clair
+  recup_ferie:        "rgba(8,145,178,0.18)",     // cyan (cf. récup)
 };
 
 /* Libellés complets des types de préférence (inclut off_clinic / recuperation). */
@@ -964,6 +1066,7 @@ const PREF_LABELS_FULL = {
   formation: "Formation USI",
   autre: "Congé autre (hors quota)",
   demande_weekend: "Demande week-end/férié",
+  recup_ferie: "Récup férié (jour compensatoire)",
   dispo: "Disponibilité déclarée",
 };
 
@@ -1264,7 +1367,7 @@ async function genererPlanningPourMoisAffiche() {
   // 1) Médecins planifiables (l'admin / chef de service n'est pas dans le planning).
   const { data: medecins, error: e1 } = await sb
     .from("doctors")
-    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level")
     .neq("role", "admin");
   if (e1) { genererBtn.disabled = false; return messageGeneration("Erreur lecture médecins : " + e1.message, "error"); }
 
@@ -1386,7 +1489,7 @@ async function genererTrimestrePourMoisAffiche() {
   // 3) Médecins planifiables (hors admin / chef de service).
   const { data: medecins, error: e1 } = await sb
     .from("doctors")
-    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level")
     .neq("role", "admin");
   if (e1) { genererTrimBtn.disabled = false; return messageGeneration("Erreur lecture médecins : " + e1.message, "error"); }
 
@@ -2004,7 +2107,7 @@ async function rafraichirPanneauAdmin() {
 
   // 3) Médecins planifiables (hors admin) + 4) préférences du mois.
   const { data: meds } = await sb.from("doctors")
-    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level")
     .neq("role", "admin").order("name", { ascending: true });
   planningMois.medecins = meds || [];
 

@@ -5,7 +5,7 @@
    ===================================================================== */
 
 const assert = require("assert");
-const { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, compterParMedecin } = require("./planning.js");
+const { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, compterParMedecin, plTrier } = require("./planning.js");
 
 let reussis = 0, total = 0;
 function test(nom, fn) {
@@ -429,6 +429,77 @@ test("congrès un week-end : règles week-end inchangées (priorité week-end)",
   const sam = r.shifts.filter((s) => s.date === "2026-06-13");
   assert.strictEqual(sam.filter((s) => s.shift_type === "garde_24h").length, 2, "gardes 24h ≠ 2 le samedi de congrès");
   assert.strictEqual(sam.filter((s) => s.shift_type === "twe").length, 1, "TWE ≠ 1 le samedi de congrès");
+});
+
+console.log("\n=== Point 6 — Couplage des gardes (repos compensatoire couplé) ===");
+
+test("couplage : nuit J-2 → garde 24h week-end → repos couplé matérialisé", () => {
+  // Sur un mois généré, on cherche les couplages effectifs : un médecin qui fait
+  // la garde de NUIT du jeudi (resp. vendredi) ET la garde 24 h du samedi (resp.
+  // dimanche). Chaque couplage doit produire un repos_garde le lundi (resp.
+  // mardi) suivant (jeudi+4 / vendredi+4), via materialiserReposCouples.
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: equipe(), preferences: [] });
+  const parJour = {};
+  r.shifts.forEach((s) => { (parJour[s.date] = parJour[s.date] || []).push(s); });
+  const dow = (s) => { const j = new Date(s + "T00:00:00Z").getUTCDay(); return j === 0 ? 7 : j; };
+  const add = (s, n) => { const d = new Date(s + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+  let couplages = 0, reposOk = 0;
+  Object.keys(parJour).forEach((d) => {
+    const j = dow(d);
+    if (j !== 4 && j !== 5) return; // jeudi / vendredi
+    const nuit = (parJour[d] || []).find((s) => s.shift_type === "garde_nuit");
+    if (!nuit) return;
+    const we = add(d, 2); // samedi / dimanche
+    const g24 = (parJour[we] || []).filter((s) => s.shift_type === "garde_24h").map((s) => s.doctor_id);
+    if (!g24.includes(nuit.doctor_id)) return;
+    couplages++;
+    const repos = add(d, 4); // lundi / mardi
+    if ((parJour[repos] || []).some((s) => s.shift_type === "repos_garde" && s.doctor_id === nuit.doctor_id)) reposOk++;
+  });
+
+  assert(couplages >= 1, "aucun couplage nuit→24h week-end détecté");
+  assert.strictEqual(reposOk, couplages, "repos couplé manquant : " + reposOk + "/" + couplages);
+});
+
+console.log("\n=== Point 3 — Désidératas : priorité admin principal > secondaire > travailleur ===");
+
+test("désidérata indépendant : à souhait égal, l'admin principal passe avant", () => {
+  const D = "2026-06-02";
+  const P = { id: "P", statut: "independant", admin_level: "principal", weekly_hours_target: 52 };
+  const T = { id: "T", statut: "independant", admin_level: "aucun", weekly_hours_target: 52 };
+  const etat = { souhait: { P: new Set([D]), T: new Set([D]) }, heures: { P: 0, T: 0 } };
+  assert.strictEqual(plTrier([T, P], "jour", etat, D)[0].id, "P", "principal non prioritaire (indépendant)");
+});
+
+test("désidérata dépendant : à souhait égal, le secondaire passe avant le travailleur", () => {
+  const D = "2026-06-02";
+  const S = { id: "S", statut: "dependant", admin_level: "secondaire", weekly_hours_target: 52 };
+  const T = { id: "T", statut: "dependant", admin_level: "aucun", weekly_hours_target: 52 };
+  const etat = { souhait: { S: new Set([D]), T: new Set([D]) }, heures: { S: 0, T: 0 } };
+  assert.strictEqual(plTrier([T, S], "jour", etat, D)[0].id, "S", "secondaire non prioritaire (dépendant)");
+});
+
+test("priorité désidératas n'agit QUE entre souhaiteurs (sinon l'équité prime)", () => {
+  const D = "2026-06-02";
+  const P = { id: "P", statut: "dependant", admin_level: "principal", weekly_hours_target: 52 };
+  const T = { id: "T", statut: "dependant", admin_level: "aucun", weekly_hours_target: 52 };
+  // Personne ne souhaite ce jour : le moins chargé (T) prime, le rang admin n'agit pas.
+  const etat = { souhait: { P: new Set(), T: new Set() }, heures: { P: 10, T: 0 } };
+  assert.strictEqual(plTrier([P, T], "jour", etat, D)[0].id, "T", "le rang admin a écrasé l'équité à tort");
+});
+
+console.log("\n=== Module 18 — Récup férié (jour compensatoire bloquant) ===");
+
+test("récup férié : une préférence recup_ferie rend le jour non planifiable", () => {
+  const meds = equipe();
+  const cible = "resident1";
+  const D = "2026-06-03"; // mercredi (jour ouvré)
+  const prefs = [{ doctor_id: cible, start_date: D, end_date: D, pref_type: "recup_ferie" }];
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: prefs });
+  const travail = r.shifts.filter((s) => s.date === D && s.doctor_id === cible &&
+    ["jour", "garde_nuit", "garde_24h", "twe"].includes(s.shift_type));
+  assert.strictEqual(travail.length, 0, "médecin planifié malgré la récup férié approuvée");
 });
 
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");

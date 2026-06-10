@@ -265,14 +265,24 @@ function plSouhaitIndep(m, date, etat) {
 function plSouhaitDep(m, date, etat) {
   return (m.statut !== "independant" && plSouhaite(m, date, etat)) ? 1 : 0;
 }
+/* Rang de priorité des DÉSIDÉRATAS selon le niveau admin (spec §8–10) :
+   admin principal (3) > admins secondaires (2) > travailleurs (1). Sert UNIQUEMENT
+   à départager DEUX médecins qui souhaitent le même jour ; n'écrase pas l'équité. */
+function plRangDesiderata(m) {
+  if (m && m.admin_level === "principal") return 3;
+  if (m && m.admin_level === "secondaire") return 2;
+  return 1; // travailleur (admin_level 'aucun' ou absent)
+}
 
 /* `date` (optionnel) active la prise en compte des souhaits du jour. */
-function plTrier(liste, critere, etat, date) {
+function plTrier(liste, critere, etat, date, favoriId) {
   return liste.slice().sort((a, b) => {
     // 1) Souhait INDÉPENDANT (quasi-bloquant) : priorité absolue.
     if (date) {
       const ia = plSouhaitIndep(a, date, etat), ib = plSouhaitIndep(b, date, etat);
       if (ia !== ib) return ib - ia;
+      // Désidératas : à souhait égal, admin principal > secondaire > travailleur.
+      if (ia === 1) { const ra2 = plRangDesiderata(a), rb2 = plRangDesiderata(b); if (ra2 !== rb2) return rb2 - ra2; }
     }
     if (critere === "garde") {
       const sa = plScoreGarde(a.id, etat), sb = plScoreGarde(b.id, etat);
@@ -289,6 +299,14 @@ function plTrier(liste, critere, etat, date) {
     if (date) {
       const sa = plSouhaitDep(a, date, etat), sb = plSouhaitDep(b, date, etat);
       if (sa !== sb) return sb - sa;
+      if (sa === 1) { const ra2 = plRangDesiderata(a), rb2 = plRangDesiderata(b); if (ra2 !== rb2) return rb2 - ra2; }
+    }
+    // Couplage des gardes (Pt 6) : à équité STRICTEMENT égale, favoriser le
+    // médecin à coupler (garde de nuit de l'avant-veille) pour déclencher le
+    // repos compensatoire couplé, sans modifier l'ordre d'équité.
+    if (favoriId) {
+      if (a.id === favoriId && b.id !== favoriId) return -1;
+      if (b.id === favoriId && a.id !== favoriId) return 1;
     }
     return String(a.id).localeCompare(String(b.id)); // déterministe
   });
@@ -325,6 +343,7 @@ function plTrierGardeNuit(liste, date, etat) {
     // Souhait INDÉPENDANT (quasi-bloquant) : priorité absolue, même sur l'équité.
     const ia = plSouhaitIndep(a, date, etat), ib = plSouhaitIndep(b, date, etat);
     if (ia !== ib) return ib - ia;
+    if (ia === 1) { const ra2 = plRangDesiderata(a), rb2 = plRangDesiderata(b); if (ra2 !== rb2) return rb2 - ra2; }
     const sa = plScoreGarde(a.id, etat), sb = plScoreGarde(b.id, etat);
     if (Math.abs(sa - sb) > PL_EPS) return sa - sb;            // équité d'abord (stricte)
     const ra = plRecenceGarde(a.id, date, etat), rb = plRecenceGarde(b.id, date, etat);
@@ -335,6 +354,7 @@ function plTrierGardeNuit(liste, date, etat) {
     // Souhait DÉPENDANT (souple) : départage avant le tri déterministe.
     const da = plSouhaitDep(a, date, etat), db = plSouhaitDep(b, date, etat);
     if (da !== db) return db - da;
+    if (da === 1) { const ra2 = plRangDesiderata(a), rb2 = plRangDesiderata(b); if (ra2 !== rb2) return rb2 - ra2; }
     return String(a.id).localeCompare(String(b.id)); // déterministe
   });
 }
@@ -397,9 +417,9 @@ function plPeutWeekend(id, date, etat) {
 /* Choisit le meilleur candidat (critère 'weekend') en privilégiant ceux qui
    respectent le plafond de 2 week-ends/mois ; repli sur toute la liste si
    aucun ne le respecte (la règle N2 est violable en dernier recours). */
-function plChoisirWE(liste, date, etat) {
+function plChoisirWE(liste, date, etat, favoriId) {
   const ok = liste.filter((m) => plPeutWeekend(m.id, date, etat));
-  return plTrier(ok.length ? ok : liste, "weekend", etat, date)[0] || null;
+  return plTrier(ok.length ? ok : liste, "weekend", etat, date, favoriId)[0] || null;
 }
 
 /* Enregistre un shift et met à jour l'état (heures, gardes, repos 12 h). */
@@ -547,11 +567,22 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits) {
   // Module 12 — équité entre grades : le 2e créneau n'est plus réservé aux A/S.
   // 1er créneau garanti à un résident (≥1 résident + jamais 2 A/S), 2e créneau
   // choisi par déficit toutes catégories (2 Résidents possibles). Plafond 60 h souple.
+  // Pt 6 — COUPLAGE souple : à équité STRICTEMENT égale, on favorise le médecin
+  // de la garde de NUIT de l'avant-veille (jeudi → samedi, vendredi → dimanche)
+  // pour la garde 24 h, ce qui déclenche le repos compensatoire couplé (lundi /
+  // mardi via materialiserReposCouples) sans dégrader l'équité (simple départage,
+  // cf. tiebreaker dans plTrier). À défaut d'ex æquo, l'équité prime.
+  let coupleId = null;
+  if (j === 6 || j === 7) {
+    const sNuit = sortie.find((s) => s.shift_type === "garde_nuit" && s.date === plAdd(date, -2));
+    if (sNuit) coupleId = sNuit.doctor_id;
+  }
+
   let g1 = null, g2 = null;
   if (residentsG.length > 0) {
-    g1 = plChoisirWE(plFiltrerPlafond(residentsG, date, etat, PL_HEURES.garde_24h), date, etat);
+    g1 = plChoisirWE(plFiltrerPlafond(residentsG, date, etat, PL_HEURES.garde_24h), date, etat, coupleId);
     const reste = plFiltrerPlafond(libresGarde.filter((m) => m.id !== g1.id), date, etat, PL_HEURES.garde_24h);
-    g2 = plChoisirWE(reste, date, etat);
+    g2 = plChoisirWE(reste, date, etat, coupleId);
   } else {
     conflits.push({ date, message: "Week-end nuit : aucun résident disponible (≥1 obligatoire)." });
   }
@@ -1285,5 +1316,5 @@ function compterParMedecin(shifts) {
 
 /* ------------- Export pour Node (tests). Sans effet en navigateur. ------ */
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, validerEquite, compterParMedecin };
+  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, validerEquite, compterParMedecin, plTrier, plRangDesiderata };
 }
