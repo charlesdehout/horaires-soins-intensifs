@@ -1367,7 +1367,7 @@ async function genererPlanningPourMoisAffiche() {
   // 1) Médecins planifiables (l'admin / chef de service n'est pas dans le planning).
   const { data: medecins, error: e1 } = await sb
     .from("doctors")
-    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference")
     .neq("role", "admin");
   if (e1) { genererBtn.disabled = false; return messageGeneration("Erreur lecture médecins : " + e1.message, "error"); }
 
@@ -1497,7 +1497,7 @@ async function genererTrimestrePourMoisAffiche() {
   // 3) Médecins planifiables (hors admin / chef de service).
   const { data: medecins, error: e1 } = await sb
     .from("doctors")
-    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference")
     .neq("role", "admin");
   if (e1) { genererTrimBtn.disabled = false; return messageGeneration("Erreur lecture médecins : " + e1.message, "error"); }
 
@@ -2124,7 +2124,7 @@ async function rafraichirPanneauAdmin() {
 
   // 3) Médecins planifiables (hors admin) + 4) préférences du mois.
   const { data: meds } = await sb.from("doctors")
-    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference")
     .neq("role", "admin").order("name", { ascending: true });
   planningMois.medecins = meds || [];
 
@@ -3135,6 +3135,121 @@ document.querySelectorAll("#tabs-nav .tab").forEach((b) =>
    reconstruit la grille automatiquement). */
 if (grillePrev) grillePrev.addEventListener("click", () => { if (calendrier) calendrier.prev(); });
 if (grilleNext) grilleNext.addEventListener("click", () => { if (calendrier) calendrier.next(); });
+
+
+/* ===================================================================== */
+/* MODULE 20 — Rotation trimestrielle des unités                          */
+/* --------------------------------------------------------------------- */
+/* Propose une unité de référence (station « maison ») par médecin pour le */
+/* trimestre du mois affiché, en évitant l'unité du trimestre précédent    */
+/* (dérivée des shifts passés). Éditable, puis enregistrée sur doctors     */
+/* (unite_reference) → base de continuité à la génération (planning.js).   */
+/* ===================================================================== */
+const rotationProposerBtn    = document.getElementById("rotation-proposer-btn");
+const rotationTableWrap      = document.getElementById("rotation-table-wrap");
+const rotationActions        = document.getElementById("rotation-actions");
+const rotationEnregistrerBtn = document.getElementById("rotation-enregistrer-btn");
+const rotationMsg            = document.getElementById("rotation-msg");
+
+/* Bornes ISO du trimestre civil contenant `mois` (1-12), et du précédent. */
+function bornesTrimestrePlanning(annee, mois) {
+  const t = Math.floor((mois - 1) / 3);
+  const m = [t * 3 + 1, t * 3 + 2, t * 3 + 3];
+  let pa = annee, pt = t - 1;
+  if (pt < 0) { pt = 3; pa = annee - 1; }
+  const pm = [pt * 3 + 1, pt * 3 + 2, pt * 3 + 3];
+  return {
+    debut: bornesMois(annee, m[0]).debut, fin: bornesMois(annee, m[2]).fin,
+    prevDebut: bornesMois(pa, pm[0]).debut, prevFin: bornesMois(pa, pm[2]).fin,
+  };
+}
+
+/* Unité la plus fréquente d'un médecin sur une liste de shifts (jour / 24h). */
+function unitePrincipale(shifts, doctorId) {
+  const c = {};
+  shifts.forEach((s) => {
+    if (s.doctor_id === doctorId && s.poste &&
+        (s.shift_type === "jour" || s.shift_type === "garde_24h")) c[s.poste] = (c[s.poste] || 0) + 1;
+  });
+  let best = null, bn = 0;
+  Object.keys(c).forEach((k) => { if (c[k] > bn) { bn = c[k]; best = k; } });
+  return best;
+}
+
+/* Proposition équilibrée : station la moins chargée, ≠ unité précédente. */
+function proposerUnites(medecins, prevById, stations) {
+  const counts = {}; stations.forEach((c) => { counts[c] = 0; });
+  const res = {};
+  medecins.slice().sort((a, b) => String(a.name).localeCompare(String(b.name))).forEach((m) => {
+    const prev = prevById[m.id];
+    const cand = stations.filter((c) => c !== prev)
+      .sort((x, y) => counts[x] - counts[y] || stations.indexOf(x) - stations.indexOf(y));
+    const pick = cand.length ? cand[0] : stations[0];
+    res[m.id] = pick; counts[pick]++;
+  });
+  return res;
+}
+
+let rotationMedecins = [];
+async function proposerRotation() {
+  if (!calendrier) return;
+  rotationMsg.textContent = ""; rotationMsg.className = "message";
+  const d = calendrier.getDate();
+  const b = bornesTrimestrePlanning(d.getFullYear(), d.getMonth() + 1);
+  const stations = (typeof POSTES_JOUR !== "undefined" ? POSTES_JOUR : []).map((p) => p.code);
+
+  const { data: meds, error: e1 } = await sb.from("doctors")
+    .select("id, name, grade, unite_reference").neq("role", "admin").order("name", { ascending: true });
+  if (e1) { rotationMsg.textContent = "Erreur lecture médecins : " + e1.message; rotationMsg.className = "message error"; return; }
+  rotationMedecins = meds || [];
+
+  const { data: shiftsPrev } = await sb.from("shifts")
+    .select("doctor_id, poste, shift_type").gte("date", b.prevDebut).lte("date", b.prevFin);
+  const prevById = {};
+  rotationMedecins.forEach((m) => { prevById[m.id] = unitePrincipale(shiftsPrev || [], m.id); });
+
+  const propositions = proposerUnites(rotationMedecins, prevById, stations);
+  rendreRotationTable(rotationMedecins, propositions, prevById, stations);
+  rotationMsg.textContent = "Proposition générée (trimestre du " + b.debut + " au " + b.fin +
+    "). Unité précédente dérivée du trimestre " + b.prevDebut + " → " + b.prevFin + ". Ajuste puis Enregistre.";
+  rotationMsg.className = "message info";
+}
+
+function rendreRotationTable(medecins, propositions, prevById, stations) {
+  const opt = (sel) => "<option value=''>— aucune —</option>" +
+    stations.map((c) => "<option value='" + c + "'" + (sel === c ? " selected" : "") + ">" +
+      escapeHtml(POSTE_LABELS[c] || c) + "</option>").join("");
+  let html = "<table class='data-table'><thead><tr><th>Médecin</th>" +
+    "<th>Unité précédente</th><th>Unité proposée (trimestre)</th></tr></thead><tbody>";
+  medecins.forEach((m) => {
+    const prev = prevById[m.id] ? (POSTE_LABELS[prevById[m.id]] || prevById[m.id]) : "—";
+    html += "<tr><td>" + escapeHtml(m.name) + "</td><td>" + escapeHtml(prev) + "</td>" +
+      "<td><select class='rotation-select' data-docid='" + escapeHtml(m.id) + "'>" + opt(propositions[m.id]) + "</select></td></tr>";
+  });
+  html += "</tbody></table>";
+  rotationTableWrap.innerHTML = html;
+  rotationActions.classList.remove("hidden");
+}
+
+async function enregistrerRotation() {
+  const selects = rotationTableWrap.querySelectorAll(".rotation-select");
+  if (!selects.length) return;
+  rotationEnregistrerBtn.disabled = true;
+  let ok = 0, err = 0;
+  for (const sel of selects) {
+    const id = sel.getAttribute("data-docid");
+    const { error } = await sb.from("doctors").update({ unite_reference: sel.value || null }).eq("id", id);
+    if (error) err++; else ok++;
+  }
+  rotationEnregistrerBtn.disabled = false;
+  rotationMsg.textContent = err
+    ? ("Enregistré : " + ok + " · erreurs : " + err)
+    : ("Rotation enregistrée (" + ok + " médecins). Elle s'appliquera à la prochaine génération.");
+  rotationMsg.className = err ? "message error" : "message info";
+}
+
+if (rotationProposerBtn) rotationProposerBtn.addEventListener("click", proposerRotation);
+if (rotationEnregistrerBtn) rotationEnregistrerBtn.addEventListener("click", enregistrerRotation);
 
 
 /* --------------------------------------------------------------------- */

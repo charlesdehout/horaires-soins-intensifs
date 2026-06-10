@@ -573,5 +573,17 @@ test("pré-placement week-end : garde 24h épinglée conservée + ≥1 résident
   assert(g.some((s) => /^resident/.test(s.doctor_id)), "≥1 résident requis le WE");
 });
 
+console.log("\n=== Module 20 — Rotation trimestrielle (unité de référence) ===");
+
+test("rotation : l'unité de référence sert de base à la continuité", () => {
+  const meds = equipe().map((m) => m.id === "assistant_specialiste1"
+    ? Object.assign({}, m, { unite_reference: "usi5" }) : m);
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: [] });
+  const jours = r.shifts.filter((s) => s.doctor_id === "assistant_specialiste1" && s.shift_type === "jour");
+  assert(jours.length > 0, "le médecin ne fait aucune journée de station");
+  assert(jours.every((s) => s.poste === "usi5"), "journées hors unité de référence : " +
+    jours.filter((s) => s.poste !== "usi5").map((s) => s.date + ":" + s.poste).join(", "));
+});
+
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");
 process.exit(reussis === total ? 0 : 1);

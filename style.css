@@ -588,6 +588,12 @@ button.mini.danger:hover { background: #fbeae8; }
 }
 .epingle-label input { width: auto; margin: 0; }
 
+/* Module 20 — panneau de rotation des unités. */
+.rotation-aide { font-size: 0.85rem; color: var(--texte-doux); margin: 0.4rem 0; }
+#rotation-table-wrap { margin: 0.5rem 0; }
+#rotation-table-wrap select.rotation-select { width: auto; margin: 0; }
+#rotation-actions { margin-top: 0.4rem; }
+
 /* Sur petit écran : formulaire en une colonne, en-tête compact. */
 @media (max-width: 600px) {
   .form-grid { grid-template-columns: 1fr; }

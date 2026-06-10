@@ -445,7 +445,9 @@ function plAffecter(sortie, etat, date, type, doctorId, poste) {
 /* Choisit la station d'un médecin : sa station de la semaine si encore
    libre (continuité), sinon la première station libre. */
 function plChoisirStation(med, postes, plan, etat, cle) {
-  const pref = etat.station[med.id][cle];
+  // Continuité de la semaine, sinon l'UNITÉ DE RÉFÉRENCE du médecin (rotation
+  // trimestrielle, Module 20), sinon la première station libre.
+  const pref = etat.station[med.id][cle] || med.unite_reference;
   // La station habituelle doit aussi être OUVERTE ce jour-là (fermetures, M17).
   if (pref && postes.includes(pref) && !(pref in plan)) return pref;
   return postes.find((c) => !(c in plan)) || postes[0];
@@ -529,7 +531,8 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
   // 2a) Continuité : on replace chacun sur sa station de la semaine si libre.
   pool.forEach((m) => {
     if (Object.values(plan).includes(m.id)) return;
-    const st = etat.station[m.id][cle];
+    // Continuité de la semaine, sinon l'unité de référence (rotation, M20).
+    const st = etat.station[m.id][cle] || m.unite_reference;
     // La station de la semaine doit être OUVERTE ce jour (fermetures, M17).
     if (st && postes.includes(st) && !(st in plan)) plan[st] = m.id;
   });

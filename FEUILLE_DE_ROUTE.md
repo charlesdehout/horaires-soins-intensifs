@@ -196,9 +196,24 @@
 
 ## 🔜 Reste à faire (par priorité)
 
-6. **Rotation trimestrielle des unités** (historique tracé, proposition modifiable).
 8. **Durcissement** : triggers SQL quotas côté serveur ; empêcher l'auto-approbation
    des demandes.
+
+## ✅ Fait dans ce lot (juin 2026 — Module 20 : rotation trimestrielle des unités)
+
+- **Rotation trimestrielle des unités** (`planning.js` + `app.js` + `index.html`
+  + `style.css` + **`sql/module20_rotation_unites.sql`**) :
+  - Nouvelle colonne **`doctors.unite_reference`** : station « maison » du médecin
+    pour le trimestre, **base de la continuité** hebdomadaire à la génération.
+  - **Algorithme** : `plChoisirStation` et la continuité de `plGenererSemaine`
+    démarrent sur `unite_reference` si la station de la semaine n'est pas encore
+    fixée. **Rétro-compatible** : sans `unite_reference`, comportement inchangé.
+  - **Proposition modifiable** (onglet Planning, admin) : bouton « Proposer une
+    rotation » → unité précédente **dérivée des shifts du trimestre précédent**
+    (pas de table d'historique), proposition équilibrée évitant l'unité
+    précédente, tableau **éditable** (un menu par médecin), puis « Enregistrer »
+    écrit `unite_reference` → s'applique à la prochaine génération.
+  - **Tests** : 1 cas (l'unité de référence dicte la continuité) → **48/48 verts**.
 
 ## ✅ Fait dans ce lot (juin 2026 — Module 19 : pré-placement manuel)
 

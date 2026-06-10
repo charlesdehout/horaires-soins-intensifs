@@ -197,6 +197,22 @@
         <!-- Conflits détectés sur le mois affiché -->
         <div class="zone-header"><h3 class="sous-titre">Conflits détectés</h3></div>
         <div id="conflits-zone" class="zone-info">Aucun planning chargé.</div>
+
+        <!-- Module 20 — Rotation trimestrielle des unités -->
+        <div class="zone-header"><h3 class="sous-titre">Rotation des unités (trimestre)</h3></div>
+        <div id="rotation-zone" class="zone-info">
+          <button id="rotation-proposer-btn" class="secondary">🔄 Proposer une rotation</button>
+          <p class="rotation-aide">
+            Propose une <strong>unité de référence</strong> par médecin pour le trimestre du
+            mois affiché, en évitant celle du trimestre précédent. Modifiable, puis
+            « Enregistrer » → sert de base à la continuité à la génération.
+          </p>
+          <div id="rotation-table-wrap"></div>
+          <div id="rotation-actions" class="hidden">
+            <button id="rotation-enregistrer-btn">💾 Enregistrer la rotation</button>
+          </div>
+          <p id="rotation-msg" class="message"></p>
+        </div>
       </div><!-- /admin-planning -->
       </div><!-- /panel-planning -->
 
