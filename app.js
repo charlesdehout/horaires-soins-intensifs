@@ -1128,7 +1128,8 @@ function lendemainDe(dateStr) {
 /* Charge une fois la correspondance id -> médecin (pour nommer les shifts).
    La lecture de doctors est ouverte à tous les connectés (RLS). */
 async function chargerCarteMedecins() {
-  const { data, error } = await sb.from("doctors").select("id, name, grade");
+  const { data, error } = await sb.from("doctors")
+    .select("id, name, grade, contract_start, contract_end, contract_periods");
   if (error) {
     console.error("Erreur chargement médecins (calendrier) :", error);
     return;
@@ -1336,7 +1337,10 @@ async function construireEvenements(debutISO, finISO) {
       if (estWeekendOuFerieISO(d)) continue;
       const aS = aShiftJ[d] || new Set();
       const cg = congeJ[d] || new Set();
-      const repos = idsTous.filter((id) => !aS.has(id) && !cg.has(id));
+      const repos = idsTous.filter((id) => {
+        const m = carteMedecins[id];
+        return m && medActifISO(m, d) && !aS.has(id) && !cg.has(id); // hors contrat exclu
+      });
       if (!repos.length) continue;
       const noms = repos.map((id) => (carteMedecins[id] && carteMedecins[id].name) || "?")
         .sort((a, b) => a.localeCompare(b));
@@ -1905,7 +1909,7 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes) {
       if (p.start_date <= d && p.end_date >= d) enConge.add(p.doctor_id);
     });
     return Object.keys(carteMedecins)
-      .filter((id) => !aShift.has(id) && !enConge.has(id))
+      .filter((id) => medActifISO(carteMedecins[id], d) && !aShift.has(id) && !enConge.has(id)) // hors contrat exclu
       .map((id) => nomFn(id))
       .sort((a, b) => String(a).localeCompare(String(b)));
   };
