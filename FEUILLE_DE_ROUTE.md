@@ -261,6 +261,26 @@
     `node test_planning.js` en local et vérifier les ~50 cas (surveiller le
     couplage Pt6 et la couverture des stations).
 
+## ✅ Fait dans ce lot (juin 2026 — Repos « non planifiés » visibles partout)
+
+- **Tout médecin actif NON posté et NON en congé apparaît « au repos »**
+  (`app.js` + `style.css`, **aucun SQL**, aucun impact moteur/tests) :
+  - **Grille** : nouvelle ligne CALCULÉE « Non planifiés (repos) » = médecins
+    sous contrat sans aucun shift ce jour et hors congé (englobe indispo /
+    formation / « autre » / récup férié + simplement libres). **Réordonnée**
+    selon la demande : postés d'abord (USI 1 → Labo, puis gardes / TWE), puis
+    Off-clinic, Récupération, Repos de garde, **Non planifiés**, et Congés à
+    part. Pastilles grises non éditables.
+  - **Exports Excel** (mois + trimestre, via `construireFeuilleSemaine`) :
+    ligne « Indispo / formation / autre » remplacée par « Non planifiés
+    (repos) » (mêmes gens + libres) ; ordre aligné sur la grille.
+  - **Calendrier** (admin) : une pastille compacte par jour « 🛌 N au repos »,
+    noms en infobulle (évite de surcharger la vue avec une pastille par
+    médecin ; non affichée aux médecins pour ne pas encombrer leur calendrier).
+  - « En congé » = shift de congé OU préférence de congé **approuvée**.
+  - ⚠️ **À vérifier visuellement** (je n'ai pas pu lancer l'app cette session) :
+    grille, un export, et le calendrier admin.
+
 ## 🔜 Reste à faire (par priorité)
 
 - N4 : suppression TOTALE de l'off-clinic en dernier recours (au-delà de la
