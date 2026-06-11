@@ -1129,7 +1129,7 @@ function lendemainDe(dateStr) {
    La lecture de doctors est ouverte à tous les connectés (RLS). */
 async function chargerCarteMedecins() {
   const { data, error } = await sb.from("doctors")
-    .select("id, name, grade, contract_start, contract_end, contract_periods");
+    .select("id, name, grade, role, contract_start, contract_end, contract_periods");
   if (error) {
     console.error("Erreur chargement médecins (calendrier) :", error);
     return;
@@ -1339,7 +1339,7 @@ async function construireEvenements(debutISO, finISO) {
       const cg = congeJ[d] || new Set();
       const repos = idsTous.filter((id) => {
         const m = carteMedecins[id];
-        return m && medActifISO(m, d) && !aS.has(id) && !cg.has(id); // hors contrat exclu
+        return m && m.role !== "admin" && medActifISO(m, d) && !aS.has(id) && !cg.has(id); // hors contrat / admin exclus
       });
       if (!repos.length) continue;
       const noms = repos.map((id) => (carteMedecins[id] && carteMedecins[id].name) || "?")
@@ -1909,7 +1909,7 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes) {
       if (p.start_date <= d && p.end_date >= d) enConge.add(p.doctor_id);
     });
     return Object.keys(carteMedecins)
-      .filter((id) => medActifISO(carteMedecins[id], d) && !aShift.has(id) && !enConge.has(id)) // hors contrat exclu
+      .filter((id) => carteMedecins[id].role !== "admin" && medActifISO(carteMedecins[id], d) && !aShift.has(id) && !enConge.has(id)) // hors contrat / admin exclus
       .map((id) => nomFn(id))
       .sort((a, b) => String(a).localeCompare(String(b)));
   };
@@ -3319,7 +3319,7 @@ async function construireGrille() {
         const enConge = congeDocsJour[iso] || new Set();
         // Pas de « repos » les week-ends / fériés (tout le monde est off).
         const repos = estWeekendOuFerieISO(iso) ? [] : rosterList.filter((m) =>
-          medActifISO(m, iso) && !aShift.has(m.id) && !enConge.has(m.id));
+          m.role !== "admin" && medActifISO(m, iso) && !aShift.has(m.id) && !enConge.has(m.id));
         let contenuNP = "";
         repos.forEach((m) => {
           contenuNP += "<span class='grille-chip grille-chip-repos' title='" +
