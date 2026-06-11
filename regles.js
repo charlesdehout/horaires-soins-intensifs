@@ -84,6 +84,31 @@ const EQUITE = {
 
 
 /* ---------------------------------------------------------------------
+   GARDES de NUIT en SEMAINE — format 17h–9h vs 24 h (préférence N3).
+   ---------------------------------------------------------------------
+   Chaque nuit de semaine reste couverte par 2 médecins (≥1 résident, jamais
+   2 A/S). NOUVEAU : la garde 24 h n'est plus IMPOSÉE chaque jour.
+   - garde24h_obligatoire : si false (défaut), les 2 gardes arrivent à 17h
+     (garde_nuit 17h–9h) et une garde 24 h n'est utilisée QUE si nécessaire
+     pour pourvoir une station de jour (sinon il manquerait un médecin de jour).
+     Mettre `true` pour revenir au comportement historique (1 garde 24 h
+     imposée chaque jour de semaine, qui tient une station).
+   - pref_as_24h : quand une 24 h EST nécessaire, on préfère l'attribuer à un
+     A/S (les résidents restent en 17h–9h, moins lourd ; un résident ne prend
+     une 24 h qu'à défaut d'A/S).
+   - eviter_24h_a_3_gardes : on évite de donner la 24 h au médecin qui
+     atteindrait 3 gardes dans la semaine ISO (on lui préfère la 17h–9h).
+   Préférences SOUPLES : la COUVERTURE (pourvoir les stations, ≥1 résident la
+   nuit) reste prioritaire ; ces réglages n'agissent qu'en départage.
+   --------------------------------------------------------------------- */
+const GARDES = {
+  garde24h_obligatoire:  false,
+  pref_as_24h:           true,
+  eviter_24h_a_3_gardes: true,
+};
+
+
+/* ---------------------------------------------------------------------
    OFF-CLINIC (§9) — hiérarchie de suppression / limitation (préférence N3).
    L'off-clinic des Résidents dépendants est un DROIT, mais on le LIMITE pour
    ne pas aggraver les jours déjà tendus, et on ARBITRE entre résidents :
@@ -192,6 +217,6 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     CONGE_TYPES, calculerPaques, joursFeriesBE, estJourOuvre,
     dateEnISO, ajouterJours,
-    POSTES_JOUR, COUVERTURE, PREF_BLOQUANTES, EQUITE, OFFCLINIC,
+    POSTES_JOUR, COUVERTURE, PREF_BLOQUANTES, EQUITE, OFFCLINIC, GARDES,
   };
 }

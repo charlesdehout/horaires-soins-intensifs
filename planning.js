@@ -45,6 +45,13 @@ function plOffclinic() {
   const o = _PL_REGLES ? _PL_REGLES.OFFCLINIC : (typeof OFFCLINIC !== "undefined" ? OFFCLINIC : null);
   return o || PL_OFFCLINIC_DEFAUT;
 }
+/* Paramètres GARDES de nuit semaine (format 17h–9h vs 24 h). Repli souple
+   (compatibilité ascendante : par défaut 24 h non imposée). */
+const PL_GARDES_DEFAUT = { garde24h_obligatoire: false, pref_as_24h: true, eviter_24h_a_3_gardes: true };
+function plGardes() {
+  const g = _PL_REGLES ? _PL_REGLES.GARDES : (typeof GARDES !== "undefined" ? GARDES : null);
+  return g || PL_GARDES_DEFAUT;
+}
 
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
@@ -374,6 +381,10 @@ function plMarquerAssigne(date, id, etat) {
 /* Contrainte DURE : maximum de gardes par semaine et par personne (spec §6 N1). */
 const PL_MAX_GARDES_SEMAINE = 3;
 
+/* Vrai (1) si le médecin est un A/S — utilisé pour préférer l'A/S à la garde
+   24 h de semaine (les résidents restent en 17h–9h). Renvoie 0/1 (tri). */
+function plEstAS(m) { return (m && m.grade === "assistant_specialiste") ? 1 : 0; }
+
 /* Nombre de gardes déjà posées au médecin durant la semaine (lundi) de `date`. */
 function plGardesSemaine(id, date, etat) {
   const lk = plLundiDe(date);
@@ -497,8 +508,9 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
   const residents = libresG.filter((m) => m.grade === "resident");
 
   // 1) NUIT : compléter jusqu'à 2 gardes dont ≥1 résident, JAMAIS 2 A/S, en
-  //    tenant compte des gardes déjà ÉPINGLÉES ce jour. Le résident démarre à
-  //    17 h (garde_nuit) ; le complément fait une garde 24 h occupant une station.
+  //    tenant compte des gardes déjà ÉPINGLÉES ce jour. Le FORMAT (17h–9h ou
+  //    24 h) est décidé plus bas (§2/2c) : par défaut 2 gardes de nuit 17h–9h ;
+  //    une 24 h n'est introduite que si nécessaire pour pourvoir une station.
   const ppGardes = pp.filter((s) => s.shift_type === "garde_nuit" || s.shift_type === "garde_24h");
   const residentDejaNuit = ppGardes.some((s) => {
     const m = medecins.find((x) => x.id === s.doctor_id); return m && m.grade === "resident";
@@ -528,11 +540,22 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
   if (resNuit) pris.add(resNuit.id);
   if (second) pris.add(second.id);
 
-  // 2) JOUR : la garde 24 h du complément occupe une station.
-  if (second) {
-    const st = plChoisirStation(second, postes, plan, etat, cle);
-    plan[st] = second.id;
-    etat.station[second.id][cle] = st;
+  // Les 2 médecins de garde de nuit (hors pré-placés). Chacun fera SOIT une
+  // garde de nuit 17h–9h (sans station), SOIT une garde 24 h (tient une station).
+  const cfgG = plGardes();
+  const gardesNuit = [];
+  if (resNuit) gardesNuit.push(resNuit);
+  if (second) gardesNuit.push(second);
+  const mode24 = {};                       // doctorId -> true si garde 24 h
+  gardesNuit.forEach((m) => { mode24[m.id] = false; });
+
+  // 2) JOUR — pourvoir les 7 stations.
+  if (cfgG.garde24h_obligatoire) {
+    // Comportement HISTORIQUE : le complément (second) tient une station en 24 h.
+    if (second) {
+      const st = plChoisirStation(second, postes, plan, etat, cle);
+      plan[st] = second.id; etat.station[second.id][cle] = st; mode24[second.id] = true;
+    }
   }
   const pool = plTrier(libres.filter((m) => !pris.has(m.id)), "jour", etat, date);
   // 2a) Continuité : on replace chacun sur sa station de la semaine si libre.
@@ -543,12 +566,35 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
     // La station de la semaine doit être OUVERTE ce jour (fermetures, M17).
     if (st && postes.includes(st) && !(st in plan)) plan[st] = m.id;
   });
-  // 2b) On comble les stations encore vides.
+  // 2b) On comble les stations encore vides avec le vivier de jour.
   postes.forEach((code) => {
     if (code in plan) return;
     const cand = pool.find((m) => !Object.values(plan).includes(m.id));
     if (cand) { plan[code] = cand.id; etat.station[cand.id][cle] = code; }
   });
+
+  // 2c) NOUVEAU (N3) — si le vivier de jour ne suffit pas à pourvoir toutes les
+  //     stations, on PROMEUT une garde de nuit en garde 24 h pour combler (elle
+  //     tient alors une station). Préférence : A/S d'abord (les résidents
+  //     restent en 17h–9h), puis le médecin le MOINS chargé en gardes de la
+  //     semaine (évite d'amener quelqu'un à 3 gardes via une 24 h). La 24 h
+  //     n'est donc utilisée QU'EN CAS DE BESOIN (sinon 2 gardes 17h–9h).
+  if (!cfgG.garde24h_obligatoire) {
+    const candidats = gardesNuit.filter((m) => !mode24[m.id]);
+    candidats.sort((a, b) =>
+      (cfgG.pref_as_24h ? (plEstAS(b) - plEstAS(a)) : 0) ||                      // A/S d'abord
+      (cfgG.eviter_24h_a_3_gardes                                               // moins chargé d'abord
+        ? (plGardesSemaine(a.id, date, etat) - plGardesSemaine(b.id, date, etat)) : 0) ||
+      0);
+    for (const m of candidats) {
+      const reste = postes.filter((c) => !(c in plan));
+      if (reste.length === 0) break;                 // toutes les stations pourvues
+      const st = plChoisirStation(m, postes, plan, etat, cle);
+      if (st && !(st in plan)) {
+        plan[st] = m.id; etat.station[m.id][cle] = st; mode24[m.id] = true;
+      }
+    }
+  }
 
   // Détection des conflits de couverture (contraintes dures non satisfaites).
   const totalNuit = ppGardes.length + (resNuit ? 1 : 0) + (second ? 1 : 0);
@@ -565,15 +611,19 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
   }
 
   // 3) Affectations effectives (les pré-placés sont déjà posés à l'étape 0).
-  if (resNuit) plAffecter(sortie, etat, date, "garde_nuit", resNuit.id, null);
-  if (second) {
-    const st = Object.keys(plan).find((c) => plan[c] === second.id);
-    plAffecter(sortie, etat, date, "garde_24h", second.id, st || null);
-  }
+  //    Garde de nuit : 24 h (avec station) si promue, sinon 17h–9h (garde_nuit).
+  gardesNuit.forEach((m) => {
+    if (mode24[m.id]) {
+      const st = Object.keys(plan).find((c) => plan[c] === m.id);
+      plAffecter(sortie, etat, date, "garde_24h", m.id, st || null);
+    } else {
+      plAffecter(sortie, etat, date, "garde_nuit", m.id, null);
+    }
+  });
   Object.keys(plan).forEach((code) => {
     const id = plan[code];
-    if (second && id === second.id) return; // déjà affecté en garde 24 h
-    if (ppDocs.has(id)) return;             // pré-placement déjà posé (étape 0)
+    if (pris.has(id)) return;   // garde de nuit (24 h) déjà affectée ci-dessus
+    if (ppDocs.has(id)) return; // pré-placement déjà posé (étape 0)
     plAffecter(sortie, etat, date, "jour", id, code);
   });
 }

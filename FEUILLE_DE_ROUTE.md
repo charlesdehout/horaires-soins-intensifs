@@ -237,12 +237,35 @@
   - **Tests** : 2 cas (report sur jour saturé ; arbitrage congés entre 2 résidents)
     → **50/50 attendus** (à confirmer en local).
 
+## ✅ Fait dans ce lot (juin 2026 — Gardes semaine : 17h–9h vs 24h)
+
+- **La garde 24 h de semaine n'est plus imposée** (`planning.js` `plGenererSemaine`
+  + `regles.js` `GARDES` + 1 test) — **⚠️ refonte du couplage jour/nuit, à
+  valider en local (tests non exécutables cette session)** :
+  - Chaque nuit de semaine = 2 gardes (≥1 résident, jamais 2 A/S, inchangé).
+    **Par défaut, les 2 arrivent à 17h (`garde_nuit` 17h–9h)** ; une `garde_24h`
+    n'est introduite **que si le vivier de jour ne suffit pas à pourvoir les 7
+    stations** (la 24 h tient alors une station). → besoin d'un médecin de jour
+    de plus les jours « tout en 17h–9h » (≈ 9 présences/jour).
+  - **A/S préféré pour la 24 h** (`pref_as_24h`) : les résidents restent en
+    17h–9h, ne prenant une 24 h qu'à défaut d'A/S. **Éviter la 24 h à qui
+    atteindrait 3 gardes/sem** (`eviter_24h_a_3_gardes`) : départage par charge
+    de gardes croissante. Préférences SOUPLES (la couverture reste prioritaire).
+  - **Drapeau de repli** `GARDES.garde24h_obligatoire = true` → comportement
+    HISTORIQUE exact (1 garde 24 h imposée/jour). À utiliser si la refonte
+    pose souci (revient au planning d'avant ce lot).
+  - **Équité/contraintes dures inchangées** : nombre de gardes/jour et sélection
+    des médecins de nuit identiques ; seul le FORMAT (17h–9h vs 24 h) change →
+    redistribution d'heures, sans toucher au comptage de gardes/week-ends.
+  - **Test** : « nuit confortable = 2× 17h–9h, pas de 24h ». ⚠️ Lancer
+    `node test_planning.js` en local et vérifier les ~50 cas (surveiller le
+    couplage Pt6 et la couverture des stations).
+
 ## 🔜 Reste à faire (par priorité)
 
-- Raffinements N3/N4 (cf. CONFORMITE.md) : « si 3 gardes/sem → préférer 17h–9h »,
-  résident en 17h–9h sauf équité, etc.
 - N4 : suppression TOTALE de l'off-clinic en dernier recours (au-delà de la
   limitation actuelle).
+- Raffinements N3/N4 restants éventuels (cf. CONFORMITE.md).
 
 ## ✅ Fait dans ce lot (juin 2026 — Module 20 : rotation trimestrielle des unités)
 

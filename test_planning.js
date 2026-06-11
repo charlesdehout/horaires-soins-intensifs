@@ -59,6 +59,17 @@ test("nuit de semaine : ≥2 gardes dont ≥1 résident", () => {
   assert(residents.length >= 1, "aucun résident de garde la nuit");
 });
 
+test("nuit de semaine confortable : 2 gardes 17h–9h, pas de 24h imposée (N3)", () => {
+  // Équipe complète, 1er jour (aucune absence, aucun repos) → le vivier de jour
+  // pourvoit les 7 stations sans promouvoir personne en 24 h. La garde 24 h de
+  // semaine n'est plus obligatoire : les 2 gardes arrivent à 17h (garde_nuit).
+  const duJour = res.shifts.filter((s) => s.date === "2026-06-01");
+  const g24 = duJour.filter((s) => s.shift_type === "garde_24h");
+  const gNuit = duJour.filter((s) => s.shift_type === "garde_nuit");
+  assert.strictEqual(g24.length, 0, "garde 24h imposée alors que non nécessaire : " + g24.length);
+  assert.strictEqual(gNuit.length, 2, "gardes de nuit 17h–9h attendues = 2, obtenu " + gNuit.length);
+});
+
 console.log("\n=== Module 6 — validerPlanning ===");
 
 test("un planning fraîchement généré ne génère pas de conflit de double affectation", () => {

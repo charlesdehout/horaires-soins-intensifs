@@ -100,9 +100,9 @@ plusieurs **contraintes dures (Niveau 1)** ne sont pas encore appliquées.
 |---|---|
 | Continuité dans les unités (hors Labo, souple le weekend) | ✅ (semaine) |
 | Concentration des gardes de nuit sur une période du mois | ✅ **M12c** : départage des gardes de nuit de semaine à déficit STRICTEMENT égal en faveur du médecin ayant gardé le plus récemment (regroupe les nuits sans coût d'équité ; tunable `EQUITE.concentration_*`). |
-| Si 3 gardes/semaine → préférer 17h–9h | ❌ |
+| Si 3 gardes/semaine → préférer 17h–9h | ✅ **M-gardes** : à l'attribution de la 24h de semaine (promotion pour pourvoir une station), on préfère le médecin le MOINS chargé en gardes de la semaine ISO (évite d'amener quelqu'un à 3 gardes via une 24h ; départage souple, tunable `GARDES.eviter_24h_a_3_gardes`). |
 | Couples vendredi soir + dimanche 24h / jeudi soir + samedi 24h | ❌ |
-| Résident gardes semaine en 17h–9h (pas 24h) sauf équité | ⚠️ |
+| Résident gardes semaine en 17h–9h (pas 24h) sauf équité | ✅ **M-gardes** : la 24h de semaine n'est plus imposée ; par défaut 2 gardes 17h–9h. Quand une 24h est nécessaire (pourvoir une station), elle va de préférence à un A/S — les résidents restent en 17h–9h, ne prenant une 24h qu'à défaut d'A/S (tunable `GARDES.pref_as_24h`). |
 | A/S 24h de préférence | ✅ |
 | Tour même personne sam+dim | ✅ (appliqué) |
 | Rotation trimestrielle des unités (historique) | ❌ |
