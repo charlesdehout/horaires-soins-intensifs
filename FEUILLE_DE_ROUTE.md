@@ -1,7 +1,7 @@
 # Feuille de route — Application Planning Soins Intensifs
 
 > État d'avancement. Légende : ✅ fait · 🔜 à faire · 🟡 partiel · ⚠️ point ouvert.
-> Mis à jour le 2026-06-09.
+> Mis à jour le 2026-06-11.
 
 ## ✅ Socle déjà en place (Modules 1–12 + exports v1)
 
@@ -194,10 +194,33 @@
   - **Tests** : 4 cas (4→attention, 6→critique, tous résidents absents→nuit,
     3→rien) → **44/44 verts**.
 
+## ✅ Fait dans ce lot (juin 2026 — Module 21 : durcissement / sécurité serveur)
+
+- **Garde-fous CÔTÉ SERVEUR sur `preferences`** (`sql/module21_durcissement.sql`,
+  idempotent ; **aucun changement JS** → `test_planning.js` reste 48/48) :
+  - **Anti-auto-approbation** : trigger `trg_preferences_durcissement` — un
+    travailleur (non-`is_admin()`) ne peut PAS créer une demande déjà
+    `approuve`/`refuse` (statut imposé `en_attente`) ni modifier le statut de
+    ses propres demandes. Seul l'admin valide. (Répond à la note ⚠️ de
+    `module10_workflow.sql`.)
+  - **Quota de congés à la SOUMISSION** : refus serveur si une demande
+    (`conge`/`conge_annuel`/`extralegal`/`scientifique`), ajoutée aux demandes
+    `en_attente` + `approuve` de la même catégorie, dépasse le quota de l'**année
+    académique** (1 oct → 30 sep). **L'admin peut FORCER** (régularisation,
+    congé exceptionnel) — le contrôle ne s'applique qu'aux non-admins.
+  - **Logique miroir d'`app.js`** : jours OUVRÉS lun–ven hors **fériés belges**
+    (Pâques calculée, Meeus/Butcher), année académique, **proration au contrat**
+    exacte (`f_fraction_contrat`). Fonctions SQL dédiées : `f_paques`,
+    `f_est_ferie_be`, `f_est_jour_ouvre`, `f_annee_academique`,
+    `f_jours_ouvres_acad`, `f_fraction_contrat`.
+  - **Tests serveur** (en bas du fichier SQL) : auto-approbation refusée,
+    changement de statut refusé, dépassement de quota refusé, admin non bloqué.
+  - **À lancer** dans le SQL Editor Supabase APRÈS `module10` + `module18`.
+
 ## 🔜 Reste à faire (par priorité)
 
-8. **Durcissement** : triggers SQL quotas côté serveur ; empêcher l'auto-approbation
-   des demandes.
+- **Off-clinic** : retirer d'abord à ceux qui ont déjà des congés (hiérarchie N3/N4).
+- Divers raffinements N3/N4 (cf. CONFORMITE.md).
 
 ## ✅ Fait dans ce lot (juin 2026 — Module 20 : rotation trimestrielle des unités)
 
