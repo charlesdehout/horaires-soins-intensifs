@@ -368,11 +368,25 @@
   si acceptée, l'algo PLACE le médecin sur ce férié + ouvre un « congé (férié) » à
   poser sous 6 sem. ; suppression de `recup_ferie`. (Algo + données + tests.)
 - ~~Lot 3 — Indispo / Souhait SOFT, gardes uniquement~~ ✅ **FAIT** (ci-dessous).
-- **Lot 4 — Congrès : équité prioritaire** : tout le monde le même nombre de
-  jours de congrès, au-dessus de toutes les autres règles. (Algo.)
-- **Lot 5 — Échange de shifts** entre médecins (garde/journée), à échange égal,
-  refusé si casse A/S-résident ; un échange de garde impose l'échange du repos de
-  garde. (Nouvelle fonctionnalité : données + UI + règles.)
+- ~~Lot 4 — Congrès : équité prioritaire~~ ✅ **FAIT** : compteur
+  `etat.joursCongres` (jours de congrès TRAVAILLÉS par médecin) ; pendant un
+  congrès, `plTrier` et `plTrierGardeNuit` servent D'ABORD le médecin qui en a
+  travaillé le moins (au-dessus de l'équité gardes/heures, sous les contraintes
+  dures ≥1 résident / jamais 2 A/S) → jours libres de congrès égaux pour tous.
+  Incrément dans `plAffecter` quand `etat._congresJour`. Test : « répartition
+  serrée des jours de congrès travaillés ». **55 attendus.**
+- **Lot 5 — Échange de shifts** entre médecins (workflow propose→accepte ;
+  garde↔garde / journée↔journée ; planning PUBLIÉ) :
+  - ✅ **Moteur** `validerEchange` (planning.js, PURE, exporté) : refuse si
+    natures différentes ou si ça casse les règles de garde (≥1 résident, jamais
+    2 A/S) ; un échange de garde **échange aussi les repos de garde**. Renvoie
+    `changes:[{id, doctor_id}]` à appliquer. **4 tests** (journée OK, natures
+    différentes refusé, 2 A/S refusé, repos échangé). **59 attendus.**
+  - ✅ **Table** `sql/module23_echanges.sql` (`shift_swaps` : propositions +
+    statut, RLS connectés).
+  - 🔜 **UI workflow** (prochain tour) : proposer un échange (mes shifts publiés
+    ↔ shift d'un collègue), liste des propositions reçues/émises, accepter →
+    `validerEchange` puis application (update `shifts.doctor_id`).
 
 - **Fériés éditables par l'admin** (initialement convenu — à intégrer au lot 2).
 - Désidératas calendrier v2 : popup inline (type + note) sans bascule d'onglet.

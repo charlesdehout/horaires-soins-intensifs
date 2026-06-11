@@ -5,7 +5,7 @@
    ===================================================================== */
 
 const assert = require("assert");
-const { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, compterParMedecin, plTrier, alertesAbsences } = require("./planning.js");
+const { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, compterParMedecin, plTrier, alertesAbsences, validerEchange } = require("./planning.js");
 
 let reussis = 0, total = 0;
 function test(nom, fn) {
@@ -488,6 +488,21 @@ test("congrès en SEMAINE : équipe minimale → les 2 gardes de nuit forcées e
   assert(!g24.every((s) => /^assistant_specialiste/.test(s.doctor_id)), "jamais 2 A/S en garde");
 });
 
+test("congrès : équité des JOURS DE CONGRÈS (répartition serrée des jours travaillés)", () => {
+  const meds = equipe();
+  const periodes = [{ type: "congres", start_date: "2026-06-01", end_date: "2026-06-05", label: "ISICEM" }]; // 5 jours
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: [], periodes });
+  const WORK = ["jour", "garde_nuit", "garde_24h", "twe"];
+  const jours = ["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04", "2026-06-05"];
+  const compte = {}; meds.forEach((m) => { compte[m.id] = 0; });
+  r.shifts.forEach((s) => { if (jours.includes(s.date) && WORK.includes(s.shift_type)) compte[s.doctor_id]++; });
+  const vals = Object.values(compte);
+  const ecart = Math.max(...vals) - Math.min(...vals);
+  // Tout le monde doit travailler ~le même nombre de jours de congrès (donc avoir
+  // ~le même nombre de jours LIBRES pour y aller). Répartition serrée attendue.
+  assert(ecart <= 2, "jours de congrès travaillés trop déséquilibrés (écart " + ecart + ")");
+});
+
 console.log("\n=== Point 6 — Couplage des gardes (repos compensatoire couplé) ===");
 
 test("couplage : nuit J-2 → garde 24h week-end → repos couplé matérialisé", () => {
@@ -655,6 +670,59 @@ test("Labo de choc : pas d'ancrage (unité de référence Labo ignorée, rotatio
   assert(jours.length > 0, "le médecin ne fait aucune journée de station");
   assert(jours.some((s) => s.poste !== "labo_choc"),
     "le Labo ne devrait pas fixer le médecin (toutes ses journées au Labo)");
+});
+
+console.log("\n=== Module 23 — Échange de shifts ===");
+
+test("échange journée↔journée : valide, échange les médecins", () => {
+  const shifts = [
+    { id: "1", date: "2026-06-10", shift_type: "jour", doctor_id: "A", poste: "usi1" },
+    { id: "2", date: "2026-06-11", shift_type: "jour", doctor_id: "B", poste: "usi2" },
+  ];
+  const r = validerEchange(shifts, "1", "2", []);
+  assert(r.ok, "échange journée refusé à tort : " + r.message);
+  const c1 = r.changes.find((c) => c.id === "1"), c2 = r.changes.find((c) => c.id === "2");
+  assert.strictEqual(c1.doctor_id, "B", "shift 1 non transféré à B");
+  assert.strictEqual(c2.doctor_id, "A", "shift 2 non transféré à A");
+});
+
+test("échange refusé entre natures différentes (garde vs journée)", () => {
+  const shifts = [
+    { id: "1", date: "2026-06-10", shift_type: "garde_nuit", doctor_id: "A", poste: null },
+    { id: "2", date: "2026-06-11", shift_type: "jour", doctor_id: "B", poste: "usi2" },
+  ];
+  assert(!validerEchange(shifts, "1", "2", []).ok, "échange de natures différentes accepté à tort");
+});
+
+test("échange de garde refusé s'il crée 2 A/S la même nuit", () => {
+  const meds = [
+    { id: "R", grade: "resident" },
+    { id: "AS1", grade: "assistant_specialiste" },
+    { id: "AS2", grade: "assistant_specialiste" },
+  ];
+  const shifts = [
+    { id: "g1", date: "2026-06-10", shift_type: "garde_nuit", doctor_id: "R", poste: null },
+    { id: "g2", date: "2026-06-10", shift_type: "garde_24h", doctor_id: "AS1", poste: "usi1" },
+    { id: "g3", date: "2026-06-11", shift_type: "garde_24h", doctor_id: "AS2", poste: "usi1" },
+  ];
+  // Échanger g1 (R) ↔ g3 (AS2) → la nuit du 10 aurait AS2 + AS1 = 2 A/S → refusé.
+  assert(!validerEchange(shifts, "g1", "g3", meds).ok, "échange créant 2 A/S accepté à tort");
+});
+
+test("échange de garde : échange AUSSI le repos de garde", () => {
+  const meds = [{ id: "R1", grade: "resident" }, { id: "R2", grade: "resident" }];
+  const shifts = [
+    { id: "g1", date: "2026-06-10", shift_type: "garde_nuit", doctor_id: "R1", poste: null },
+    { id: "rp1", date: "2026-06-11", shift_type: "repos_garde", doctor_id: "R1", poste: null },
+    { id: "g2", date: "2026-06-17", shift_type: "garde_nuit", doctor_id: "R2", poste: null },
+    { id: "rp2", date: "2026-06-18", shift_type: "repos_garde", doctor_id: "R2", poste: null },
+  ];
+  const r = validerEchange(shifts, "g1", "g2", meds);
+  assert(r.ok, "échange refusé à tort : " + r.message);
+  const crp1 = r.changes.find((c) => c.id === "rp1");
+  const crp2 = r.changes.find((c) => c.id === "rp2");
+  assert(crp1 && crp1.doctor_id === "R2", "repos de g1 non transféré à R2");
+  assert(crp2 && crp2.doctor_id === "R1", "repos de g2 non transféré à R1");
 });
 
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");

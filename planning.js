@@ -166,11 +166,17 @@ function plNouvelEtat(medecins) {
     // Module 17 : index des périodes spéciales (congrès / fermetures d'unités),
     // rempli par genererPlanning / genererTrimestre via plIndexerPeriodes.
     periodes: null,
+    // ÉQUITÉ CONGRÈS (prioritaire) : nb de jours de congrès TRAVAILLÉS par médecin
+    // → pendant un congrès, on sert d'abord ceux qui en ont le moins, pour que
+    // tout le monde ait le même nombre de jours libres au congrès.
+    joursCongres: {},
+    _congresJour: false, // vrai pendant la génération d'un jour de congrès (plAffecter)
   };
   medecins.forEach((m) => {
     e.indispo[m.id] = new Set();
     e.souhait[m.id] = new Set();
     e.eviterGarde[m.id] = new Set(); // indispo (garde) : souhait SOUPLE de ne pas garder
+    e.joursCongres[m.id] = 0;        // équité congrès
     e.bloque[m.id] = new Set();
     e.nbGardes[m.id] = 0;
     e.nbWeekend[m.id] = 0;
@@ -298,7 +304,14 @@ function plRangDesiderata(m) {
    'weekend'), jamais pour les journées de station ('jour'). */
 function plTrier(liste, critere, etat, date, favoriId) {
   const estGarde = (critere === "garde" || critere === "weekend");
+  const congres = !!(date && etat._congresJour);
   return liste.slice().sort((a, b) => {
+    // ÉQUITÉ CONGRÈS (prioritaire sur tout) : pendant un congrès, on sert d'abord
+    // le médecin qui a travaillé le MOINS de jours de congrès → jours libres égaux.
+    if (congres) {
+      const ca = etat.joursCongres[a.id] || 0, cb = etat.joursCongres[b.id] || 0;
+      if (ca !== cb) return ca - cb;
+    }
     if (critere === "garde") {
       const sa = plScoreGarde(a.id, etat), sb = plScoreGarde(b.id, etat);
       if (sa !== sb) return sa - sb;                            // équité gardes d'abord
@@ -356,7 +369,13 @@ function plRecenceGarde(id, date, etat) {
    regroupe un peu ses nuits. En mode trimestriel, beaucoup de médecins sont à
    égalité de gardes → l'effet est réel sans coûter d'équité. */
 function plTrierGardeNuit(liste, date, etat) {
+  const congres = !!(date && etat._congresJour);
   return liste.slice().sort((a, b) => {
+    // ÉQUITÉ CONGRÈS prioritaire (cf. plTrier) : moins de jours de congrès d'abord.
+    if (congres) {
+      const ca = etat.joursCongres[a.id] || 0, cb = etat.joursCongres[b.id] || 0;
+      if (ca !== cb) return ca - cb;
+    }
     const sa = plScoreGarde(a.id, etat), sb = plScoreGarde(b.id, etat);
     if (Math.abs(sa - sb) > PL_EPS) return sa - sb;            // équité d'abord (stricte)
     // Souhait(+) / indispo(−) de GARDE : départage à équité STRICTEMENT égale
@@ -458,6 +477,10 @@ function plAffecter(sortie, etat, date, type, doctorId, poste) {
     // chronologique → simple écrasement) pour le biais de concentration.
     etat.derniereGarde[doctorId] = date;
   }
+  // Équité CONGRÈS : compter un jour de congrès TRAVAILLÉ (shift de travail).
+  if (etat._congresJour && (type === "jour" || type === "garde_nuit" || type === "garde_24h" || type === "twe")) {
+    etat.joursCongres[doctorId] = (etat.joursCongres[doctorId] || 0) + 1;
+  }
 }
 
 /* Choisit la station d'un médecin : sa station de la semaine si encore
@@ -479,6 +502,7 @@ function plChoisirStation(med, postes, plan, etat, cle) {
 function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
   pp = pp || [];
   const cle = plLundiDe(date);
+  etat._congresJour = plEstCongres(date, etat.periodes); // équité congrès (plAffecter)
   // Module 17 : seules les stations OUVERTES ce jour sont à pourvoir
   // (une unité fermée par l'admin n'est ni pourvue ni exigée).
   const postes = plPostesOuverts(date, etat.periodes);
@@ -558,7 +582,7 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
   // monde au congrès (combiné à la tolérance de stations vides ci-dessous).
   // Hors congrès : selon le drapeau `garde24h_obligatoire`, seul le complément
   // est éventuellement forcé en 24 h.
-  const congresJour = plEstCongres(date, etat.periodes);
+  const congresJour = etat._congresJour;
   let aForcer24 = [];
   if (congresJour) aForcer24 = gardesNuit.slice();
   else if (cfgG.garde24h_obligatoire && second) aForcer24 = [second];
@@ -650,6 +674,7 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
 /* --------------------- Jour de WEEK-END / FÉRIÉ ------------------------ */
 function plGenererWeekend(date, medecins, etat, sortie, conflits, pp) {
   pp = pp || [];
+  etat._congresJour = plEstCongres(date, etat.periodes); // équité congrès (plAffecter)
   const couv = plCouv();
   const j = plJourSemaine(date);
 
@@ -1586,7 +1611,58 @@ function alertesAbsences(opts) {
   return out;
 }
 
+/* =====================================================================
+   MODULE 23 — Échange de shifts entre médecins (workflow médecin → médecin)
+   ---------------------------------------------------------------------
+   Échange « à valeur égale » : garde↔garde, journée↔journée, tour↔tour. REFUSÉ
+   si ça casse une règle de garde (≥1 résident, jamais 2 A/S) sur les jours
+   concernés. Un échange de GARDE échange AUSSI les repos de garde associés
+   (le repos suit la garde). FONCTION PURE : ne mute rien, renvoie
+   { ok, message, changes:[{ id, doctor_id }] } à appliquer côté base.
+   ===================================================================== */
+const PL_GROUPE_SHIFT = { garde_nuit: "garde", garde_24h: "garde", jour: "journee", twe: "tour" };
+function plGroupeShift(t) { return PL_GROUPE_SHIFT[t] || null; }
+
+function validerEchange(shifts, idA, idB, medecins) {
+  const sA = (shifts || []).find((s) => String(s.id) === String(idA));
+  const sB = (shifts || []).find((s) => String(s.id) === String(idB));
+  if (!sA || !sB) return { ok: false, message: "Shift introuvable." };
+  if (sA.doctor_id === sB.doctor_id) return { ok: false, message: "Les deux shifts sont au même médecin." };
+  const gA = plGroupeShift(sA.shift_type), gB = plGroupeShift(sB.shift_type);
+  if (!gA || !gB || gA !== gB) {
+    return { ok: false, message: "Échange seulement entre shifts de même nature (garde↔garde, journée↔journée, tour↔tour)." };
+  }
+  const dA = sA.doctor_id, dB = sB.doctor_id;
+  const changes = [{ id: sA.id, doctor_id: dB }, { id: sB.id, doctor_id: dA }];
+
+  // Échange des repos de garde associés (lendemain, +2 pour les 24 h de week-end).
+  if (gA === "garde") {
+    const reposDe = (id, date) => (shifts || []).filter((s) =>
+      s.shift_type === "repos_garde" && s.doctor_id === id &&
+      (s.date === plAdd(date, 1) || s.date === plAdd(date, 2)));
+    reposDe(dA, sA.date).forEach((s) => changes.push({ id: s.id, doctor_id: dB }));
+    reposDe(dB, sB.date).forEach((s) => changes.push({ id: s.id, doctor_id: dA }));
+
+    // Règles de garde APRÈS échange, sur les dates concernées.
+    const byId = {}; (medecins || []).forEach((m) => { byId[m.id] = m; });
+    const swap = {}; swap[sA.id] = dB; swap[sB.id] = dA;
+    const docDe = (s) => (swap[s.id] !== undefined ? swap[s.id] : s.doctor_id);
+    for (const date of [sA.date, sB.date]) {
+      const gardes = (shifts || []).filter((s) => s.date === date &&
+        (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h"));
+      const grades = gardes.map((g) => byId[docDe(g)] && byId[docDe(g)].grade);
+      const nbRes = grades.filter((x) => x === "resident").length;
+      const nbAS = grades.filter((x) => x === "assistant_specialiste").length;
+      if (gardes.length >= 2 && nbRes < 1)
+        return { ok: false, message: "Échange refusé : aucun résident de garde le " + date + "." };
+      if (nbAS >= 2)
+        return { ok: false, message: "Échange refusé : 2 A/S de garde le " + date + " (interdit)." };
+    }
+  }
+  return { ok: true, message: "Échange valide.", changes };
+}
+
 /* ------------- Export pour Node (tests). Sans effet en navigateur. ------ */
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, validerEquite, compterParMedecin, plTrier, plRangDesiderata, alertesAbsences };
+  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, validerEquite, compterParMedecin, plTrier, plRangDesiderata, alertesAbsences, validerEchange };
 }
