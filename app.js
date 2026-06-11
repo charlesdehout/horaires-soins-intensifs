@@ -1249,13 +1249,25 @@ async function construireEvenements(debutISO, finISO) {
       if (GRILLE_CONGES.includes(s.shift_type))
         (congeJ[s.date] = congeJ[s.date] || new Set()).add(s.doctor_id);
     });
+    // Itération de dates SÛRE en UTC (setUTCDate avance toujours d'un jour) —
+    // ne PAS utiliser lendemainDe ici (parse en heure locale → peut ne pas
+    // avancer en fuseau UTC+, ce qui provoquerait une boucle infinie).
+    const isoUTC = (dt) => dt.toISOString().slice(0, 10);
     (prefs || []).forEach((p) => {
       if (!GRILLE_CONGES.includes(p.pref_type)) return;
       if (p.status && p.status !== "approuve") return;
-      let d = p.start_date;
-      while (d <= p.end_date) { (congeJ[d] = congeJ[d] || new Set()).add(p.doctor_id); d = lendemainDe(d); }
+      const cur = new Date(p.start_date + "T00:00:00Z");
+      const stop = new Date(p.end_date + "T00:00:00Z");
+      while (cur <= stop) {
+        (congeJ[isoUTC(cur)] = congeJ[isoUTC(cur)] || new Set()).add(p.doctor_id);
+        cur.setUTCDate(cur.getUTCDate() + 1);
+      }
     });
-    for (let d = debut; d < fin; d = lendemainDe(d)) {
+    const cur = new Date(debut + "T00:00:00Z");
+    const stop = new Date(fin + "T00:00:00Z");
+    while (cur < stop) {
+      const d = isoUTC(cur);
+      cur.setUTCDate(cur.getUTCDate() + 1); // avance AVANT tout continue
       const aS = aShiftJ[d] || new Set();
       const cg = congeJ[d] || new Set();
       const repos = idsTous.filter((id) => !aS.has(id) && !cg.has(id));
