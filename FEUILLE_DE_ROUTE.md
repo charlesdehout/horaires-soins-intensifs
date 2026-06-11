@@ -326,6 +326,11 @@
     24 h** (tiennent une station + la nuit, ≥1 résident, jamais 2 A/S) → équipe
     squelette qui, avec la tolérance de stations vides, libère le maximum de
     monde pour le congrès. (`plEstCongres` dans `plGenererSemaine`.)
+  - **La participation NE crée PLUS d'absence bloquante** : tout le monde peut
+    participer, mais l'horaire DOIT pouvoir être généré → l'algo produit l'équipe
+    minimale à partir de TOUS les médecins ; les non-planifiés vont au congrès.
+    (Suppression de la création d'absences participants ; champs participants /
+    type d'absence retirés du formulaire de congrès.)
   - **Aucune demande possible pendant un congrès** : `plagePendantCongres` bloque
     toute préférence (formulaire + popup calendrier) chevauchant un congrès — les
     jours sont gérés par l'admin + l'algo.

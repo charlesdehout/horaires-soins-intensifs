@@ -2556,13 +2556,14 @@ function rendrePeriodes() {
   });
 }
 
-/* Adapte le formulaire au type choisi : fermeture → unité ; congrès →
-   participants + type d'absence. */
+/* Adapte le formulaire au type choisi : fermeture → unité.
+   Congrès → ni participants ni type d'absence (la participation ne crée plus
+   d'absence bloquante : l'algo génère l'équipe minimale, le reste va au congrès). */
 function majChampsPeriode() {
   const congres = spType.value === "congres";
-  spUniteWrap.classList.toggle("hidden", congres);
-  spAbsTypeWrap.classList.toggle("hidden", !congres);
-  spParticipantsWrap.classList.toggle("hidden", !congres);
+  spUniteWrap.classList.toggle("hidden", congres);   // unité : seulement pour une fermeture
+  spAbsTypeWrap.classList.add("hidden");
+  spParticipantsWrap.classList.add("hidden");
 }
 if (spType) spType.addEventListener("change", majChampsPeriode);
 
@@ -2625,19 +2626,12 @@ if (periodeForm) periodeForm.addEventListener("submit", async (e) => {
   const { error } = await sb.from("special_periods").insert(ligne);
   if (error) return messagePeriode("Erreur : " + error.message);
 
-  // Congrès : créer les absences APPROUVÉES des participants cochés.
-  if (type === "congres") {
-    const coches = Array.from(spParticipants.querySelectorAll(".sp-part:checked")).map((c) => c.value);
-    if (coches.length) {
-      const prefs = coches.map((id) => ({
-        doctor_id: id, start_date: start, end_date: end,
-        pref_type: spAbsType.value, note: notePourCongres(label),
-        status: "approuve", decided_at: new Date().toISOString(),
-      }));
-      const { error: e2 } = await sb.from("preferences").insert(prefs);
-      if (e2) return messagePeriode("Période créée mais erreur sur les absences : " + e2.message);
-    }
-  }
+  // CONGRÈS : on ne crée PLUS d'absences bloquantes pour les participants.
+  // Tout le monde peut participer, mais un horaire DOIT pouvoir être généré :
+  // pendant le congrès, l'algo produit une ÉQUIPE MINIMALE (2 gardes forcées en
+  // 24 h + tolérance de stations vides) à partir de TOUS les médecins ; ceux qui
+  // ne sont pas planifiés ce jour-là vont au congrès. La participation n'est donc
+  // pas une absence (elle ne bloque pas le fait d'être dans l'horaire).
 
   periodeForm.classList.add("hidden");
   await chargerPeriodes();
