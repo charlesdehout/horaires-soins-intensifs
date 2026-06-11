@@ -84,6 +84,25 @@ const EQUITE = {
 
 
 /* ---------------------------------------------------------------------
+   OFF-CLINIC (§9) — hiérarchie de suppression / limitation (préférence N3).
+   L'off-clinic des Résidents dépendants est un DROIT, mais on le LIMITE pour
+   ne pas aggraver les jours déjà tendus, et on ARBITRE entre résidents :
+   ceux qui ont DÉJÀ le plus de congés (puis le plus d'absences) cèdent leur
+   off-clinic en PREMIER (les autres restent prioritaires). Tous SOUPLES :
+   - max_absences_jour   : on n'AJOUTE pas un off-clinic un jour où le nombre
+     d'absents simultanés (méthode §14) atteindrait ce seuil → on REPORTE sur
+     un autre jour ouvrable du mois. 5 = on reste sous la zone critique (6+).
+   - min_residents_dispo : on garde au moins ce nombre de résidents DISPONIBLES
+     (non absents) ce jour-là, pour la couverture de nuit (≥1 résident). Non
+     appliqué si l'effectif résident est ≤ ce seuil (contrainte insatisfiable).
+   --------------------------------------------------------------------- */
+const OFFCLINIC = {
+  max_absences_jour:   5,
+  min_residents_dispo: 1,
+};
+
+
+/* ---------------------------------------------------------------------
    Types de préférence qui rendent un médecin NON planifiable un jour
    donné (contrainte dure). 'souhait' reste souple (non bloquant).
    --------------------------------------------------------------------- */
@@ -173,6 +192,6 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     CONGE_TYPES, calculerPaques, joursFeriesBE, estJourOuvre,
     dateEnISO, ajouterJours,
-    POSTES_JOUR, COUVERTURE, PREF_BLOQUANTES, EQUITE,
+    POSTES_JOUR, COUVERTURE, PREF_BLOQUANTES, EQUITE, OFFCLINIC,
   };
 }

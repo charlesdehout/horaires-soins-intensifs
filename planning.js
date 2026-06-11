@@ -38,6 +38,13 @@ function plEquite() {
   const e = _PL_REGLES ? _PL_REGLES.EQUITE : (typeof EQUITE !== "undefined" ? EQUITE : null);
   return e || PL_EQUITE_DEFAUT;
 }
+/* Paramètres OFF-CLINIC (§9, Module 11b). Repli souple si la config ne les
+   expose pas (compatibilité ascendante). */
+const PL_OFFCLINIC_DEFAUT = { max_absences_jour: 5, min_residents_dispo: 1 };
+function plOffclinic() {
+  const o = _PL_REGLES ? _PL_REGLES.OFFCLINIC : (typeof OFFCLINIC !== "undefined" ? OFFCLINIC : null);
+  return o || PL_OFFCLINIC_DEFAUT;
+}
 
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
@@ -906,6 +913,21 @@ function genererTrimestre(opts) {
    une garde »). Off-clinic = 0 station, pas de repos généré ; crédité en
    heures par compterParMedecin.
 
+   MODULE 11b — HIÉRARCHIE DE SUPPRESSION / LIMITATION (préférence N3) :
+   - Plafond d'ABSENCES SIMULTANÉES : on n'ajoute pas un off-clinic un jour
+     où le nombre d'absents (méthode §14) atteindrait OFFCLINIC.max_absences_jour
+     → on REPORTE sur un autre jour ouvrable éligible du mois (le droit est
+     préservé tant qu'un jour non saturé existe).
+   - MINIMUM de RÉSIDENTS DISPONIBLES : on garde ≥ OFFCLINIC.min_residents_dispo
+     résidents non absents ce jour-là (couverture de nuit). Non appliqué si
+     l'effectif résident est ≤ ce seuil (contrainte insatisfiable).
+   - ARBITRAGE entre résidents : ceux qui ont DÉJÀ le plus de CONGÉS (puis le
+     plus d'ABSENCES totales) sont traités EN DERNIER → ils cèdent leur
+     off-clinic en PREMIER quand les jours se saturent ; les autres restent
+     prioritaires. Départage final : ordre d'origine (stable).
+   Comportement INCHANGÉ en l'absence de saturation (faibles absences,
+   effectif résident > seuil).
+
    Fonction PURE. opts = { annee, mois (1-12), medecins, shifts, preferences }.
    Renvoie les shifts off-clinic à AJOUTER (type "off").
    ===================================================================== */
@@ -913,7 +935,12 @@ function genererOffClinic(opts) {
   const annee = opts.annee, mois = opts.mois;
   const medecins = opts.medecins || [];
   const shifts = opts.shifts || [];
+  const prefs = opts.preferences || [];
   const bloquantes = plBloq();
+  const cfg = plOffclinic();
+  const MAX_ABS = Number.isFinite(cfg.max_absences_jour) ? cfg.max_absences_jour : 5;
+  const MIN_RES = Number.isFinite(cfg.min_residents_dispo) ? cfg.min_residents_dispo : 1;
+  const CONGES = ["conge_annuel", "conge_scientifique", "conge_extralegal", "conge"];
 
   // Index des shifts par médecin et par date.
   const byMed = {};
@@ -924,7 +951,7 @@ function genererOffClinic(opts) {
 
   // Index des dates bloquées par préférence (congé / indispo / récup / off_clinic).
   const prefBloq = {};
-  (opts.preferences || []).forEach((p) => {
+  prefs.forEach((p) => {
     if (!bloquantes.includes(p.pref_type)) return;
     const set = (prefBloq[p.doctor_id] = prefBloq[p.doctor_id] || new Set());
     let d = p.start_date;
@@ -935,23 +962,60 @@ function genererOffClinic(opts) {
   const aGarde = (id, d) => shiftsDe(id, d).some((x) => x.shift_type === "garde_nuit" || x.shift_type === "garde_24h");
 
   const dates = plDatesDuMois(annee, mois);
-  const out = [];
 
-  medecins.forEach((m) => {
-    // Éligibilité : Résident dépendant uniquement (§9).
-    if (m.grade !== "resident" || m.statut === "independant") return;
+  // --- Décompte d'ABSENTS simultanés par date (méthode §14 : préférences
+  //     bloquantes + shifts d'absence, HORS repos de garde automatique).
+  //     L'off-clinic posé ICI est ajouté au décompte au fil de l'eau. ---
+  const absentParDate = {};
+  dates.forEach((d) => { absentParDate[d] = new Set(); });
+  prefs.forEach((p) => {
+    if (!bloquantes.includes(p.pref_type)) return;
+    let d = p.start_date;
+    while (d <= p.end_date) { if (absentParDate[d]) absentParDate[d].add(p.doctor_id); d = plAdd(d, 1); }
+  });
+  shifts.forEach((s) => {
+    if (absentParDate[s.date] && plEstAbsence(s.shift_type) && s.shift_type !== "repos_garde")
+      absentParDate[s.date].add(s.doctor_id);
+  });
 
-    // Total de jours d'absence du mois (tous types sauf l'off-clinic lui-même).
+  // Effectif résident (pour la garde de min. de résidents disponibles).
+  const residentsTeam = medecins.filter((m) => m.grade === "resident");
+  const enforceMinRes = residentsTeam.length > MIN_RES;
+
+  // --- Éligibles + métriques d'arbitrage (congés, absences totales) ---
+  const elig = [];
+  medecins.forEach((m, idx) => {
+    if (m.grade !== "resident" || m.statut === "independant") return; // §9
+
     const absSet = new Set();
+    const congeDates = new Set();
     dates.forEach((d) => {
-      const aAbsence = shiftsDe(m.id, d).some((x) => plEstAbsence(x.shift_type) && x.shift_type !== "off");
-      if (aAbsence || estBloque(m.id, d)) absSet.add(d);
+      const sd = shiftsDe(m.id, d);
+      if (sd.some((x) => plEstAbsence(x.shift_type) && x.shift_type !== "off") || estBloque(m.id, d)) absSet.add(d);
+      if (sd.some((x) => CONGES.includes(x.shift_type))) congeDates.add(d);
     });
+    prefs.forEach((p) => {
+      if (p.doctor_id !== m.id || !CONGES.includes(p.pref_type)) return;
+      let d = p.start_date;
+      while (d <= p.end_date) { congeDates.add(d); d = plAdd(d, 1); }
+    });
+
     const abs = absSet.size;
     const droit = abs <= 4 ? 2 : abs <= 9 ? 1 : 0;
     if (droit === 0) return;
+    elig.push({ m, idx, droit, nbAbs: abs, nbConges: congeDates.size });
+  });
 
-    // Placement sur les premiers jours ouvrables éligibles.
+  // Ceux qui ont le PLUS de congés (puis d'absences) cèdent EN PREMIER → traités
+  // EN DERNIER. Tri ascendant (moins de congés/absences d'abord), ordre original
+  // en départage stable.
+  elig.sort((a, b) =>
+    (a.nbConges - b.nbConges) ||
+    (a.nbAbs - b.nbAbs) ||
+    (a.idx - b.idx));
+
+  const out = [];
+  elig.forEach(({ m, droit }) => {
     let poses = 0;
     for (const d of dates) {
       if (poses >= droit) break;
@@ -966,7 +1030,20 @@ function genererOffClinic(opts) {
       if (aGarde(m.id, d)) continue;               // jamais le jour d'une garde
       if (aGarde(m.id, plAdd(d, -1))) continue;    // pas en post-garde (repos)
       if (aGarde(m.id, plAdd(d, 1))) continue;     // ne peut précéder une garde
+
+      // N3 — plafond d'absences simultanées (l'off-clinic compte comme absence).
+      const absJour = absentParDate[d] ? absentParDate[d].size : 0;
+      if (absJour + 1 > MAX_ABS) continue;         // jour saturé → reporter
+
+      // N3 — garder un minimum de résidents disponibles (couverture de nuit).
+      if (enforceMinRes) {
+        const resDispo = residentsTeam.reduce((n, r) =>
+          n + ((absentParDate[d] && absentParDate[d].has(r.id)) ? 0 : 1), 0);
+        if (resDispo - 1 < MIN_RES) continue;      // garderait trop peu de résidents
+      }
+
       out.push({ date: d, shift_type: "off", poste: null, doctor_id: m.id });
+      if (absentParDate[d]) absentParDate[d].add(m.id);
       poses++;
     }
   });

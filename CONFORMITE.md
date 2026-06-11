@@ -106,7 +106,7 @@ plusieurs **contraintes dures (Niveau 1)** ne sont pas encore appliquées.
 | A/S 24h de préférence | ✅ |
 | Tour même personne sam+dim | ✅ (appliqué) |
 | Rotation trimestrielle des unités (historique) | ❌ |
-| Off-clinic : retirer d'abord à ceux qui ont déjà des congés | ❌ |
+| Off-clinic : retirer d'abord à ceux qui ont déjà des congés | ✅ **M11b** : plafond d'absences simultanées (§14) + min. de résidents dispo ; arbitrage = plus de congés/absences cèdent en premier (report dans le mois). Tunable `OFFCLINIC` dans regles.js. |
 | Désidératas (priorités admin/travailleurs) | ❌ |
 
 **Niveau 4 — préférences légères** : récup fériés réschedulables ❌ · rotation trimestrielle ❌ · 80 % moins de jours ⚠️ (`jours_travailles`) · suppression totale off-clinic en dernier recours ❌.

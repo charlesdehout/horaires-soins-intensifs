@@ -321,6 +321,34 @@ test("off-clinic crédité comme heures de travail (10,5 h)", () => {
   assert.strictEqual(stats.x.heures, 10.5, "heures off-clinic = " + stats.x.heures);
 });
 
+test("off-clinic : reporté si le jour atteint le plafond d'absences simultanées (§14)", () => {
+  const r = { id: "rp", grade: "resident", statut: "dependant", jours_travailles: [1,2,3,4,5] };
+  // 5 autres médecins absents le lundi 1/6 → +1 off = 6 (critique) → jour saturé.
+  const prefs = [1,2,3,4,5].map((n) =>
+    ({ doctor_id: "x" + n, start_date: "2026-06-01", end_date: "2026-06-01", pref_type: "indispo" }));
+  const offs = genererOffClinic({ annee: 2026, mois: 6, medecins: [r], shifts: [], preferences: prefs });
+  assert.strictEqual(offs.length, 2, "droit préservé par report, obtenu " + offs.length);
+  assert(offs.every((o) => o.date !== "2026-06-01"), "off-clinic posé sur un jour saturé");
+});
+
+test("off-clinic : à capacité limitée, le résident avec le plus de congés cède en premier (N3)", () => {
+  const r1 = { id: "r1", grade: "resident", statut: "dependant", jours_travailles: [1] }; // 0 congé
+  const r2 = { id: "r2", grade: "resident", statut: "dependant", jours_travailles: [1] }; // 1 congé
+  const prefs = [
+    { doctor_id: "r2", start_date: "2026-06-02", end_date: "2026-06-02", pref_type: "conge_annuel" },
+  ];
+  // Sature les lundis 8/15/22/29 → seul le lundi 1/6 reste libre. Avec 2 résidents
+  // et min_residents_dispo=1, un seul des deux peut y poser un off-clinic.
+  ["2026-06-08", "2026-06-15", "2026-06-22", "2026-06-29"].forEach((d) => {
+    [1,2,3,4,5].forEach((n) => prefs.push({ doctor_id: "x" + d + n, start_date: d, end_date: d, pref_type: "indispo" }));
+  });
+  const offs = genererOffClinic({ annee: 2026, mois: 6, medecins: [r1, r2], shifts: [], preferences: prefs });
+  const r1offs = offs.filter((o) => o.doctor_id === "r1");
+  const r2offs = offs.filter((o) => o.doctor_id === "r2");
+  assert.strictEqual(r2offs.length, 0, "le résident avec le plus de congés aurait dû céder, obtenu " + r2offs.length);
+  assert(r1offs.length >= 1 && r1offs.every((o) => o.date === "2026-06-01"), "r1 (moins de congés) devait obtenir le lundi 1/6");
+});
+
 console.log("\n=== Point 4 — Souhaits (désidératas « je veux travailler ») ===");
 
 const ABSENCES_TEST = ["recup", "repos_garde", "off", "conge_annuel", "conge_scientifique", "conge_extralegal"];

@@ -217,10 +217,32 @@
     changement de statut refusé, dépassement de quota refusé, admin non bloqué.
   - **À lancer** dans le SQL Editor Supabase APRÈS `module10` + `module18`.
 
+## ✅ Fait dans ce lot (juin 2026 — Module 11b : hiérarchie off-clinic)
+
+- **Off-clinic — limitation & arbitrage** (`planning.js` `genererOffClinic` +
+  `regles.js` `OFFCLINIC` + 2 tests ; **aucun SQL**) :
+  - **Plafond d'absences simultanées** : on n'ajoute pas un off-clinic un jour
+    où le nombre d'absents (méthode §14) atteindrait `OFFCLINIC.max_absences_jour`
+    (défaut 5, sous la zone critique 6+) → le droit est **reporté** sur un autre
+    jour ouvrable éligible du mois.
+  - **Minimum de résidents disponibles** : on garde ≥ `OFFCLINIC.min_residents_dispo`
+    résidents non absents ce jour-là (couverture de nuit). Non appliqué si
+    l'effectif résident est ≤ ce seuil (insatisfiable).
+  - **Arbitrage « retirer d'abord à ceux qui ont déjà des congés »** : à capacité
+    limitée, les résidents avec le PLUS de congés (puis d'absences totales) sont
+    traités EN DERNIER → ils **cèdent leur off-clinic en premier** ; départage
+    final par ordre d'origine (stable).
+  - **Rétro-compatible** : comportement identique sans saturation (faibles
+    absences, effectif résident > seuil). Paramètres tunables dans `regles.js`.
+  - **Tests** : 2 cas (report sur jour saturé ; arbitrage congés entre 2 résidents)
+    → **50/50 attendus** (à confirmer en local).
+
 ## 🔜 Reste à faire (par priorité)
 
-- **Off-clinic** : retirer d'abord à ceux qui ont déjà des congés (hiérarchie N3/N4).
-- Divers raffinements N3/N4 (cf. CONFORMITE.md).
+- Raffinements N3/N4 (cf. CONFORMITE.md) : « si 3 gardes/sem → préférer 17h–9h »,
+  résident en 17h–9h sauf équité, etc.
+- N4 : suppression TOTALE de l'off-clinic en dernier recours (au-delà de la
+  limitation actuelle).
 
 ## ✅ Fait dans ce lot (juin 2026 — Module 20 : rotation trimestrielle des unités)
 
