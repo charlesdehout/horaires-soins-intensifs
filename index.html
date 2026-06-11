@@ -551,8 +551,16 @@
     <div id="desiderata-modal" class="modal-overlay hidden">
       <div class="modal-card">
         <h3>Nouvelle demande</h3>
-        <p id="desiderata-dates" class="zone-info"></p>
+        <p class="zone-info">Choisis la fenêtre de jours (modifiable) et le type de demande.</p>
         <div class="form-grid">
+          <div>
+            <label for="desiderata-debut">Du</label>
+            <input type="date" id="desiderata-debut" required />
+          </div>
+          <div>
+            <label for="desiderata-fin">Au</label>
+            <input type="date" id="desiderata-fin" required />
+          </div>
           <div>
             <label for="desiderata-type">Type</label>
             <select id="desiderata-type"></select>

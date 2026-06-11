@@ -93,7 +93,8 @@ const prefsTbody  = document.getElementById("prefs-tbody");
 const desModal      = document.getElementById("desiderata-modal");
 const desType       = document.getElementById("desiderata-type");
 const desNote       = document.getElementById("desiderata-note");
-const desDatesEl    = document.getElementById("desiderata-dates");
+const desDebut      = document.getElementById("desiderata-debut");
+const desFin        = document.getElementById("desiderata-fin");
 const desMsg        = document.getElementById("desiderata-msg");
 const desOkBtn      = document.getElementById("desiderata-ok");
 const desAnnulerBtn = document.getElementById("desiderata-annuler");
@@ -1008,15 +1009,24 @@ function ouvrirPopupDesiderata(debut, fin) {
   desType.innerHTML = pType.innerHTML;     // mêmes types que le formulaire
   desType.value = "souhait";               // défaut : désidérata
   desNote.value = "";
-  desDatesEl.textContent = "Dates : " + debut + (fin !== debut ? " → " + fin : "");
+  // Fenêtre de jours pré-remplie (jour choisi), DATES MODIFIABLES par le médecin.
+  desDebut.value = debut;
+  desFin.value = fin || debut;
   desMsg.textContent = ""; desMsg.className = "message";
-  desModal.dataset.debut = debut; desModal.dataset.fin = fin;
   desModal.classList.remove("hidden");
 }
 if (desAnnulerBtn) desAnnulerBtn.addEventListener("click", () => desModal.classList.add("hidden"));
 if (desModal) desModal.addEventListener("click", (e) => { if (e.target === desModal) desModal.classList.add("hidden"); });
 if (desOkBtn) desOkBtn.addEventListener("click", async () => {
-  const r = await soumettrePreference(desType.value, desModal.dataset.debut, desModal.dataset.fin, desNote.value);
+  const debut = desDebut.value, fin = desFin.value;
+  if (!debut || !fin) { desMsg.textContent = "Choisis une date de début et de fin."; desMsg.className = "message error"; return; }
+  // Re-vérifie le blocage « dates publiées » (la fenêtre a pu être modifiée).
+  if (await plagePubliee(debut, fin)) {
+    desMsg.textContent = "Ces dates touchent un planning déjà publié — demande impossible.";
+    desMsg.className = "message error";
+    return;
+  }
+  const r = await soumettrePreference(desType.value, debut, fin, desNote.value);
   desMsg.textContent = r.message; desMsg.className = "message " + r.level;
   if (r.ok) {
     desModal.classList.add("hidden");
