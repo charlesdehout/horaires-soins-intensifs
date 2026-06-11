@@ -580,6 +580,13 @@ button.mini.danger:hover { background: #fbeae8; }
   font-weight: 600;
   cursor: pointer;
 }
+/* Pastille « au repos / non planifié » (médecin actif non posté, non en congé). */
+.grille-chip-repos {
+  background: #eaecef;
+  color: #57606a;
+  font-weight: 500;
+  cursor: default;
+}
 /* Module 19 — repère « épinglé » (pré-placement conservé à la régénération). */
 .grille-chip.epingle { outline: 2px solid #1f2328; outline-offset: -1px; }
 .epingle-label {

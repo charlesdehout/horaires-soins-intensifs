@@ -1187,7 +1187,7 @@ async function construireEvenements(debutISO, finISO) {
   // On prend toute préférence qui chevauche la période affichée.
   const { data: prefs, error: errPrefs } = await sb
     .from("preferences")
-    .select("id, doctor_id, start_date, end_date, pref_type, note")
+    .select("id, doctor_id, start_date, end_date, pref_type, note, status")
     .neq("status", "refuse") // on n'affiche pas les demandes refusées
     .lte("start_date", fin)
     .gte("end_date", debut);
@@ -1235,6 +1235,41 @@ async function construireEvenements(debutISO, finISO) {
         extendedProps: { tooltip: lib },
       });
     });
+  }
+
+  // --- 4) Synthèse « au repos / non planifiés » par jour (ADMIN) ---
+  // Une seule pastille compacte par jour : « 🛌 N au repos » (noms en infobulle).
+  // Médecins actifs sans aucun shift ce jour et non en congé (shift OU congé
+  // approuvé). Réservé à l'admin pour ne pas surcharger la vue d'un médecin.
+  if (medecinCourant && medecinCourant.role === "admin") {
+    const idsTous = Object.keys(carteMedecins);
+    const aShiftJ = {}, congeJ = {};
+    (shifts || []).forEach((s) => {
+      (aShiftJ[s.date] = aShiftJ[s.date] || new Set()).add(s.doctor_id);
+      if (GRILLE_CONGES.includes(s.shift_type))
+        (congeJ[s.date] = congeJ[s.date] || new Set()).add(s.doctor_id);
+    });
+    (prefs || []).forEach((p) => {
+      if (!GRILLE_CONGES.includes(p.pref_type)) return;
+      if (p.status && p.status !== "approuve") return;
+      let d = p.start_date;
+      while (d <= p.end_date) { (congeJ[d] = congeJ[d] || new Set()).add(p.doctor_id); d = lendemainDe(d); }
+    });
+    for (let d = debut; d < fin; d = lendemainDe(d)) {
+      const aS = aShiftJ[d] || new Set();
+      const cg = congeJ[d] || new Set();
+      const repos = idsTous.filter((id) => !aS.has(id) && !cg.has(id));
+      if (!repos.length) continue;
+      const noms = repos.map((id) => (carteMedecins[id] && carteMedecins[id].name) || "?")
+        .sort((a, b) => a.localeCompare(b));
+      events.push({
+        start: d, allDay: true,
+        title: "🛌 " + repos.length + " au repos",
+        backgroundColor: "#eaecef", borderColor: "#d0d7de", textColor: "#57606a",
+        classNames: ["shift-repos-synthese"],
+        extendedProps: { tooltip: "Au repos (non planifiés) : " + noms.join(", ") },
+      });
+    }
   }
 
   return events;
@@ -1750,6 +1785,22 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes) {
   // Drapeaux possibles : estLabo (fermé le week-end), ligneVide (ligne vierge
   // éditable insérée sous chaque unité pour la saisie manuelle d'un 2e médecin).
   const P = (codes) => (s) => codes.includes(s.shift_type);
+  // « Non planifiés (repos) » : tout médecin connu sans aucun shift ce jour et
+  // non en congé (indispo / formation / autre / récup férié + simplement libres).
+  const nonPlanifies = (d) => {
+    const aShift = new Set(shifts.filter((s) => s.date === d).map((s) => s.doctor_id));
+    const enConge = new Set();
+    shifts.forEach((s) => { if (s.date === d && GRILLE_CONGES.includes(s.shift_type)) enConge.add(s.doctor_id); });
+    (prefs || []).forEach((p) => {
+      if (!GRILLE_CONGES.includes(p.pref_type)) return;
+      if (p.status && p.status !== "approuve") return;
+      if (p.start_date <= d && p.end_date >= d) enConge.add(p.doctor_id);
+    });
+    return Object.keys(carteMedecins)
+      .filter((id) => !aShift.has(id) && !enConge.has(id))
+      .map((id) => nomFn(id))
+      .sort((a, b) => String(a).localeCompare(String(b)));
+  };
   const lignes = [];
   const stations = [
     ["USI 1", "usi1"], ["USI 2", "usi2"], ["USI 3", "usi3"], ["USI 4", "usi4"],
@@ -1765,17 +1816,18 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes) {
   lignes.push({ label: "Garde de nuit (17h–9h)", fill: XL.garde, get: (d) => nomsShift(shifts, d, P(["garde_nuit"]), nomFn) });
   lignes.push({ label: "Garde 24h", fill: XL.garde, get: (d) => nomsShift(shifts, d, P(["garde_24h"]), nomFn) });
   lignes.push({ label: "Tour (TWE)", fill: XL.garde, get: (d) => nomsShift(shifts, d, P(["twe"]), nomFn) });
-  lignes.push({ label: "Repos de garde", fill: XL.repos_garde, get: (d) => nomsShift(shifts, d, P(["repos_garde"]), nomFn) });
-  lignes.push({ label: "Repos", fill: XL.repos, get: (d) => nomsShift(shifts, d, P(["recup"]), nomFn) });
+  // Ordre (cf. grille) : Off-clinic, Récupération, Repos de garde, Non planifiés,
+  // puis les Congés à part.
   lignes.push({ label: "Off-clinic", fill: XL.off, get: (d) => nomsShift(shifts, d, P(["off"]), nomFn) });
+  lignes.push({ label: "Récupération", fill: XL.repos, get: (d) => nomsShift(shifts, d, P(["recup"]), nomFn) });
+  lignes.push({ label: "Repos de garde", fill: XL.repos_garde, get: (d) => nomsShift(shifts, d, P(["repos_garde"]), nomFn) });
+  lignes.push({ label: "Non planifiés (repos)", fill: XL.autre, get: (d) => nonPlanifies(d) });
   lignes.push({ label: "Congé annuel", fill: XL.congeA,
     get: (d) => nomsShift(shifts, d, P(["conge_annuel", "conge_extralegal"]), nomFn)
       .concat(nomsPref(prefs, d, ["conge_annuel", "conge_extralegal"], nomFn)) });
   lignes.push({ label: "Congé scientifique", fill: XL.congeS,
     get: (d) => nomsShift(shifts, d, P(["conge_scientifique"]), nomFn)
       .concat(nomsPref(prefs, d, ["conge_scientifique"], nomFn)) });
-  lignes.push({ label: "Indispo / formation / autre", fill: XL.autre,
-    get: (d) => nomsPref(prefs, d, ["indispo", "formation", "autre"], nomFn) });
 
   // Écriture des lignes (à partir de la ligne 3 : titre + en-tête au-dessus).
   lignes.forEach((lg, r) => {
@@ -2916,7 +2968,10 @@ const MOIS_FR = ["janvier", "février", "mars", "avril", "mai", "juin",
                  "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 const JOURS_FR = ["D", "L", "M", "M", "J", "V", "S"]; // index = getUTCDay()
 
-/* Définition des lignes de la grille (ordre d'affichage). */
+/* Définition des lignes de la grille (ordre d'affichage).
+   Ordre demandé : les POSTÉS d'abord (stations USI 1 → Labo, puis gardes / TWE),
+   ensuite OFF-CLINIC, RÉCUP, REPOS DE GARDE, puis les NON PLANIFIÉS (repos), et
+   enfin les CONGÉS à part. */
 function grilleLignes() {
   const postes = (typeof POSTES_JOUR !== "undefined" ? POSTES_JOUR : []);
   const lignes = postes.map((p) => ({ label: p.label, type: "station", code: p.code }));
@@ -2924,9 +2979,12 @@ function grilleLignes() {
   lignes.push({ label: "Garde 24h (WE)", type: "garde_24h_we" });
   lignes.push({ label: "TWE", type: "twe" });
   // Repos / absences éclatés en lignes dédiées (Pt 5 — récup bien visible).
+  lignes.push({ label: "Off-clinic", type: "off" });
   lignes.push({ label: "Récupération", type: "recup" });
   lignes.push({ label: "Repos de garde", type: "repos_garde" });
-  lignes.push({ label: "Off-clinic", type: "off" });
+  // Tous les médecins actifs NON postés et NON en congé (indispo / formation /
+  // « autre » / récup férié + simplement libres) → comptés comme « au repos ».
+  lignes.push({ label: "Non planifiés (repos)", type: "non_planifie" });
   lignes.push({ label: "Congés", type: "conges" });
   return lignes;
 }
@@ -2960,6 +3018,7 @@ function shiftsPourLigne(ligne, duJour) {
   if (ligne.type === "off") return duJour.filter((s) => s.shift_type === "off");
   if (ligne.type === "conges") return duJour.filter((s) =>
     s.shift_type === "conge_annuel" || s.shift_type === "conge_extralegal" || s.shift_type === "conge_scientifique");
+  // « non_planifie » est CALCULÉ (pas un type de shift) → géré dans construireGrille.
   return [];
 }
 
@@ -2973,7 +3032,25 @@ function typeDefautLigne(ligne) {
   if (ligne.type === "repos_garde") return { type: "repos_garde", poste: null };
   if (ligne.type === "off") return { type: "off", poste: null };
   if (ligne.type === "conges") return { type: "conge_annuel", poste: null };
+  if (ligne.type === "non_planifie") return null; // ligne calculée, non éditable
   return { type: "jour", poste: null };
+}
+
+/* Congés (types de shift OU de préférence comptant comme « en congé »). */
+const GRILLE_CONGES = ["conge", "conge_annuel", "conge_extralegal", "conge_scientifique"];
+
+/* Médecin actif (sous contrat) à la date ISO donnée. Mirroir simplifié de
+   plSousContrat : périodes contractuelles si présentes, sinon contract_start/end,
+   sinon toujours actif. */
+function medActifISO(m, iso) {
+  const per = m.contract_periods;
+  if (Array.isArray(per) && per.length) {
+    return per.some((p) => (!p.start || p.start <= iso) && (!p.end || p.end >= iso));
+  }
+  if (!m.contract_start && !m.contract_end) return true;
+  if (m.contract_start && iso < m.contract_start) return false;
+  if (m.contract_end && iso > m.contract_end) return false;
+  return true;
 }
 
 /* Construit (ou reconstruit) la grille pour le mois affiché au calendrier. */
@@ -3003,6 +3080,33 @@ async function construireGrille() {
     (parJour[s.date] = parJour[s.date] || []).push(s);
   });
 
+  // Roster complet (contrats) + préférences du mois → pour la ligne « Non
+  // planifiés (repos) » : tout médecin actif non posté et non en congé.
+  const { data: roster } = await sb.from("doctors")
+    .select("id, name, grade, role, contract_start, contract_end, contract_periods, jours_travailles");
+  const rosterList = roster || [];
+  const { data: prefsMois } = await sb.from("preferences")
+    .select("doctor_id, start_date, end_date, pref_type, status")
+    .lte("start_date", fin).gte("end_date", debut);
+  // Index par jour : médecins ayant un shift, et médecins EN CONGÉ (shift congé
+  // OU préférence de congé approuvée couvrant le jour).
+  const shiftDocsJour = {};   // iso -> Set(doctor_id)
+  const congeDocsJour = {};   // iso -> Set(doctor_id)
+  (shifts || []).forEach((s) => {
+    (shiftDocsJour[s.date] = shiftDocsJour[s.date] || new Set()).add(s.doctor_id);
+    if (GRILLE_CONGES.includes(s.shift_type))
+      (congeDocsJour[s.date] = congeDocsJour[s.date] || new Set()).add(s.doctor_id);
+  });
+  (prefsMois || []).forEach((p) => {
+    if (!GRILLE_CONGES.includes(p.pref_type)) return;
+    if (p.status && p.status !== "approuve") return; // seuls les congés validés « bloquent »
+    for (let j = 1; j <= nbJours; j++) {
+      const iso = annee + "-" + ms + "-" + String(j).padStart(2, "0");
+      if (p.start_date <= iso && p.end_date >= iso)
+        (congeDocsJour[iso] = congeDocsJour[iso] || new Set()).add(p.doctor_id);
+    }
+  });
+
   // Congrès & fermetures d'unités du mois (Module 17, visibles par tous).
   const periodesGrille = await periodesSur(debut, fin);
 
@@ -3029,6 +3133,25 @@ async function construireGrille() {
       const iso = annee + "-" + ms + "-" + String(j).padStart(2, "0");
       const we = estWeekendOuFerieISO(iso) ? " grille-we" : "";
       const duJour = parJour[iso] || [];
+
+      // Ligne CALCULÉE « Non planifiés (repos) » : médecins actifs sans aucun
+      // shift ce jour et non en congé (indispo / formation / autre / récup férié
+      // + simplement libres). Non éditable.
+      if (ligne.type === "non_planifie") {
+        const aShift = shiftDocsJour[iso] || new Set();
+        const enConge = congeDocsJour[iso] || new Set();
+        const repos = rosterList.filter((m) =>
+          medActifISO(m, iso) && !aShift.has(m.id) && !enConge.has(m.id));
+        let contenuNP = "";
+        repos.forEach((m) => {
+          contenuNP += "<span class='grille-chip grille-chip-repos' title='" +
+            escapeHtml((m.name || "?") + " — au repos (non planifié)") + "'>" +
+            escapeHtml(nomCourt(m.id)) + "</span>";
+        });
+        html += "<td class='grille-cell" + we + "' data-date='" + iso + "'>" + contenuNP + "</td>";
+        continue;
+      }
+
       const correspondants = shiftsPourLigne(ligne, duJour);
       const cls = "grille-cell" + we + (editable ? " editable" : "");
       const defaut = typeDefautLigne(ligne);
@@ -3079,6 +3202,8 @@ grilleTable.addEventListener("click", (e) => {
   }
   const cell = e.target.closest(".grille-cell");
   if (cell) {
+    // Lignes CALCULÉES (« Non planifiés ») : pas de data-type → cellule inerte.
+    if (!cell.getAttribute("data-type")) return;
     ouvrirAjoutShift({
       date: cell.getAttribute("data-date"),
       type: cell.getAttribute("data-type"),
