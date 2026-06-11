@@ -52,6 +52,12 @@ function plGardes() {
   const g = _PL_REGLES ? _PL_REGLES.GARDES : (typeof GARDES !== "undefined" ? GARDES : null);
   return g || PL_GARDES_DEFAUT;
 }
+/* Stations SANS continuité hebdomadaire ni ancrage trimestriel : le Labo de choc
+   tourne LIBREMENT (on ne fixe pas un médecin dessus toute la semaine, et ce
+   n'est pas une « unité maison » de trimestre). Les autres unités gardent la
+   continuité de soins. */
+const PL_STATIONS_SANS_CONTINUITE = ["labo_choc"];
+function plSansContinuite(code) { return PL_STATIONS_SANS_CONTINUITE.indexOf(code) !== -1; }
 
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
@@ -466,8 +472,9 @@ function plChoisirStation(med, postes, plan, etat, cle) {
   // Continuité de la semaine, sinon l'UNITÉ DE RÉFÉRENCE du médecin (rotation
   // trimestrielle, Module 20), sinon la première station libre.
   const pref = etat.station[med.id][cle] || med.unite_reference;
-  // La station habituelle doit aussi être OUVERTE ce jour-là (fermetures, M17).
-  if (pref && postes.includes(pref) && !(pref in plan)) return pref;
+  // La station habituelle doit être OUVERTE ce jour (fermetures, M17) et ne pas
+  // être une station SANS continuité (Labo de choc → pas d'ancrage).
+  if (pref && !plSansContinuite(pref) && postes.includes(pref) && !(pref in plan)) return pref;
   return postes.find((c) => !(c in plan)) || postes[0];
 }
 
@@ -491,7 +498,9 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
     if (PL_HEURES[s.shift_type] !== undefined) {
       plAffecter(sortie, etat, date, s.shift_type, s.doctor_id, s.poste || null);
       if ((s.shift_type === "jour" || s.shift_type === "garde_24h") && s.poste) {
-        etat.station[s.doctor_id][cle] = s.poste; plan[s.poste] = s.doctor_id;
+        plan[s.poste] = s.doctor_id;
+        // Pas d'ancrage de continuité pour les stations sans continuité (Labo).
+        if (!plSansContinuite(s.poste)) etat.station[s.doctor_id][cle] = s.poste;
       }
     } else {
       // Absence / repos épinglé : 0 h, pas de garde ; on marque juste occupé.
@@ -554,7 +563,8 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
     // Comportement HISTORIQUE : le complément (second) tient une station en 24 h.
     if (second) {
       const st = plChoisirStation(second, postes, plan, etat, cle);
-      plan[st] = second.id; etat.station[second.id][cle] = st; mode24[second.id] = true;
+      plan[st] = second.id; mode24[second.id] = true;
+      if (!plSansContinuite(st)) etat.station[second.id][cle] = st;
     }
   }
   const pool = plTrier(libres.filter((m) => !pris.has(m.id)), "jour", etat, date);
@@ -563,14 +573,18 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
     if (Object.values(plan).includes(m.id)) return;
     // Continuité de la semaine, sinon l'unité de référence (rotation, M20).
     const st = etat.station[m.id][cle] || m.unite_reference;
-    // La station de la semaine doit être OUVERTE ce jour (fermetures, M17).
-    if (st && postes.includes(st) && !(st in plan)) plan[st] = m.id;
+    // Station OUVERTE ce jour (M17) et AVEC continuité (le Labo n'ancre pas).
+    if (st && !plSansContinuite(st) && postes.includes(st) && !(st in plan)) plan[st] = m.id;
   });
   // 2b) On comble les stations encore vides avec le vivier de jour.
   postes.forEach((code) => {
     if (code in plan) return;
     const cand = pool.find((m) => !Object.values(plan).includes(m.id));
-    if (cand) { plan[code] = cand.id; etat.station[cand.id][cle] = code; }
+    if (cand) {
+      plan[code] = cand.id;
+      // Pas d'ancrage de continuité pour le Labo de choc (rotation libre).
+      if (!plSansContinuite(code)) etat.station[cand.id][cle] = code;
+    }
   });
 
   // 2c) NOUVEAU (N3) — si le vivier de jour ne suffit pas à pourvoir toutes les
@@ -591,7 +605,8 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
       if (reste.length === 0) break;                 // toutes les stations pourvues
       const st = plChoisirStation(m, postes, plan, etat, cle);
       if (st && !(st in plan)) {
-        plan[st] = m.id; etat.station[m.id][cle] = st; mode24[m.id] = true;
+        plan[st] = m.id; mode24[m.id] = true;
+        if (!plSansContinuite(st)) etat.station[m.id][cle] = st;
       }
     }
   }

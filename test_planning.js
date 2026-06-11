@@ -624,5 +624,17 @@ test("rotation : l'unité de référence sert de base à la continuité", () => 
     jours.filter((s) => s.poste !== "usi5").map((s) => s.date + ":" + s.poste).join(", "));
 });
 
+test("Labo de choc : pas d'ancrage (unité de référence Labo ignorée, rotation libre)", () => {
+  // Unité de référence = Labo de choc : contrairement à usi5, le Labo ne doit
+  // PAS fixer le médecin → il fait des journées sur d'AUTRES stations.
+  const meds = equipe().map((m) => m.id === "assistant_specialiste1"
+    ? Object.assign({}, m, { unite_reference: "labo_choc" }) : m);
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: [] });
+  const jours = r.shifts.filter((s) => s.doctor_id === "assistant_specialiste1" && s.shift_type === "jour");
+  assert(jours.length > 0, "le médecin ne fait aucune journée de station");
+  assert(jours.some((s) => s.poste !== "labo_choc"),
+    "le Labo ne devrait pas fixer le médecin (toutes ses journées au Labo)");
+});
+
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");
 process.exit(reussis === total ? 0 : 1);

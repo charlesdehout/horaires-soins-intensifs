@@ -281,6 +281,20 @@
   - ⚠️ **À vérifier visuellement** (je n'ai pas pu lancer l'app cette session) :
     grille, un export, et le calendrier admin.
 
+## ✅ Correctifs / ajustements (juin 2026)
+
+- **🐞 Page admin figée (boucle infinie)** : la synthèse « repos » du calendrier
+  bouclait via `lendemainDe()` (parse en heure LOCALE → pouvait ne pas avancer en
+  fuseau UTC+). Réécrite en itération **UTC** (`setUTCDate`), incrément avant tout
+  `continue`. Plus aucune boucle ne dépend de `lendemainDe`.
+- **Grille** : « Non planifiés (repos) » déplacé **en toute fin** (après Congés) ;
+  liste démarrant par USI 1→5, Bordet, Labo. Export aligné (repos en dernier).
+- **Labo de choc — rotation libre** (`planning.js` + `app.js` + 1 test) : pas de
+  **continuité hebdomadaire** ni d'**ancrage trimestriel** (`PL_STATIONS_SANS_CONTINUITE`).
+  Le Labo est pourvu chaque jour par qui est libre, sans fixer le médecin ; exclu
+  des propositions de rotation (M20). Les autres unités gardent la continuité.
+  → **52 tests attendus** en local (48 socle + 2 off-clinic + 1 garde 17h–9h + 1 Labo).
+
 ## 🔜 Reste à faire (par priorité)
 
 - N4 : suppression TOTALE de l'off-clinic en dernier recours (au-delà de la

@@ -1833,13 +1833,14 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes) {
   lignes.push({ label: "Off-clinic", fill: XL.off, get: (d) => nomsShift(shifts, d, P(["off"]), nomFn) });
   lignes.push({ label: "Récupération", fill: XL.repos, get: (d) => nomsShift(shifts, d, P(["recup"]), nomFn) });
   lignes.push({ label: "Repos de garde", fill: XL.repos_garde, get: (d) => nomsShift(shifts, d, P(["repos_garde"]), nomFn) });
-  lignes.push({ label: "Non planifiés (repos)", fill: XL.autre, get: (d) => nonPlanifies(d) });
   lignes.push({ label: "Congé annuel", fill: XL.congeA,
     get: (d) => nomsShift(shifts, d, P(["conge_annuel", "conge_extralegal"]), nomFn)
       .concat(nomsPref(prefs, d, ["conge_annuel", "conge_extralegal"], nomFn)) });
   lignes.push({ label: "Congé scientifique", fill: XL.congeS,
     get: (d) => nomsShift(shifts, d, P(["conge_scientifique"]), nomFn)
       .concat(nomsPref(prefs, d, ["conge_scientifique"], nomFn)) });
+  // « Non planifiés (repos) » en DERNIER (cohérent avec la grille).
+  lignes.push({ label: "Non planifiés (repos)", fill: XL.autre, get: (d) => nonPlanifies(d) });
 
   // Écriture des lignes (à partir de la ligne 3 : titre + en-tête au-dessus).
   lignes.forEach((lg, r) => {
@@ -2994,10 +2995,10 @@ function grilleLignes() {
   lignes.push({ label: "Off-clinic", type: "off" });
   lignes.push({ label: "Récupération", type: "recup" });
   lignes.push({ label: "Repos de garde", type: "repos_garde" });
-  // Tous les médecins actifs NON postés et NON en congé (indispo / formation /
-  // « autre » / récup férié + simplement libres) → comptés comme « au repos ».
-  lignes.push({ label: "Non planifiés (repos)", type: "non_planifie" });
   lignes.push({ label: "Congés", type: "conges" });
+  // Tous les médecins actifs NON postés et NON en congé (indispo / formation /
+  // « autre » / récup férié + simplement libres) → « au repos ». EN DERNIER.
+  lignes.push({ label: "Non planifiés (repos)", type: "non_planifie" });
   return lignes;
 }
 
@@ -3333,7 +3334,10 @@ async function proposerRotation() {
   rotationMsg.textContent = ""; rotationMsg.className = "message";
   const d = calendrier.getDate();
   const b = bornesTrimestrePlanning(d.getFullYear(), d.getMonth() + 1);
-  const stations = (typeof POSTES_JOUR !== "undefined" ? POSTES_JOUR : []).map((p) => p.code);
+  // Le Labo de choc n'est PAS une « unité maison » de trimestre (rotation libre,
+  // pas de continuité) → on l'exclut des propositions de rotation.
+  const stations = (typeof POSTES_JOUR !== "undefined" ? POSTES_JOUR : [])
+    .map((p) => p.code).filter((c) => c !== "labo_choc");
 
   const { data: meds, error: e1 } = await sb.from("doctors")
     .select("id, name, grade, unite_reference").neq("role", "admin").order("name", { ascending: true });

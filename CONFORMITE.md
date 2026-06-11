@@ -98,7 +98,7 @@ plusieurs **contraintes dures (Niveau 1)** ne sont pas encore appliquées.
 
 | Règle | Statut |
 |---|---|
-| Continuité dans les unités (hors Labo, souple le weekend) | ✅ (semaine) |
+| Continuité dans les unités (hors Labo, souple le weekend) | ✅ (semaine) — **Labo de choc EXCLU** : pas de continuité hebdo ni d'ancrage trimestriel (`PL_STATIONS_SANS_CONTINUITE` dans planning.js ; exclu des propositions de rotation M20). |
 | Concentration des gardes de nuit sur une période du mois | ✅ **M12c** : départage des gardes de nuit de semaine à déficit STRICTEMENT égal en faveur du médecin ayant gardé le plus récemment (regroupe les nuits sans coût d'équité ; tunable `EQUITE.concentration_*`). |
 | Si 3 gardes/semaine → préférer 17h–9h | ✅ **M-gardes** : à l'attribution de la 24h de semaine (promotion pour pourvoir une station), on préfère le médecin le MOINS chargé en gardes de la semaine ISO (évite d'amener quelqu'un à 3 gardes via une 24h ; départage souple, tunable `GARDES.eviter_24h_a_3_gardes`). |
 | Couples vendredi soir + dimanche 24h / jeudi soir + samedi 24h | ❌ |
