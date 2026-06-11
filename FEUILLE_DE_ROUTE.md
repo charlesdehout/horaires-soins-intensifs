@@ -289,6 +289,10 @@
   `continue`. Plus aucune boucle ne dépend de `lendemainDe`.
 - **Grille** : « Non planifiés (repos) » déplacé **en toute fin** (après Congés) ;
   liste démarrant par USI 1→5, Bordet, Labo. Export aligné (repos en dernier).
+- **Calendrier (vue mois/liste)** : ordre des événements par case imposé
+  (`eventOrder` + rang `ordre`) : USI 1→5, Bordet, Labo, gardes/tour, repos de
+  garde, récup, off, congés, puis « Non planifiés ». Événements passés en
+  « journée entière » (les vues mois/liste n'utilisent pas l'heure).
 - **Labo de choc — rotation libre** (`planning.js` + `app.js` + 1 test) : pas de
   **continuité hebdomadaire** ni d'**ancrage trimestriel** (`PL_STATIONS_SANS_CONTINUITE`).
   Le Labo est pourvu chaque jour par qui est libre, sans fixer le médecin ; exclu

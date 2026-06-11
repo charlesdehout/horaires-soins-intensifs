@@ -1092,6 +1092,26 @@ async function chargerCarteMedecins() {
   (data || []).forEach((m) => { carteMedecins[m.id] = m; });
 }
 
+/* Ordre d'affichage des événements dans une case du calendrier mois/liste :
+   USI 1→5, Bordet, Labo de choc (par station), puis gardes / tour, puis les
+   repos (repos de garde, récup, off), les congés, et enfin la synthèse
+   « Non planifiés ». Plus le rang est petit, plus l'événement est HAUT. */
+const CAL_RANG_STATION = { usi1: 1, usi2: 2, usi3: 3, usi4: 4, usi5: 5, bordet: 6, labo_choc: 7 };
+function rangEvenementCal(shiftType, poste) {
+  if (poste && CAL_RANG_STATION[poste] && (shiftType === "jour" || shiftType === "garde_24h"))
+    return CAL_RANG_STATION[poste];
+  switch (shiftType) {
+    case "garde_nuit":        return 8;
+    case "garde_24h":         return 9;   // garde 24 h sans station (week-end)
+    case "twe":               return 10;
+    case "repos_garde":       return 11;
+    case "recup":             return 12;
+    case "off":               return 13;
+    case "conge_annuel": case "conge_extralegal": case "conge_scientifique": case "conge": return 14;
+    default:                  return 50;
+  }
+}
+
 /* Construit les événements FullCalendar pour la période visible.
    debutISO / finISO : bornes fournies par FullCalendar (fin exclusive). */
 async function construireEvenements(debutISO, finISO) {
@@ -1135,7 +1155,7 @@ async function construireEvenements(debutISO, finISO) {
           backgroundColor: cfg.couleur,
           borderColor: estMien ? "#1f2328" : cfg.couleur,
           classNames: cls.concat(["shift-absence"]),
-          extendedProps: Object.assign({ tooltip: nom + " - " + cfg.label }, propsBase),
+          extendedProps: Object.assign({ tooltip: nom + " - " + cfg.label, ordre: rangEvenementCal(s.shift_type, s.poste) }, propsBase),
         });
         return;
       }
@@ -1146,38 +1166,36 @@ async function construireEvenements(debutISO, finISO) {
       // le même shift (clic d'édition → même formulaire).
       if (s.shift_type === "garde_24h" && s.poste) {
         const jour = SHIFT_CONFIG.jour;
+        const rgSt = rangEvenementCal("jour", s.poste);
         events.push({
           title: nom + " · " + station,
-          start: s.date + "T" + jour.debut + ":00",
-          end: s.date + "T" + jour.fin + ":00",
+          start: s.date, allDay: true,
           backgroundColor: jour.couleur,
           borderColor: estMien ? "#1f2328" : jour.couleur,
           classNames: cls,
-          extendedProps: Object.assign({ tooltip: nom + " · " + station + " (garde 24h)" }, propsBase),
+          extendedProps: Object.assign({ tooltip: nom + " · " + station + " (garde 24h)", ordre: rgSt }, propsBase),
         });
         events.push({
           title: nom + " · " + cfg.court,
-          start: s.date + "T" + cfg.debut + ":00",
-          end: lendemainDe(s.date) + "T" + cfg.fin + ":00",
+          start: s.date, allDay: true,
           backgroundColor: cfg.couleur,
           borderColor: estMien ? "#1f2328" : cfg.couleur,
           classNames: cls,
-          extendedProps: Object.assign({ tooltip: nom + " - " + cfg.label }, propsBase),
+          extendedProps: Object.assign({ tooltip: nom + " - " + cfg.label, ordre: rgSt + 0.5 }, propsBase),
         });
         return;
       }
 
-      // Cas général : un seul événement.
-      const dateFin = cfg.lendemain ? lendemainDe(s.date) : s.date;
+      // Cas général : un seul événement « journée entière » (l'heure n'est pas
+      // utile en vue mois/liste ; l'ordre des cases est piloté par `ordre`).
       const suffixe = station ? " · " + station : "";
       events.push({
         title: nom + " - " + cfg.court + suffixe,
-        start: s.date + "T" + cfg.debut + ":00",
-        end: dateFin + "T" + cfg.fin + ":00",
+        start: s.date, allDay: true,
         backgroundColor: cfg.couleur,
         borderColor: estMien ? "#1f2328" : cfg.couleur,
         classNames: cls,
-        extendedProps: Object.assign({ tooltip: nom + " - " + cfg.label + suffixe }, propsBase),
+        extendedProps: Object.assign({ tooltip: nom + " - " + cfg.label + suffixe, ordre: rangEvenementCal(s.shift_type, s.poste) }, propsBase),
       });
     });
   }
@@ -1279,7 +1297,7 @@ async function construireEvenements(debutISO, finISO) {
         title: "🛌 " + repos.length + " au repos",
         backgroundColor: "#eaecef", borderColor: "#d0d7de", textColor: "#57606a",
         classNames: ["shift-repos-synthese"],
-        extendedProps: { tooltip: "Au repos (non planifiés) : " + noms.join(", ") },
+        extendedProps: { tooltip: "Au repos (non planifiés) : " + noms.join(", "), ordre: 99 },
       });
     }
   }
@@ -1308,6 +1326,13 @@ async function initCalendrier() {
       // imposé par le CSS (.fc-daygrid-event) devient invisible sur la case
       // blanche. Les préférences en display:"background" ne sont pas affectées.
       eventDisplay: "block",
+      // Ordre des événements dans chaque case (mois) et chaque jour (liste) :
+      // stations USI 1→Labo, gardes/tour, repos, congés, puis « Non planifiés ».
+      eventOrder: function (a, b) {
+        const ra = (a.extendedProps && a.extendedProps.ordre != null) ? a.extendedProps.ordre : 50;
+        const rb = (b.extendedProps && b.extendedProps.ordre != null) ? b.extendedProps.ordre : 50;
+        return ra - rb;
+      },
       headerToolbar: {
         left: "prev,next today",
         center: "title",
