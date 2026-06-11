@@ -158,6 +158,8 @@
           <button id="ajouter-shift-btn" class="secondary">+ Ajouter un shift</button>
           <button id="publier-btn" class="secondary">✓ Publier</button>
           <button id="depublier-btn" class="secondary">↩ Repasser en brouillon</button>
+          <button id="restaurer-trim-btn" class="secondary">♻ Restaurer le dernier publié (trimestre)</button>
+          <button id="supprimer-trim-btn" class="danger">🗑 Supprimer le trimestre</button>
           <button id="export-planning-btn" class="secondary">⬇ Excel — Planning (mois)</button>
           <button id="export-trimestre-btn" class="secondary">⬇ Excel — Planning (trimestre)</button>
           <button id="export-recap-btn" class="secondary">⬇ Excel — Récap individuel</button>
@@ -539,6 +541,32 @@
             <button type="button" id="cancel-shift-btn" class="secondary">Annuler</button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- ============================================= -->
+    <!-- MODALE : désidérata depuis le calendrier       -->
+    <!-- (sélection de dates par un médecin)            -->
+    <!-- ============================================= -->
+    <div id="desiderata-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <h3>Nouvelle demande</h3>
+        <p id="desiderata-dates" class="zone-info"></p>
+        <div class="form-grid">
+          <div>
+            <label for="desiderata-type">Type</label>
+            <select id="desiderata-type"></select>
+          </div>
+          <div>
+            <label for="desiderata-note">Note (optionnel)</label>
+            <input type="text" id="desiderata-note" maxlength="200" placeholder="ex. mariage, congrès…" />
+          </div>
+        </div>
+        <p id="desiderata-msg" class="message"></p>
+        <div class="form-actions">
+          <button type="button" id="desiderata-ok">Enregistrer</button>
+          <button type="button" id="desiderata-annuler" class="secondary">Annuler</button>
+        </div>
       </div>
     </div>
 

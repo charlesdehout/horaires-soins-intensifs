@@ -302,12 +302,24 @@
 - **Repos non affiché les week-ends/fériés** : la synthèse « N au repos »
   (calendrier) et la ligne « Non planifiés » (grille + exports) sont vides les
   samedis/dimanches/fériés (tout le monde est off → sans intérêt).
-- **Désidératas encodés depuis le calendrier (v1)** (`app.js`) : un MÉDECIN
-  sélectionne une plage de dates (clic-glissé) sur le calendrier → bascule sur
-  « Mes préférences » avec les dates pré-remplies ; il choisit le type
-  (souhait/congé/indispo…) et valide (toute la validation quota/récup férié
-  existante s'applique). Admin : sélection ignorée. *À venir possible : popup
-  inline directement sur le calendrier (sans changer d'onglet).*
+- **Désidératas encodés depuis le calendrier (v2 — popup)** (`app.js` +
+  `index.html`) : un MÉDECIN sélectionne une plage de dates (clic-glissé) sur le
+  calendrier → **popup inline** (type + note) → enregistrement direct. La
+  validation quota/récup férié est mutualisée (`soumettrePreference`, partagée
+  avec le formulaire). **Bloqué sur les dates d'un planning PUBLIÉ**
+  (`plagePubliee`). Admin : sélection ignorée.
+
+- **Suppression / restauration de l'horaire (Module 22)** (`app.js` +
+  `index.html` + **`sql/module22_sauvegarde_horaire.sql`**) :
+  - Nouvelle table **`schedule_backups`** (snapshot JSON des shifts d'un mois,
+    type `publication` | `avant_suppression`, RLS admin). À lancer en SQL.
+  - **Snapshot automatique à chaque publication** d'un mois → le dernier publié
+    est toujours restaurable.
+  - Bouton **« 🗑 Supprimer le trimestre »** (admin) : sauvegarde de sécurité
+    des 3 mois puis efface shifts + schedules du trimestre affiché (confirmation).
+  - Bouton **« ♻ Restaurer le dernier publié (trimestre) »** : réinjecte, **en
+    BROUILLON**, le dernier snapshot publié de chaque mois du trimestre (remplace
+    l'actuel). Mois sans snapshot publié : ignorés (signalé).
 
 ## 🔜 Reste à faire (par priorité)
 

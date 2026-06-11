@@ -89,6 +89,14 @@ const pEnd        = document.getElementById("p-end");
 const pNote       = document.getElementById("p-note");
 const prefFormMsg = document.getElementById("pref-form-msg");
 const prefsTbody  = document.getElementById("prefs-tbody");
+/* Popup « désidérata depuis le calendrier » (sélection de dates). */
+const desModal      = document.getElementById("desiderata-modal");
+const desType       = document.getElementById("desiderata-type");
+const desNote       = document.getElementById("desiderata-note");
+const desDatesEl    = document.getElementById("desiderata-dates");
+const desMsg        = document.getElementById("desiderata-msg");
+const desOkBtn      = document.getElementById("desiderata-ok");
+const desAnnulerBtn = document.getElementById("desiderata-annuler");
 const prefsTable  = document.getElementById("prefs-table");
 const prefsEmpty  = document.getElementById("prefs-empty");
 
@@ -898,27 +906,16 @@ function rendrePreferences(prefs) {
   });
 }
 
-/* Ajoute une préférence pour le médecin connecté */
-prefForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  messageFormPref("");
-
-  if (!medecinCourant) {
-    messageFormPref("Profil médecin introuvable.");
-    return;
-  }
-
-  const debut = pStart.value;
-  const fin = pEnd.value;
-
-  // Validation simple des dates.
-  if (fin < debut) {
-    messageFormPref("La date de fin doit être postérieure ou égale à la date de début.");
-    return;
-  }
+/* Valide + insère une préférence pour le médecin connecté. Fonction PURE de DOM :
+   renvoie { ok, message, level }. Réutilisée par le formulaire « Mes préférences »
+   ET par le popup de désidérata depuis le calendrier. */
+async function soumettrePreference(type, debut, fin, note) {
+  if (!medecinCourant) return { ok: false, message: "Profil médecin introuvable.", level: "error" };
+  if (!debut || !fin) return { ok: false, message: "Dates manquantes.", level: "error" };
+  if (fin < debut) return { ok: false, message: "La date de fin doit être postérieure ou égale à la date de début.", level: "error" };
 
   // Contrôle des quotas de congés (bloquant), par catégorie et par ANNÉE ACADÉMIQUE.
-  const categorie = categorieConge(pType.value);
+  const categorie = categorieConge(type);
   if (categorie) {
     const anneeDebut = anneeAcademique(new Date(debut + "T00:00:00Z"));
     const anneeFin = anneeAcademique(new Date(fin + "T00:00:00Z"));
@@ -928,66 +925,104 @@ prefForm.addEventListener("submit", async (e) => {
       const dejaPris = congesUtilises(categorie, annee);
       const quota = quotaEffectif(categorie, annee);
       if (dejaPris + demande > quota) {
-        messageFormPref(
+        return { ok: false, level: "error", message:
           CONGE_TYPES[categorie].label + " " + labelAcad(annee) + " : quota dépassé (" +
           (dejaPris + demande) + " j ouvrés demandés pour un maximum de " + quota +
-          " j ; déjà " + dejaPris + " j encodés)."
-        );
-        return;
+          " j ; déjà " + dejaPris + " j encodés)." };
       }
     }
   }
 
   // Désidératas : avertissement INDICATIF si > 20 souhaits sur le trimestre (non bloquant).
-  let avertDesiderata = "";
-  if (pType.value === "souhait") {
+  let avert = "";
+  if (type === "souhait") {
     const dd = new Date(debut + "T00:00:00Z");
     const dejaDes = desiderataUtilises(dd.getUTCFullYear(), Math.floor(dd.getUTCMonth() / 3));
     if (dejaDes + 1 > QUOTA_DESIDERATAS) {
-      avertDesiderata = " ⚠️ " + (dejaDes + 1) + " désidératas ce trimestre (quota indicatif : " + QUOTA_DESIDERATAS + ").";
+      avert += " ⚠️ " + (dejaDes + 1) + " désidératas ce trimestre (quota indicatif : " + QUOTA_DESIDERATAS + ").";
     }
   }
 
   // Récup férié : il faut avoir TRAVAILLÉ un férié ; la date doit tomber dans les
   // 6 semaines qui suivent (alerte non bloquante hors fenêtre — l'admin tranche).
-  let avertRecup = "";
-  if (pType.value === "recup_ferie") {
+  if (type === "recup_ferie") {
     const fer = feriesTravailles();
     if (!fer.length) {
-      messageFormPref("Aucun jour férié travaillé : pas de droit à récup férié pour l'instant.");
-      return;
+      return { ok: false, level: "error", message: "Aucun jour férié travaillé : pas de droit à récup férié pour l'instant." };
     }
     if (recupFeriesPosees() >= fer.length) {
-      avertRecup = " ⚠️ déjà " + recupFeriesPosees() + " récup férié pour " + fer.length + " férié(s) travaillé(s).";
+      avert += " ⚠️ déjà " + recupFeriesPosees() + " récup férié pour " + fer.length + " férié(s) travaillé(s).";
     } else if (!fer.some((f) => debut > f && debut <= echeanceRecup(f))) {
-      avertRecup = " ⚠️ hors des 6 semaines suivant un férié travaillé.";
+      avert += " ⚠️ hors des 6 semaines suivant un férié travaillé.";
     }
   }
 
   const payload = {
     doctor_id: medecinCourant.id,
-    pref_type: pType.value,
+    pref_type: type,
     start_date: debut,
     end_date: fin,
-    note: pNote.value.trim() || null,
+    note: (note || "").trim() || null,
     status: "en_attente", // soumise pour validation par l'admin (§8.3)
   };
-
   const { error } = await sb.from("preferences").insert(payload);
-
   if (error) {
     console.error("Erreur ajout préférence :", error);
-    if (error.code === "42501" || /policy/i.test(error.message)) {
-      messageFormPref("Action refusée par les règles de sécurité (RLS).");
-    } else {
-      messageFormPref("Erreur : " + error.message);
-    }
-    return;
+    const msg = (error.code === "42501" || /policy/i.test(error.message))
+      ? "Action refusée par les règles de sécurité (RLS)."
+      : "Erreur : " + error.message;
+    return { ok: false, message: msg, level: "error" };
   }
+  return { ok: true, level: "info", message: "Préférence enregistrée." + avert };
+}
 
+/* Ajoute une préférence pour le médecin connecté (formulaire « Mes préférences »). */
+prefForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  messageFormPref("");
+  const r = await soumettrePreference(pType.value, pStart.value, pEnd.value, pNote.value);
+  if (!r.ok) { messageFormPref(r.message, "error"); return; }
   prefForm.reset();
-  messageFormPref("Préférence enregistrée." + avertDesiderata + avertRecup, "info");
+  messageFormPref(r.message, "info");
   chargerPreferences();
+});
+
+/* ----- Popup « désidérata depuis le calendrier » (Module : sélection dates) ----- */
+/* Vrai si la plage [debut, fin] touche un mois au planning PUBLIÉ (non modifiable). */
+async function plagePubliee(debut, fin) {
+  const d0 = new Date(debut + "T00:00:00Z");
+  const d1 = new Date(fin + "T00:00:00Z");
+  const pairs = [];
+  let y = d0.getUTCFullYear(), m = d0.getUTCMonth() + 1;
+  const ey = d1.getUTCFullYear(), em = d1.getUTCMonth() + 1;
+  while (y < ey || (y === ey && m <= em)) { pairs.push([y, m]); m++; if (m > 12) { m = 1; y++; } }
+  const annees = [...new Set(pairs.map((p) => p[0]))];
+  const moiss = [...new Set(pairs.map((p) => p[1]))];
+  const { data } = await sb.from("schedules").select("year, month, status").in("year", annees).in("month", moiss);
+  return (data || []).some((s) => s.status === "published" && pairs.some((p) => p[0] === s.year && p[1] === s.month));
+}
+
+/* Ouvre le popup pré-rempli avec la plage sélectionnée. */
+function ouvrirPopupDesiderata(debut, fin) {
+  if (!desModal) return;
+  desType.innerHTML = pType.innerHTML;     // mêmes types que le formulaire
+  desType.value = "souhait";               // défaut : désidérata
+  desNote.value = "";
+  desDatesEl.textContent = "Dates : " + debut + (fin !== debut ? " → " + fin : "");
+  desMsg.textContent = ""; desMsg.className = "message";
+  desModal.dataset.debut = debut; desModal.dataset.fin = fin;
+  desModal.classList.remove("hidden");
+}
+if (desAnnulerBtn) desAnnulerBtn.addEventListener("click", () => desModal.classList.add("hidden"));
+if (desModal) desModal.addEventListener("click", (e) => { if (e.target === desModal) desModal.classList.add("hidden"); });
+if (desOkBtn) desOkBtn.addEventListener("click", async () => {
+  const r = await soumettrePreference(desType.value, desModal.dataset.debut, desModal.dataset.fin, desNote.value);
+  desMsg.textContent = r.message; desMsg.className = "message " + r.level;
+  if (r.ok) {
+    desModal.classList.add("hidden");
+    if (calendrier) calendrier.refetchEvents();
+    chargerPreferences();
+  }
 });
 
 /* Supprime une préférence après confirmation */
@@ -1380,22 +1415,19 @@ async function initCalendrier() {
       // de préférence (onglet « Mes préférences ») : il choisit le type
       // (souhait, congé, indispo…) puis valide. La validation/quota existante
       // s'applique telle quelle. (Admin : sélection ignorée — il gère le planning.)
-      select: (info) => {
-        if (!medecinCourant || medecinCourant.role === "admin") {
-          if (calendrier) calendrier.unselect();
-          return;
-        }
+      select: async (info) => {
+        if (calendrier) calendrier.unselect();
+        if (!medecinCourant || medecinCourant.role === "admin") return; // l'admin gère le planning
         const debut = info.startStr.slice(0, 10);
         const dEnd = new Date(info.endStr.slice(0, 10) + "T00:00:00Z");
         dEnd.setUTCDate(dEnd.getUTCDate() - 1); // fin FullCalendar EXCLUSIVE → inclusive
         const fin = dEnd.toISOString().slice(0, 10);
-        if (pStart) pStart.value = debut;
-        if (pEnd) pEnd.value = fin;
-        basculerOnglet("prefs");
-        if (pType) pType.focus();
-        messageFormPref("Dates sélectionnées : " + debut + (fin !== debut ? " → " + fin : "") +
-          ". Choisis le type de demande puis valide.", "info");
-        if (calendrier) calendrier.unselect();
+        // Désidératas seulement sur des dates NON PUBLIÉES.
+        if (await plagePubliee(debut, fin)) {
+          window.alert("Ces dates font partie d'un planning déjà publié — les demandes ne sont plus possibles ici.");
+          return;
+        }
+        ouvrirPopupDesiderata(debut, fin);
       },
       // À chaque changement de mois/vue : rafraîchit le panneau admin et le
       // compteur de congés (qui suit l'année académique du mois affiché).
@@ -2182,6 +2214,8 @@ const planningStatut  = document.getElementById("planning-statut");
 const ajouterShiftBtn = document.getElementById("ajouter-shift-btn");
 const publierBtn      = document.getElementById("publier-btn");
 const depublierBtn    = document.getElementById("depublier-btn");
+const supprimerTrimBtn = document.getElementById("supprimer-trim-btn");
+const restaurerTrimBtn = document.getElementById("restaurer-trim-btn");
 const compteursTbody  = document.getElementById("compteurs-tbody");
 const compteursTable  = document.getElementById("compteurs-table");
 const compteursEmpty  = document.getElementById("compteurs-empty");
@@ -2994,7 +3028,69 @@ if (publierBtn) publierBtn.addEventListener("click", async () => {
     .update({ status: "published", published_at: new Date().toISOString() })
     .eq("id", planningMois.schedule.id);
   if (error) { messageGeneration("Erreur de publication : " + error.message, "error"); return; }
+  // Snapshot du mois publié → restaurable plus tard (Module 22).
+  await sauvegarderHoraireMois("publication", planningMois.annee, planningMois.mois);
   messageGeneration("Planning " + planningMois.mois + "/" + planningMois.annee + " publié. ✅", "info");
+  rafraichirPanneauAdmin();
+});
+
+/* ----- Module 22 — Sauvegarde / suppression / restauration de l'horaire ----- */
+/* Snapshot des shifts d'un mois dans schedule_backups (silencieux si vide). */
+async function sauvegarderHoraireMois(type, annee, mois) {
+  const b = bornesMois(annee, mois);
+  const { data: shifts } = await sb.from("shifts")
+    .select("date, shift_type, doctor_id, poste, epingle")
+    .gte("date", b.debut).lte("date", b.fin);
+  if (!shifts || !shifts.length) return;
+  const { error } = await sb.from("schedule_backups").insert({ type, annee, mois, payload: shifts });
+  if (error) console.warn("Sauvegarde horaire impossible (module22 SQL lancé ?) :", error.message);
+}
+
+/* Supprime TOUT le planning du trimestre affiché (les 3 mois), après une
+   sauvegarde de sécurité. Le dernier publié reste restaurable. */
+if (supprimerTrimBtn) supprimerTrimBtn.addEventListener("click", async () => {
+  if (!medecinCourant || medecinCourant.role !== "admin" || !calendrier) return;
+  const b = bornesTrimestreAffiche();
+  if (!window.confirm(
+    "Supprimer TOUT le planning du trimestre (mois " + b.moisTrim.join(", ") + " " + b.annee + ") ?\n" +
+    "Les shifts et les statuts des 3 mois seront effacés.\n" +
+    "Le dernier planning PUBLIÉ restera restaurable (bouton ♻).")) return;
+  for (const m of b.moisTrim) await sauvegarderHoraireMois("avant_suppression", b.annee, m);
+  await sb.from("shifts").delete().gte("date", b.debut).lte("date", b.fin);
+  await sb.from("schedules").delete().eq("year", b.annee).in("month", b.moisTrim);
+  messageGeneration("Trimestre " + b.trimestre + " " + b.annee + " supprimé. Restaurable via ♻.", "info");
+  rafraichirPanneauAdmin();
+});
+
+/* Restaure, EN BROUILLON, le dernier planning PUBLIÉ de chaque mois du
+   trimestre affiché (remplace le planning actuel des 3 mois). */
+if (restaurerTrimBtn) restaurerTrimBtn.addEventListener("click", async () => {
+  if (!medecinCourant || medecinCourant.role !== "admin" || !calendrier) return;
+  const b = bornesTrimestreAffiche();
+  if (!window.confirm(
+    "Restaurer le DERNIER planning publié des mois " + b.moisTrim.join(", ") + " " + b.annee + " ?\n" +
+    "Il revient en BROUILLON (modifiable) et REMPLACE le planning actuel de ces mois.")) return;
+  let mois_ok = 0, mois_sans = 0;
+  for (const m of b.moisTrim) {
+    const { data } = await sb.from("schedule_backups")
+      .select("payload").eq("type", "publication").eq("annee", b.annee).eq("mois", m)
+      .order("created_at", { ascending: false }).limit(1);
+    if (!data || !data.length) { mois_sans++; continue; }
+    const payload = data[0].payload || [];
+    const bm = bornesMois(b.annee, m);
+    await sb.from("shifts").delete().gte("date", bm.debut).lte("date", bm.fin);
+    await sb.from("schedules").delete().eq("year", b.annee).eq("month", m);
+    const { data: sched } = await sb.from("schedules")
+      .insert({ year: b.annee, month: m, status: "draft" }).select("id").maybeSingle();
+    const rows = payload.map((s) => ({
+      date: s.date, shift_type: s.shift_type, doctor_id: s.doctor_id,
+      poste: s.poste || null, epingle: !!s.epingle, schedule_id: sched ? sched.id : null,
+    }));
+    if (rows.length) await sb.from("shifts").insert(rows);
+    mois_ok++;
+  }
+  messageGeneration("Restauration (brouillon) : " + mois_ok + " mois restauré(s)" +
+    (mois_sans ? ", " + mois_sans + " sans sauvegarde publiée." : "."), "info");
   rafraichirPanneauAdmin();
 });
 
