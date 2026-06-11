@@ -351,7 +351,7 @@
             <div>
               <label for="d-statut">Statut</label>
               <select id="d-statut">
-                <option value="dependant">Dépendant</option>
+                <option value="dependant">Salarié</option>
                 <option value="independant">Indépendant (Résident)</option>
               </select>
             </div>
@@ -447,13 +447,13 @@
                 <option value="conge_annuel">Congé annuel (bloquant)</option>
                 <option value="conge_extralegal">Congés extra-légaux (bloquant)</option>
                 <option value="conge_scientifique">Congé scientifique (bloquant)</option>
-                <option value="formation">Formation USI (bloquant)</option>
-                <option value="autre">Congé autre — maladie/mariage (bloquant, hors quota)</option>
-                <option value="indispo">Indisponibilité (bloquant)</option>
+                <option value="indispo">Indisponibilité (garde) — souhait de NE PAS être de garde</option>
                 <option value="demande_weekend">Demande week-end/férié</option>
-                <option value="souhait">Souhait / désidérata (préférence)</option>
+                <option value="souhait">Souhait (garde) — souhait d'ÊTRE de garde</option>
                 <option value="recup_ferie">Récup férié (jour compensatoire, à poser sous 6 sem.)</option>
               </select>
+              <!-- « Formation USI » et « Congé autre / maladie » sont désormais
+                   posés par l'ADMIN uniquement (onglet Demandes → Forcer un congé). -->
             </div>
             <div>
               <label for="p-start">Du</label>

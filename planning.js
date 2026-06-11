@@ -135,7 +135,7 @@ function plToleranceVides(date, idx) {
 /* --------------------------- État mutable ------------------------------ */
 function plNouvelEtat(medecins) {
   const e = {
-    indispo: {}, souhait: {}, bloque: {}, assigneJour: {},
+    indispo: {}, souhait: {}, eviterGarde: {}, bloque: {}, assigneJour: {},
     // nbGardes / nbWeekend = compteurs de SÉLECTION : en mode trimestriel ils
     // sont REMIS À ZÉRO à chaque mois (équilibrage MENSUEL des gardes, demandé
     // par la révision). Les cumuls pour les statistiques sont *Total ci-dessous.
@@ -170,6 +170,7 @@ function plNouvelEtat(medecins) {
   medecins.forEach((m) => {
     e.indispo[m.id] = new Set();
     e.souhait[m.id] = new Set();
+    e.eviterGarde[m.id] = new Set(); // indispo (garde) : souhait SOUPLE de ne pas garder
     e.bloque[m.id] = new Set();
     e.nbGardes[m.id] = 0;
     e.nbWeekend[m.id] = 0;
@@ -201,12 +202,14 @@ function plIndexerPreferences(preferences, etat) {
   (preferences || []).forEach((p) => {
     if (!etat.indispo[p.doctor_id]) return; // médecin hors équipe
     const estBloquant = bloquantes.includes(p.pref_type);
-    const estSouhait = p.pref_type === "souhait";
+    const estSouhait = p.pref_type === "souhait";   // souhait (garde) : bias +
+    const estIndispo = p.pref_type === "indispo";   // indispo (garde) : bias − (non bloquant)
     const estDispo = p.pref_type === "dispo"; // fenêtre déclarée (indépendants)
     let d = p.start_date;
     while (d <= p.end_date) {
       if (estBloquant) etat.indispo[p.doctor_id].add(d);
       if (estSouhait) etat.souhait[p.doctor_id].add(d);
+      if (estIndispo) etat.eviterGarde[p.doctor_id].add(d);
       if (estDispo) etat.dispoDeclaree[p.doctor_id].add(d);
       d = plAdd(d, 1);
     }
@@ -269,21 +272,17 @@ function plScoreWeekend(id, etat) {
   return etat.nbWeekend[id];
 }
 
-/* ----- SOUHAITS / désidératas (« je veux TRAVAILLER ce jour ») ----- */
-/* Le médecin a-t-il déposé un souhait de travailler ce jour-là ? */
-function plSouhaite(m, date, etat) {
-  return !!(etat.souhait[m.id] && etat.souhait[m.id].has(date));
-}
-/* Souhait d'un INDÉPENDANT = QUASI-BLOQUANT (priorité ABSOLUE dans les tris) :
-   1 si indépendant ET souhaite ce jour, sinon 0. On sert ces médecins en
-   premier pour honorer leur disponibilité choisie. */
-function plSouhaitIndep(m, date, etat) {
-  return (m.statut === "independant" && plSouhaite(m, date, etat)) ? 1 : 0;
-}
-/* Souhait d'un DÉPENDANT = orientation SOUPLE : 1 si dépendant ET souhaite ce
-   jour. Sert seulement de DÉPARTAGE tardif (n'écrase pas l'équité). */
-function plSouhaitDep(m, date, etat) {
-  return (m.statut !== "independant" && plSouhaite(m, date, etat)) ? 1 : 0;
+/* ----- SOUHAITS / INDISPONIBILITÉS de GARDE (préférence SOUPLE) -----
+   Désormais, 'souhait' (= souhait de GARDE) et 'indispo' (= souhait de NE PAS
+   être de garde) ne concernent QUE les gardes et sont NON BLOQUANTS : ils ne
+   servent que de DÉPARTAGE à équité égale dans les tris de gardes (jamais pour
+   les journées de station). 'dispo' (disponibilité déclarée des indépendants)
+   reste une contrainte dure séparée (plDispoIndependant). */
+function plBiaisGarde(m, date, etat) {
+  let v = 0;
+  if (etat.souhait[m.id] && etat.souhait[m.id].has(date)) v += 1;        // souhait (garde)
+  if (etat.eviterGarde[m.id] && etat.eviterGarde[m.id].has(date)) v -= 1; // indispo (garde)
+  return v;
 }
 /* Rang de priorité des DÉSIDÉRATAS selon le niveau admin (spec §8–10) :
    admin principal (3) > admins secondaires (2) > travailleurs (1). Sert UNIQUEMENT
@@ -294,33 +293,31 @@ function plRangDesiderata(m) {
   return 1; // travailleur (admin_level 'aucun' ou absent)
 }
 
-/* `date` (optionnel) active la prise en compte des souhaits du jour. */
+/* `date` (optionnel) active la prise en compte des souhaits/indispos de GARDE.
+   Les souhaits/indispos n'agissent QUE pour les critères de garde ('garde' /
+   'weekend'), jamais pour les journées de station ('jour'). */
 function plTrier(liste, critere, etat, date, favoriId) {
+  const estGarde = (critere === "garde" || critere === "weekend");
   return liste.slice().sort((a, b) => {
-    // 1) Souhait INDÉPENDANT (quasi-bloquant) : priorité absolue.
-    if (date) {
-      const ia = plSouhaitIndep(a, date, etat), ib = plSouhaitIndep(b, date, etat);
-      if (ia !== ib) return ib - ia;
-      // Désidératas : à souhait égal, admin principal > secondaire > travailleur.
-      if (ia === 1) { const ra2 = plRangDesiderata(a), rb2 = plRangDesiderata(b); if (ra2 !== rb2) return rb2 - ra2; }
-    }
     if (critere === "garde") {
       const sa = plScoreGarde(a.id, etat), sb = plScoreGarde(b.id, etat);
-      if (sa !== sb) return sa - sb;
+      if (sa !== sb) return sa - sb;                            // équité gardes d'abord
     }
     if (critere === "weekend") {
       const sa = plScoreWeekend(a.id, etat), sb = plScoreWeekend(b.id, etat);
-      if (sa !== sb) return sa - sb;
+      if (sa !== sb) return sa - sb;                            // équité week-ends d'abord
+    }
+    // Souhait(+) / indisponibilité(−) de GARDE — DÉPARTAGE souple (n'écrase pas
+    // l'équité ci-dessus) et UNIQUEMENT pour les gardes. À souhait égal positif,
+    // priorité admin principal > secondaire > travailleur.
+    if (date && estGarde) {
+      const pa = plBiaisGarde(a, date, etat), pb = plBiaisGarde(b, date, etat);
+      if (pa !== pb) return pb - pa;
+      if (pa > 0) { const ra2 = plRangDesiderata(a), rb2 = plRangDesiderata(b); if (ra2 !== rb2) return rb2 - ra2; }
     }
     const ra = etat.heures[a.id] / (a.weekly_hours_target || 52);
     const rb = etat.heures[b.id] / (b.weekly_hours_target || 52);
     if (ra !== rb) return ra - rb;
-    // 2) Souhait DÉPENDANT (souple) : départage avant le tri déterministe.
-    if (date) {
-      const sa = plSouhaitDep(a, date, etat), sb = plSouhaitDep(b, date, etat);
-      if (sa !== sb) return sb - sa;
-      if (sa === 1) { const ra2 = plRangDesiderata(a), rb2 = plRangDesiderata(b); if (ra2 !== rb2) return rb2 - ra2; }
-    }
     // Couplage des gardes (Pt 6) : à équité STRICTEMENT égale, favoriser le
     // médecin à coupler (garde de nuit de l'avant-veille) pour déclencher le
     // repos compensatoire couplé, sans modifier l'ordre d'équité.
@@ -360,21 +357,18 @@ function plRecenceGarde(id, date, etat) {
    égalité de gardes → l'effet est réel sans coûter d'équité. */
 function plTrierGardeNuit(liste, date, etat) {
   return liste.slice().sort((a, b) => {
-    // Souhait INDÉPENDANT (quasi-bloquant) : priorité absolue, même sur l'équité.
-    const ia = plSouhaitIndep(a, date, etat), ib = plSouhaitIndep(b, date, etat);
-    if (ia !== ib) return ib - ia;
-    if (ia === 1) { const ra2 = plRangDesiderata(a), rb2 = plRangDesiderata(b); if (ra2 !== rb2) return rb2 - ra2; }
     const sa = plScoreGarde(a.id, etat), sb = plScoreGarde(b.id, etat);
     if (Math.abs(sa - sb) > PL_EPS) return sa - sb;            // équité d'abord (stricte)
+    // Souhait(+) / indispo(−) de GARDE : départage à équité STRICTEMENT égale
+    // (n'écrase jamais l'équité). À souhait égal positif → priorité admin.
+    const pa = plBiaisGarde(a, date, etat), pb = plBiaisGarde(b, date, etat);
+    if (pa !== pb) return pb - pa;
+    if (pa > 0) { const ra2 = plRangDesiderata(a), rb2 = plRangDesiderata(b); if (ra2 !== rb2) return rb2 - ra2; }
     const ra = plRecenceGarde(a.id, date, etat), rb = plRecenceGarde(b.id, date, etat);
     if (ra !== rb) return rb - ra;                            // ex aequo → garde récente d'abord
     const ha = etat.heures[a.id] / (a.weekly_hours_target || 52);
     const hb = etat.heures[b.id] / (b.weekly_hours_target || 52);
     if (ha !== hb) return ha - hb;
-    // Souhait DÉPENDANT (souple) : départage avant le tri déterministe.
-    const da = plSouhaitDep(a, date, etat), db = plSouhaitDep(b, date, etat);
-    if (da !== db) return db - da;
-    if (da === 1) { const ra2 = plRangDesiderata(a), rb2 = plRangDesiderata(b); if (ra2 !== rb2) return rb2 - ra2; }
     return String(a.id).localeCompare(String(b.id)); // déterministe
   });
 }

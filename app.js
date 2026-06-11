@@ -648,8 +648,8 @@ const PREF_LABELS = {
   conge_annuel: "Congé annuel",
   conge_extralegal: "Extra-légaux",
   conge_scientifique: "Scientifique",
-  indispo: "Indisponibilité",
-  souhait: "Souhait",
+  indispo: "Indisponibilité (garde)",
+  souhait: "Souhait (garde)",
   formation: "Formation USI",
   autre: "Congé autre",
   demande_weekend: "Demande WE/férié",
@@ -1067,7 +1067,15 @@ async function ouvrirPopupForceConge() {
     .neq("role", "admin").order("name", { ascending: true });
   fcMedecin.innerHTML = (meds || []).map((m) =>
     "<option value='" + escapeHtml(m.id) + "'>" + escapeHtml(m.name || m.id) + "</option>").join("");
-  fcType.innerHTML = pType.innerHTML;        // mêmes types que le formulaire médecin
+  // Liste COMPLÈTE côté admin : inclut Formation USI et Congé autre/maladie
+  // (que les travailleurs ne peuvent plus demander eux-mêmes).
+  fcType.innerHTML =
+    "<option value='conge_annuel'>Congé annuel</option>" +
+    "<option value='conge_extralegal'>Congés extra-légaux</option>" +
+    "<option value='conge_scientifique'>Congé scientifique</option>" +
+    "<option value='formation'>Formation USI</option>" +
+    "<option value='autre'>Congé autre — maladie / mariage (hors quota)</option>" +
+    "<option value='demande_weekend'>Demande week-end / férié</option>";
   fcType.value = "conge_annuel";
   fcNote.value = "";
   fcDebut.value = ""; fcFin.value = "";
@@ -1171,8 +1179,8 @@ const PREF_LABELS_FULL = {
   conge_annuel: "Congé annuel",
   conge_extralegal: "Congés extra-légaux",
   conge_scientifique: "Congé scientifique",
-  indispo: "Indisponibilité",
-  souhait: "Souhait",
+  indispo: "Indisponibilité (garde)",
+  souhait: "Souhait (garde)",
   off_clinic: "Off/clinic",
   recuperation: "Récupération",
   formation: "Formation USI",

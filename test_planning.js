@@ -336,7 +336,7 @@ test("off-clinic : reporté si le jour atteint le plafond d'absences simultanée
   const r = { id: "rp", grade: "resident", statut: "dependant", jours_travailles: [1,2,3,4,5] };
   // 5 autres médecins absents le lundi 1/6 → +1 off = 6 (critique) → jour saturé.
   const prefs = [1,2,3,4,5].map((n) =>
-    ({ doctor_id: "x" + n, start_date: "2026-06-01", end_date: "2026-06-01", pref_type: "indispo" }));
+    ({ doctor_id: "x" + n, start_date: "2026-06-01", end_date: "2026-06-01", pref_type: "conge_annuel" }));
   const offs = genererOffClinic({ annee: 2026, mois: 6, medecins: [r], shifts: [], preferences: prefs });
   assert.strictEqual(offs.length, 2, "droit préservé par report, obtenu " + offs.length);
   assert(offs.every((o) => o.date !== "2026-06-01"), "off-clinic posé sur un jour saturé");
@@ -351,7 +351,7 @@ test("off-clinic : à capacité limitée, le résident avec le plus de congés c
   // Sature les lundis 8/15/22/29 → seul le lundi 1/6 reste libre. Avec 2 résidents
   // et min_residents_dispo=1, un seul des deux peut y poser un off-clinic.
   ["2026-06-08", "2026-06-15", "2026-06-22", "2026-06-29"].forEach((d) => {
-    [1,2,3,4,5].forEach((n) => prefs.push({ doctor_id: "x" + d + n, start_date: d, end_date: d, pref_type: "indispo" }));
+    [1,2,3,4,5].forEach((n) => prefs.push({ doctor_id: "x" + d + n, start_date: d, end_date: d, pref_type: "conge_annuel" }));
   });
   const offs = genererOffClinic({ annee: 2026, mois: 6, medecins: [r1, r2], shifts: [], preferences: prefs });
   const r1offs = offs.filter((o) => o.doctor_id === "r1");
@@ -364,31 +364,36 @@ console.log("\n=== Point 4 — Souhaits (désidératas « je veux travailler »)
 
 const ABSENCES_TEST = ["recup", "repos_garde", "off", "conge_annuel", "conge_scientifique", "conge_extralegal"];
 
-test("indépendant : souhait de travailler honoré (quasi-bloquant)", () => {
-  const meds = equipe();
-  const ind = meds.find((m) => m.id === "assistant_specialiste8"); ind.statut = "independant";
-  const prefs = [
-    { doctor_id: ind.id, start_date: "2026-06-08", end_date: "2026-06-08", pref_type: "dispo" },
-    { doctor_id: ind.id, start_date: "2026-06-08", end_date: "2026-06-08", pref_type: "souhait" },
-  ];
-  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: prefs });
-  const w = r.shifts.filter((s) => s.doctor_id === ind.id && s.date === "2026-06-08" && !ABSENCES_TEST.includes(s.shift_type));
-  assert(w.length >= 1, "indépendant non planifié son jour de souhait");
+test("souhait (garde) : à équité égale, le souhaiteur passe pour la garde", () => {
+  const D = "2026-06-10";
+  const A = { id: "A", weekly_hours_target: 52 };
+  const B = { id: "B", weekly_hours_target: 52 };
+  const etat = { nbGardes: { A: 0, B: 0 }, heures: { A: 0, B: 0 },
+    souhait: { A: new Set([D]), B: new Set() }, eviterGarde: { A: new Set(), B: new Set() } };
+  assert.strictEqual(plTrier([B, A], "garde", etat, D)[0].id, "A", "souhaiteur (garde) non prioritaire à équité égale");
 });
 
-test("indépendant résident : souhait de garde honoré", () => {
-  const meds = equipe();
-  const ind = meds.find((m) => m.id === "resident6"); ind.statut = "independant";
-  const prefs = [
-    { doctor_id: ind.id, start_date: "2026-06-08", end_date: "2026-06-08", pref_type: "dispo" },
-    { doctor_id: ind.id, start_date: "2026-06-08", end_date: "2026-06-08", pref_type: "souhait" },
-  ];
-  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: prefs });
-  const w = r.shifts.filter((s) => s.doctor_id === ind.id && s.date === "2026-06-08" && !ABSENCES_TEST.includes(s.shift_type));
-  assert(w.length >= 1, "résident indépendant non planifié son jour de souhait");
+test("indisponibilité (garde) : à équité égale, on évite le médecin indispo", () => {
+  const D = "2026-06-10";
+  const A = { id: "A", weekly_hours_target: 52 };
+  const B = { id: "B", weekly_hours_target: 52 };
+  const etat = { nbGardes: { A: 0, B: 0 }, heures: { A: 0, B: 0 },
+    souhait: { A: new Set(), B: new Set() }, eviterGarde: { A: new Set([D]), B: new Set() } };
+  assert.strictEqual(plTrier([A, B], "garde", etat, D)[0].id, "B", "le médecin indispo (garde) n'a pas été évité");
 });
 
-test("dépendant : souhait souple, n'enfreint pas les contraintes dures", () => {
+test("souhait/indispo n'agissent PAS sur les journées (jour)", () => {
+  const D = "2026-06-10";
+  const A = { id: "A", weekly_hours_target: 52 };
+  const B = { id: "B", weekly_hours_target: 52 };
+  // A souhaite, mais est plus chargé en heures : en 'jour', le souhait est ignoré
+  // → l'équité horaire prime (B moins chargé passe devant).
+  const etat = { nbGardes: { A: 0, B: 0 }, heures: { A: 5, B: 0 },
+    souhait: { A: new Set([D]), B: new Set() }, eviterGarde: { A: new Set(), B: new Set() } };
+  assert.strictEqual(plTrier([A, B], "jour", etat, D)[0].id, "B", "le souhait a influencé une journée (interdit)");
+});
+
+test("souhait (garde) souple : n'enfreint pas les contraintes dures (pas de double)", () => {
   const meds = equipe();
   const prefs = [{ doctor_id: "resident1", start_date: "2026-06-10", end_date: "2026-06-10", pref_type: "souhait" }];
   const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: prefs });
@@ -516,29 +521,32 @@ test("couplage : nuit J-2 → garde 24h week-end → repos couplé matérialisé
 
 console.log("\n=== Point 3 — Désidératas : priorité admin principal > secondaire > travailleur ===");
 
-test("désidérata indépendant : à souhait égal, l'admin principal passe avant", () => {
+test("désidérata garde : à souhait égal, l'admin principal passe avant", () => {
   const D = "2026-06-02";
-  const P = { id: "P", statut: "independant", admin_level: "principal", weekly_hours_target: 52 };
-  const T = { id: "T", statut: "independant", admin_level: "aucun", weekly_hours_target: 52 };
-  const etat = { souhait: { P: new Set([D]), T: new Set([D]) }, heures: { P: 0, T: 0 } };
-  assert.strictEqual(plTrier([T, P], "jour", etat, D)[0].id, "P", "principal non prioritaire (indépendant)");
+  const P = { id: "P", admin_level: "principal", weekly_hours_target: 52 };
+  const T = { id: "T", admin_level: "aucun", weekly_hours_target: 52 };
+  const etat = { nbGardes: { P: 0, T: 0 }, heures: { P: 0, T: 0 },
+    souhait: { P: new Set([D]), T: new Set([D]) }, eviterGarde: { P: new Set(), T: new Set() } };
+  assert.strictEqual(plTrier([T, P], "garde", etat, D)[0].id, "P", "principal non prioritaire");
 });
 
-test("désidérata dépendant : à souhait égal, le secondaire passe avant le travailleur", () => {
+test("désidérata garde : à souhait égal, le secondaire passe avant le travailleur", () => {
   const D = "2026-06-02";
-  const S = { id: "S", statut: "dependant", admin_level: "secondaire", weekly_hours_target: 52 };
-  const T = { id: "T", statut: "dependant", admin_level: "aucun", weekly_hours_target: 52 };
-  const etat = { souhait: { S: new Set([D]), T: new Set([D]) }, heures: { S: 0, T: 0 } };
-  assert.strictEqual(plTrier([T, S], "jour", etat, D)[0].id, "S", "secondaire non prioritaire (dépendant)");
+  const S = { id: "S", admin_level: "secondaire", weekly_hours_target: 52 };
+  const T = { id: "T", admin_level: "aucun", weekly_hours_target: 52 };
+  const etat = { nbGardes: { S: 0, T: 0 }, heures: { S: 0, T: 0 },
+    souhait: { S: new Set([D]), T: new Set([D]) }, eviterGarde: { S: new Set(), T: new Set() } };
+  assert.strictEqual(plTrier([T, S], "garde", etat, D)[0].id, "S", "secondaire non prioritaire");
 });
 
 test("priorité désidératas n'agit QUE entre souhaiteurs (sinon l'équité prime)", () => {
   const D = "2026-06-02";
-  const P = { id: "P", statut: "dependant", admin_level: "principal", weekly_hours_target: 52 };
-  const T = { id: "T", statut: "dependant", admin_level: "aucun", weekly_hours_target: 52 };
+  const P = { id: "P", admin_level: "principal", weekly_hours_target: 52 };
+  const T = { id: "T", admin_level: "aucun", weekly_hours_target: 52 };
   // Personne ne souhaite ce jour : le moins chargé (T) prime, le rang admin n'agit pas.
-  const etat = { souhait: { P: new Set(), T: new Set() }, heures: { P: 10, T: 0 } };
-  assert.strictEqual(plTrier([P, T], "jour", etat, D)[0].id, "T", "le rang admin a écrasé l'équité à tort");
+  const etat = { nbGardes: { P: 0, T: 0 }, heures: { P: 10, T: 0 },
+    souhait: { P: new Set(), T: new Set() }, eviterGarde: { P: new Set(), T: new Set() } };
+  assert.strictEqual(plTrier([P, T], "garde", etat, D)[0].id, "T", "le rang admin a écrasé l'équité à tort");
 });
 
 console.log("\n=== Module 18 — Récup férié (jour compensatoire bloquant) ===");

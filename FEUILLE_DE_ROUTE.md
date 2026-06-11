@@ -340,9 +340,41 @@
   absence **APPROUVÉE** directement (l'admin peut dépasser les quotas via le
   trigger Module 21). Complète la validation des demandes classiques.
 
-## 🔜 Reste à faire (par priorité)
+- **Refonte types de demandes — lot 1 (sûr, UI)** (`index.html` + `app.js`) :
+  - **Formation USI** et **Congé autre / maladie** retirés de la liste des
+    travailleurs → posables par l'**admin uniquement** (« Forcer un congé » a
+    désormais sa propre liste complète, dont Formation et Maladie).
+  - **« Salarié »** remplace « Dépendant » dans le sélecteur de statut (valeur
+    interne `dependant` inchangée → pas de migration).
+- **Refonte types — lot 3 : Indispo / Souhait = préférences de GARDE souples**
+  (`regles.js` + `planning.js` + `index.html` + `app.js` + tests) :
+  - `indispo` **retiré de `PREF_BLOQUANTES`** → **non bloquant**. C'est désormais
+    un souhait SOUPLE de **ne pas être de garde** ce jour (`etat.eviterGarde`).
+  - `souhait` = souhait SOUPLE d'**être de garde** ce jour.
+  - Les deux n'agissent **QUE sur les gardes** (`plBiaisGarde` appliqué seulement
+    aux critères `garde`/`weekend` de `plTrier` et dans `plTrierGardeNuit`),
+    **jamais sur les journées**, et **en départage à équité STRICTEMENT égale**
+    (n'écrasent pas l'équité). À souhait égal, priorité admin principal > sec. > travailleur.
+  - Ancien « souhait quasi-bloquant des indépendants » supprimé ; la dispo
+    déclarée des indépendants (`dispo`) reste une contrainte dure séparée.
+  - Libellés : « Indisponibilité (garde) » / « Souhait (garde) ».
+  - **Tests** : 367/379 remplacés par 3 tests unitaires (souhait garde, indispo
+    garde, jour NON affecté) ; priorité désidératas passée en critère `garde` ;
+    saturation off-clinic basculée `indispo`→`conge_annuel`. **54 attendus**.
 
-- **Fériés éditables par l'admin** (prochain lot convenu).
+## 🔜 Refonte types de congés / règles — lots restants (demande Charles)
+
+- **Lot 2 — Fériés** : demande unique « demande (férié) » = travailler un férié →
+  si acceptée, l'algo PLACE le médecin sur ce férié + ouvre un « congé (férié) » à
+  poser sous 6 sem. ; suppression de `recup_ferie`. (Algo + données + tests.)
+- ~~Lot 3 — Indispo / Souhait SOFT, gardes uniquement~~ ✅ **FAIT** (ci-dessous).
+- **Lot 4 — Congrès : équité prioritaire** : tout le monde le même nombre de
+  jours de congrès, au-dessus de toutes les autres règles. (Algo.)
+- **Lot 5 — Échange de shifts** entre médecins (garde/journée), à échange égal,
+  refusé si casse A/S-résident ; un échange de garde impose l'échange du repos de
+  garde. (Nouvelle fonctionnalité : données + UI + règles.)
+
+- **Fériés éditables par l'admin** (initialement convenu — à intégrer au lot 2).
 - Désidératas calendrier v2 : popup inline (type + note) sans bascule d'onglet.
 - N4 : suppression TOTALE de l'off-clinic en dernier recours.
 - Raffinements N3/N4 restants éventuels (cf. CONFORMITE.md).
