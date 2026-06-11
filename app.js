@@ -1286,6 +1286,9 @@ async function construireEvenements(debutISO, finISO) {
     while (cur < stop) {
       const d = isoUTC(cur);
       cur.setUTCDate(cur.getUTCDate() + 1); // avance AVANT tout continue
+      // Pas de « repos » affiché les week-ends / fériés (tout le monde est off,
+      // l'info n'a pas de sens ce jour-là).
+      if (estWeekendOuFerieISO(d)) continue;
       const aS = aShiftJ[d] || new Set();
       const cg = congeJ[d] || new Set();
       const repos = idsTous.filter((id) => !aS.has(id) && !cg.has(id));
@@ -1326,6 +1329,10 @@ async function initCalendrier() {
       // imposé par le CSS (.fc-daygrid-event) devient invisible sur la case
       // blanche. Les préférences en display:"background" ne sont pas affectées.
       eventDisplay: "block",
+      // Sélection d'une plage de dates (clic-glissé) par un MÉDECIN pour encoder
+      // un désidérata directement depuis le calendrier (cf. select ci-dessous).
+      selectable: true,
+      selectMirror: true,
       // Ordre des événements dans chaque case (mois) et chaque jour (liste) :
       // stations USI 1→Labo, gardes/tour, repos, congés, puis « Non planifiés ».
       eventOrder: function (a, b) {
@@ -1368,6 +1375,27 @@ async function initCalendrier() {
           id: p.shiftId, date: p.dateStr,
           shift_type: p.shiftType, doctor_id: p.doctorId, poste: p.poste, epingle: p.epingle,
         });
+      },
+      // Sélection d'une plage de dates par un MÉDECIN → pré-remplit le formulaire
+      // de préférence (onglet « Mes préférences ») : il choisit le type
+      // (souhait, congé, indispo…) puis valide. La validation/quota existante
+      // s'applique telle quelle. (Admin : sélection ignorée — il gère le planning.)
+      select: (info) => {
+        if (!medecinCourant || medecinCourant.role === "admin") {
+          if (calendrier) calendrier.unselect();
+          return;
+        }
+        const debut = info.startStr.slice(0, 10);
+        const dEnd = new Date(info.endStr.slice(0, 10) + "T00:00:00Z");
+        dEnd.setUTCDate(dEnd.getUTCDate() - 1); // fin FullCalendar EXCLUSIVE → inclusive
+        const fin = dEnd.toISOString().slice(0, 10);
+        if (pStart) pStart.value = debut;
+        if (pEnd) pEnd.value = fin;
+        basculerOnglet("prefs");
+        if (pType) pType.focus();
+        messageFormPref("Dates sélectionnées : " + debut + (fin !== debut ? " → " + fin : "") +
+          ". Choisis le type de demande puis valide.", "info");
+        if (calendrier) calendrier.unselect();
       },
       // À chaque changement de mois/vue : rafraîchit le panneau admin et le
       // compteur de congés (qui suit l'année académique du mois affiché).
@@ -1825,6 +1853,7 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes) {
   // « Non planifiés (repos) » : tout médecin connu sans aucun shift ce jour et
   // non en congé (indispo / formation / autre / récup férié + simplement libres).
   const nonPlanifies = (d) => {
+    if (estWeekendOuFerieISO(d)) return []; // pas de « repos » les week-ends/fériés
     const aShift = new Set(shifts.filter((s) => s.date === d).map((s) => s.doctor_id));
     const enConge = new Set();
     shifts.forEach((s) => { if (s.date === d && GRILLE_CONGES.includes(s.shift_type)) enConge.add(s.doctor_id); });
@@ -3178,7 +3207,8 @@ async function construireGrille() {
       if (ligne.type === "non_planifie") {
         const aShift = shiftDocsJour[iso] || new Set();
         const enConge = congeDocsJour[iso] || new Set();
-        const repos = rosterList.filter((m) =>
+        // Pas de « repos » les week-ends / fériés (tout le monde est off).
+        const repos = estWeekendOuFerieISO(iso) ? [] : rosterList.filter((m) =>
           medActifISO(m, iso) && !aShift.has(m.id) && !enConge.has(m.id));
         let contenuNP = "";
         repos.forEach((m) => {

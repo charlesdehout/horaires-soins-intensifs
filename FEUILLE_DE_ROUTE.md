@@ -299,10 +299,21 @@
   des propositions de rotation (M20). Les autres unités gardent la continuité.
   → **52 tests attendus** en local (48 socle + 2 off-clinic + 1 garde 17h–9h + 1 Labo).
 
+- **Repos non affiché les week-ends/fériés** : la synthèse « N au repos »
+  (calendrier) et la ligne « Non planifiés » (grille + exports) sont vides les
+  samedis/dimanches/fériés (tout le monde est off → sans intérêt).
+- **Désidératas encodés depuis le calendrier (v1)** (`app.js`) : un MÉDECIN
+  sélectionne une plage de dates (clic-glissé) sur le calendrier → bascule sur
+  « Mes préférences » avec les dates pré-remplies ; il choisit le type
+  (souhait/congé/indispo…) et valide (toute la validation quota/récup férié
+  existante s'applique). Admin : sélection ignorée. *À venir possible : popup
+  inline directement sur le calendrier (sans changer d'onglet).*
+
 ## 🔜 Reste à faire (par priorité)
 
-- N4 : suppression TOTALE de l'off-clinic en dernier recours (au-delà de la
-  limitation actuelle).
+- **Fériés éditables par l'admin** (prochain lot convenu).
+- Désidératas calendrier v2 : popup inline (type + note) sans bascule d'onglet.
+- N4 : suppression TOTALE de l'off-clinic en dernier recours.
 - Raffinements N3/N4 restants éventuels (cf. CONFORMITE.md).
 
 ## ✅ Fait dans ce lot (juin 2026 — Module 20 : rotation trimestrielle des unités)
