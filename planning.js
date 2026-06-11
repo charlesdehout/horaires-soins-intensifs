@@ -559,14 +559,23 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
   gardesNuit.forEach((m) => { mode24[m.id] = false; });
 
   // 2) JOUR — pourvoir les 7 stations.
-  if (cfgG.garde24h_obligatoire) {
-    // Comportement HISTORIQUE : le complément (second) tient une station en 24 h.
-    if (second) {
-      const st = plChoisirStation(second, postes, plan, etat, cle);
-      plan[st] = second.id; mode24[second.id] = true;
-      if (!plSansContinuite(st)) etat.station[second.id][cle] = st;
+  // Pendant un CONGRÈS (M17) : ÉQUIPE MINIMALE — on force les 2 gardes de nuit
+  // en 24 h (elles tiennent une station + la nuit) pour libérer le maximum de
+  // monde au congrès (combiné à la tolérance de stations vides ci-dessous).
+  // Hors congrès : selon le drapeau `garde24h_obligatoire`, seul le complément
+  // est éventuellement forcé en 24 h.
+  const congresJour = plEstCongres(date, etat.periodes);
+  let aForcer24 = [];
+  if (congresJour) aForcer24 = gardesNuit.slice();
+  else if (cfgG.garde24h_obligatoire && second) aForcer24 = [second];
+  aForcer24.forEach((m) => {
+    if (mode24[m.id]) return;
+    const st = plChoisirStation(m, postes, plan, etat, cle);
+    if (st && !(st in plan)) {
+      plan[st] = m.id; mode24[m.id] = true;
+      if (!plSansContinuite(st)) etat.station[m.id][cle] = st;
     }
-  }
+  });
   const pool = plTrier(libres.filter((m) => !pris.has(m.id)), "jour", etat, date);
   // 2a) Continuité : on replace chacun sur sa station de la semaine si libre.
   pool.forEach((m) => {

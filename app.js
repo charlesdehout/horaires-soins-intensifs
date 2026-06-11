@@ -98,6 +98,17 @@ const desFin        = document.getElementById("desiderata-fin");
 const desMsg        = document.getElementById("desiderata-msg");
 const desOkBtn      = document.getElementById("desiderata-ok");
 const desAnnulerBtn = document.getElementById("desiderata-annuler");
+/* Popup admin « forcer un congé / une absence ». */
+const forcerCongeBtn = document.getElementById("forcer-conge-btn");
+const fcModal   = document.getElementById("force-conge-modal");
+const fcMedecin = document.getElementById("fc-medecin");
+const fcType    = document.getElementById("fc-type");
+const fcDebut   = document.getElementById("fc-debut");
+const fcFin     = document.getElementById("fc-fin");
+const fcNote    = document.getElementById("fc-note");
+const fcMsg     = document.getElementById("fc-msg");
+const fcOkBtn   = document.getElementById("fc-ok");
+const fcAnnulerBtn = document.getElementById("fc-annuler");
 const prefsTable  = document.getElementById("prefs-table");
 const prefsEmpty  = document.getElementById("prefs-empty");
 
@@ -914,6 +925,10 @@ async function soumettrePreference(type, debut, fin, note) {
   if (!medecinCourant) return { ok: false, message: "Profil médecin introuvable.", level: "error" };
   if (!debut || !fin) return { ok: false, message: "Dates manquantes.", level: "error" };
   if (fin < debut) return { ok: false, message: "La date de fin doit être postérieure ou égale à la date de début.", level: "error" };
+  // Pas de demande pendant un congrès (jours gérés par l'admin + l'algo).
+  if (await plagePendantCongres(debut, fin)) {
+    return { ok: false, level: "error", message: "Période de congrès : les jours sont gérés par l'administrateur, aucune demande n'est possible sur ces dates." };
+  }
 
   // Contrôle des quotas de congés (bloquant), par catégorie et par ANNÉE ACADÉMIQUE.
   const categorie = categorieConge(type);
@@ -1003,6 +1018,15 @@ async function plagePubliee(debut, fin) {
   return (data || []).some((s) => s.status === "published" && pairs.some((p) => p[0] === s.year && p[1] === s.month));
 }
 
+/* Vrai si la plage [debut, fin] chevauche un CONGRÈS (M17) : pendant un congrès,
+   les jours sont gérés par l'admin + l'algo → pas de demande de congé possible. */
+async function plagePendantCongres(debut, fin) {
+  const { data } = await sb.from("special_periods")
+    .select("start_date, end_date, type").eq("type", "congres")
+    .lte("start_date", fin).gte("end_date", debut);
+  return !!(data && data.length);
+}
+
 /* Ouvre le popup pré-rempli avec la plage sélectionnée. */
 function ouvrirPopupDesiderata(debut, fin) {
   if (!desModal) return;
@@ -1033,6 +1057,49 @@ if (desOkBtn) desOkBtn.addEventListener("click", async () => {
     if (calendrier) calendrier.refetchEvents();
     chargerPreferences();
   }
+});
+
+/* ----- ADMIN : forcer un congé / une absence (absence APPROUVÉE imposée) ----- */
+async function ouvrirPopupForceConge() {
+  if (!medecinCourant || medecinCourant.role !== "admin") return;
+  // Médecins (hors admin).
+  const { data: meds } = await sb.from("doctors").select("id, name")
+    .neq("role", "admin").order("name", { ascending: true });
+  fcMedecin.innerHTML = (meds || []).map((m) =>
+    "<option value='" + escapeHtml(m.id) + "'>" + escapeHtml(m.name || m.id) + "</option>").join("");
+  fcType.innerHTML = pType.innerHTML;        // mêmes types que le formulaire médecin
+  fcType.value = "conge_annuel";
+  fcNote.value = "";
+  fcDebut.value = ""; fcFin.value = "";
+  fcMsg.textContent = ""; fcMsg.className = "message";
+  fcModal.classList.remove("hidden");
+}
+if (forcerCongeBtn) forcerCongeBtn.addEventListener("click", ouvrirPopupForceConge);
+if (fcAnnulerBtn) fcAnnulerBtn.addEventListener("click", () => fcModal.classList.add("hidden"));
+if (fcModal) fcModal.addEventListener("click", (e) => { if (e.target === fcModal) fcModal.classList.add("hidden"); });
+if (fcOkBtn) fcOkBtn.addEventListener("click", async () => {
+  if (!medecinCourant || medecinCourant.role !== "admin") return;
+  const debut = fcDebut.value, fin = fcFin.value;
+  if (!fcMedecin.value) { fcMsg.textContent = "Choisis un médecin."; fcMsg.className = "message error"; return; }
+  if (!debut || !fin) { fcMsg.textContent = "Choisis les dates."; fcMsg.className = "message error"; return; }
+  if (fin < debut) { fcMsg.textContent = "La date de fin doit être ≥ la date de début."; fcMsg.className = "message error"; return; }
+  // Insertion APPROUVÉE directe (l'admin force ; il peut dépasser les quotas).
+  const { error } = await sb.from("preferences").insert({
+    doctor_id: fcMedecin.value,
+    pref_type: fcType.value,
+    start_date: debut,
+    end_date: fin,
+    note: fcNote.value.trim() || null,
+    status: "approuve",
+    decided_at: new Date().toISOString(),
+  });
+  if (error) {
+    fcMsg.textContent = "Erreur : " + error.message; fcMsg.className = "message error";
+    return;
+  }
+  fcModal.classList.add("hidden");
+  if (calendrier) calendrier.refetchEvents();
+  rafraichirPanneauAdmin();
 });
 
 /* Supprime une préférence après confirmation */
@@ -1439,6 +1506,11 @@ async function initCalendrier() {
         // Désidératas seulement sur des dates NON PUBLIÉES.
         if (await plagePubliee(debut, fin)) {
           window.alert("Ces dates font partie d'un planning déjà publié — les demandes ne sont plus possibles ici.");
+          return;
+        }
+        // Pas de demande pendant un congrès (géré par l'admin).
+        if (await plagePendantCongres(debut, fin)) {
+          window.alert("Période de congrès : les jours sont gérés par l'administrateur, aucune demande n'est possible.");
           return;
         }
         ouvrirPopupDesiderata(debut, fin);

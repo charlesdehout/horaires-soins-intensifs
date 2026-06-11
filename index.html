@@ -225,6 +225,7 @@
         <div id="panel-demandes" class="tab-panel hidden">
         <div class="zone-header">
           <h3 class="sous-titre">Demandes à valider</h3>
+          <button id="forcer-conge-btn" class="mini">➕ Forcer un congé / une absence</button>
           <button id="refresh-demandes-btn" class="mini secondary">Rafraîchir</button>
         </div>
         <p class="zone-info">La génération du planning est bloquée tant qu'il reste des demandes en attente sur la période.</p>
@@ -574,6 +575,43 @@
         <div class="form-actions">
           <button type="button" id="desiderata-ok">Enregistrer</button>
           <button type="button" id="desiderata-annuler" class="secondary">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================= -->
+    <!-- MODALE : forcer un congé / absence (ADMIN)     -->
+    <!-- ============================================= -->
+    <div id="force-conge-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <h3>Forcer un congé / une absence</h3>
+        <p class="zone-info">Impose une absence APPROUVÉE à un médecin (sans passer par une demande).</p>
+        <div class="form-grid">
+          <div>
+            <label for="fc-medecin">Médecin</label>
+            <select id="fc-medecin"></select>
+          </div>
+          <div>
+            <label for="fc-type">Type</label>
+            <select id="fc-type"></select>
+          </div>
+          <div>
+            <label for="fc-debut">Du</label>
+            <input type="date" id="fc-debut" required />
+          </div>
+          <div>
+            <label for="fc-fin">Au</label>
+            <input type="date" id="fc-fin" required />
+          </div>
+          <div>
+            <label for="fc-note">Note (optionnel)</label>
+            <input type="text" id="fc-note" maxlength="200" placeholder="ex. imposé, maladie…" />
+          </div>
+        </div>
+        <p id="fc-msg" class="message"></p>
+        <div class="form-actions">
+          <button type="button" id="fc-ok">Forcer (approuvé)</button>
+          <button type="button" id="fc-annuler" class="secondary">Annuler</button>
         </div>
       </div>
     </div>

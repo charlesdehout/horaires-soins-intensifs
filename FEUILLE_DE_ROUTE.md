@@ -321,6 +321,20 @@
     BROUILLON**, le dernier snapshot publié de chaque mois du trimestre (remplace
     l'actuel). Mois sans snapshot publié : ignorés (signalé).
 
+- **Congrès — équipe minimale + pas de congé** (`planning.js` + `app.js` + 1 test) :
+  - Pendant un congrès (M17), en SEMAINE, les **2 gardes de nuit sont forcées en
+    24 h** (tiennent une station + la nuit, ≥1 résident, jamais 2 A/S) → équipe
+    squelette qui, avec la tolérance de stations vides, libère le maximum de
+    monde pour le congrès. (`plEstCongres` dans `plGenererSemaine`.)
+  - **Aucune demande possible pendant un congrès** : `plagePendantCongres` bloque
+    toute préférence (formulaire + popup calendrier) chevauchant un congrès — les
+    jours sont gérés par l'admin + l'algo.
+  - Test : « congrès en semaine → 2 gardes 24h forcées ».
+- **ADMIN : forcer un congé / une absence** (`app.js` + `index.html`) : bouton
+  dans l'onglet Demandes → popup (médecin, type, Du/Au, note) → insère une
+  absence **APPROUVÉE** directement (l'admin peut dépasser les quotas via le
+  trigger Module 21). Complète la validation des demandes classiques.
+
 ## 🔜 Reste à faire (par priorité)
 
 - **Fériés éditables par l'admin** (prochain lot convenu).

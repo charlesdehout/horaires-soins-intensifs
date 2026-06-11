@@ -470,6 +470,19 @@ test("congrès un week-end : règles week-end inchangées (priorité week-end)",
   assert.strictEqual(sam.filter((s) => s.shift_type === "twe").length, 1, "TWE ≠ 1 le samedi de congrès");
 });
 
+test("congrès en SEMAINE : équipe minimale → les 2 gardes de nuit forcées en 24h", () => {
+  const meds = equipe();
+  const periodes = [{ type: "congres", start_date: "2026-06-01", end_date: "2026-06-05", label: "ISICEM" }]; // lun→ven
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: [], periodes });
+  const duJour = r.shifts.filter((s) => s.date === "2026-06-01"); // lundi de congrès
+  const g24 = duJour.filter((s) => s.shift_type === "garde_24h");
+  const gNuit = duJour.filter((s) => s.shift_type === "garde_nuit");
+  assert.strictEqual(g24.length, 2, "2 gardes 24h attendues en congrès, obtenu " + g24.length);
+  assert.strictEqual(gNuit.length, 0, "garde de nuit 17h–9h indue en congrès, obtenu " + gNuit.length);
+  assert(g24.some((s) => /^resident/.test(s.doctor_id)), "≥1 résident requis parmi les gardes 24h");
+  assert(!g24.every((s) => /^assistant_specialiste/.test(s.doctor_id)), "jamais 2 A/S en garde");
+});
+
 console.log("\n=== Point 6 — Couplage des gardes (repos compensatoire couplé) ===");
 
 test("couplage : nuit J-2 → garde 24h week-end → repos couplé matérialisé", () => {
