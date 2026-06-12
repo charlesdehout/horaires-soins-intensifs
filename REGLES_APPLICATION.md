@@ -237,7 +237,9 @@ testable sous Node (`test_planning.js`, ~59 cas).
 - **Occupation des unités** : **jamais plus d'une personne au Labo de choc**
   (aucune doublure possible) ; **maximum 2 personnes par unité** (titulaire +
   1 doublure). Respecté par toutes les doublures (nouvel engagé, plancher
-  d'heures) et contrôlé par le validateur.
+  d'heures) et contrôlé par le validateur. **Pas de doublure sur une unité
+  tenue par une garde 24 h** (le médecin de 24 h couvre déjà jour + nuit) —
+  seule exception : la doublure de formation du **nouvel engagé**.
 - **Minimum d'heures hebdomadaire** (`EQUITE.minimum_hebdo_h`, défaut 40 h ;
   0 = désactivé) : cible = 40 h × FTE × (jours de présence possibles / 5), les
   jours de **repos de garde n'étant pas travaillables**. Si le planning normal
@@ -306,6 +308,11 @@ testable sous Node (`test_planning.js`, ~59 cas).
   médecins actifs non postés et non en congé (hors contrat et admin exclus).
 - **Exports Excel** : noms de famille, titre/semaine, volets figés, impression paysage,
   ligne « Non planifiés (repos) », mois + trimestre + récap individuel.
+  **Les onglets hebdomadaires sont nommés d'après le premier jour de la
+  semaine** (JJ-MM-AAAA). Export supplémentaire « **Horaires reconnus** » :
+  même gabarit que le planning du mois, mais les **colonnes des jours sans
+  médecin « reconnu » parmi les personnes de garde sont surlignées en bleu**
+  (statut « Médecin reconnu » éditable dans la fiche, `module25_reconnu.sql`).
 
 ---
 

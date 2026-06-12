@@ -995,6 +995,18 @@ test("validerPlanning signale 2 au Labo de choc et 3 sur une unité", () => {
   assert(conflits.some((c) => /usi1 : 3 personnes/.test(c.message)), "3 sur usi1 non signalé");
 });
 
+test("doublures : jamais sur une unité tenue par une garde 24h (sauf nouvel engagé)", () => {
+  const meds = equipe();
+  meds[0].nouvel_engage = true; meds[0].contract_start = "2026-06-01"; // resident1
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: [] });
+  const tenue24 = new Set(r.shifts.filter((s) => s.shift_type === "garde_24h" && s.poste)
+    .map((s) => s.date + "|" + s.poste));
+  r.shifts.filter((s) => s.doublure && s.doctor_id !== "resident1").forEach((s) => {
+    assert(!tenue24.has(s.date + "|" + s.poste),
+      s.date + " : doublure de " + s.doctor_id + " sur " + s.poste + " tenue par une garde 24h");
+  });
+});
+
 console.log("\n=== Équilibre des heures — crédit d'équité des congés ===");
 
 test("congé : un médecin en congé 2 semaines ne dépasse pas les heures de ses pairs", () => {

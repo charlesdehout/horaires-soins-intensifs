@@ -69,6 +69,7 @@ const dAdminLevel     = document.getElementById("d-admin-level");
 const dStatut         = document.getElementById("d-statut");
 const dConges100      = document.getElementById("d-conges100");
 const dNouvelEngage   = document.getElementById("d-nouvel-engage");
+const dReconnu        = document.getElementById("d-reconnu");
 const dStart          = document.getElementById("d-start");
 const dEnd            = document.getElementById("d-end");
 const dPeriodes       = document.getElementById("d-periodes");
@@ -423,6 +424,7 @@ function ouvrirEdition(med) {
   dStatut.value = med.statut || "dependant";
   dConges100.checked = !!med.conges_100pct;
   if (dNouvelEngage) dNouvelEngage.checked = !!med.nouvel_engage;
+  if (dReconnu) dReconnu.checked = !!med.reconnu;
   setPeriodes(
     (med.contract_periods && med.contract_periods.length)
       ? med.contract_periods
@@ -547,6 +549,7 @@ doctorForm.addEventListener("submit", async (e) => {
     statut: dStatut.value,
     conges_100pct: dConges100.checked,
     nouvel_engage: dNouvelEngage ? dNouvelEngage.checked : false,
+    reconnu: dReconnu ? dReconnu.checked : false,
     contract_type: fte >= 1 ? "temps_plein" : "temps_partiel",
     // Périodes contractuelles : 1re période = affichage/repli, tableau complet en jsonb.
     contract_start: periodes[0] ? periodes[0].start : null,
@@ -1207,7 +1210,7 @@ function lendemainDe(dateStr) {
    La lecture de doctors est ouverte à tous les connectés (RLS). */
 async function chargerCarteMedecins() {
   const { data, error } = await sb.from("doctors")
-    .select("id, name, grade, role, contract_start, contract_end, contract_periods");
+    .select("id, name, grade, role, contract_start, contract_end, contract_periods, reconnu");
   if (error) {
     console.error("Erreur chargement médecins (calendrier) :", error);
     return;
@@ -1842,6 +1845,7 @@ if (genererTrimBtn) genererTrimBtn.addEventListener("click", genererTrimestrePou
 const exportPlanningBtn  = document.getElementById("export-planning-btn");
 const exportTrimestreBtn = document.getElementById("export-trimestre-btn");
 const exportRecapBtn     = document.getElementById("export-recap-btn");
+const exportReconnusBtn  = document.getElementById("export-reconnus-btn");
 
 /* Couleurs ARGB (préfixe FF = opaque) du gabarit — palette « sarcelle ». */
 const XL = {
@@ -1859,6 +1863,7 @@ const XL = {
   auto:     "FFF7F7F7", // fond des cellules auto-remplies (vs vides éditables)
   ferme:    "FFC8C8C8", // gris : unité fermée (Labo le week-end / férié, fermetures M17)
   congres:  "FFFAC775", // ambre : en-tête d'un jour de congrès (M17)
+  sansReconnu: "FF9DC3E6", // BLEU : jour sans médecin reconnu de garde (export dédié)
   trait:    "FFB0B0B0",
 };
 
@@ -1892,6 +1897,14 @@ function semainesDuMois(annee, mois) {
 }
 
 const JOURS_COURTS = ["lun", "mar", "mer", "jeu", "ven", "sam", "dim"];
+
+/* Nom d'une feuille hebdomadaire = PREMIER JOUR de la semaine (révision
+   2026-06-12), au format JJ-MM-AAAA (les caractères / : ? * sont interdits
+   dans les noms d'onglets Excel). */
+function nomFeuilleSemaine(jours) {
+  const d = jours[0];
+  return d.slice(8, 10) + "-" + d.slice(5, 7) + "-" + d.slice(0, 4);
+}
 function libelleJour(iso, idx) {
   return JOURS_COURTS[idx] + " " + iso.slice(8, 10) + "/" + iso.slice(5, 7);
 }
@@ -2211,8 +2224,8 @@ async function exporterExcelTrimestre() {
   const nomFn = (id) => nomsCourts[id] || (carteMedecins[id] && carteMedecins[id].name) || "?";
 
   const wb = new ExcelJS.Workbook();
-  semainesDuTrimestre(b.annee, b.moisTrim).forEach((jours, i) => {
-    const ws = wb.addWorksheet("Sem " + (i + 1));
+  semainesDuTrimestre(b.annee, b.moisTrim).forEach((jours) => {
+    const ws = wb.addWorksheet(nomFeuilleSemaine(jours));
     construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes);
   });
   const lib = b.annee + "_mois" + b.moisTrim[0] + "-" + b.moisTrim[2];
@@ -2229,11 +2242,52 @@ async function exporterExcelPlanning() {
   const nomFn = (id) => nomsCourts[id] || (carteMedecins[id] && carteMedecins[id].name) || "?";
 
   const wb = new ExcelJS.Workbook();
-  semainesDuMois(b.annee, b.mois).forEach((jours, i) => {
-    const ws = wb.addWorksheet("Sem " + (i + 1));
+  semainesDuMois(b.annee, b.mois).forEach((jours) => {
+    const ws = wb.addWorksheet(nomFeuilleSemaine(jours));
     construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes);
   });
   await telechargerClasseur(wb, "planning_" + b.annee + "-" + String(b.mois).padStart(2, "0") + ".xlsx");
+}
+
+/* EXPORT 1 bis — HORAIRES RECONNUS (révision 2026-06-12) : même gabarit que
+   le planning du mois, mais les COLONNES des jours SANS médecin « reconnu »
+   parmi les personnes de garde (garde de nuit / 24 h) sont surlignées en
+   BLEU, pour repérer ces jours d'un coup d'œil. */
+async function exporterExcelReconnus() {
+  if (typeof ExcelJS === "undefined") { window.alert("ExcelJS non chargé (vérifie ta connexion)."); return; }
+  const b = bornesMoisAffiche();
+  const { shifts, prefs, periodes } = await donneesMoisExport(b);
+  const nomsCourts = construireNomsCourts(carteMedecins);
+  const nomFn = (id) => nomsCourts[id] || (carteMedecins[id] && carteMedecins[id].name) || "?";
+  const estReconnu = (id) => !!(carteMedecins[id] && carteMedecins[id].reconnu);
+
+  // Jour « sans reconnu » = il y a des gardes ce jour-là et AUCUNE n'est
+  // tenue par un médecin reconnu. (Sans données → pas de surlignage.)
+  const sansReconnu = (iso) => {
+    const gardes = shifts.filter((s) => s.date === iso &&
+      (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h"));
+    return gardes.length > 0 && !gardes.some((s) => estReconnu(s.doctor_id));
+  };
+
+  const wb = new ExcelJS.Workbook();
+  semainesDuMois(b.annee, b.mois).forEach((jours) => {
+    const ws = wb.addWorksheet(nomFeuilleSemaine(jours));
+    construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes);
+    // Surlignage BLEU des colonnes des jours sans reconnu de garde.
+    jours.forEach((iso, idx) => {
+      if (!sansReconnu(iso)) return;
+      const col = idx + 2; // colonne 1 = libellés des postes
+      for (let r = 2; r <= ws.rowCount; r++) {
+        const cell = ws.getRow(r).getCell(col);
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XL.sansReconnu } };
+      }
+    });
+    // Légende sous le tableau.
+    const leg = ws.getRow(ws.rowCount + 2).getCell(1);
+    leg.value = "Colonnes bleues = AUCUN médecin reconnu parmi les personnes de garde ce jour-là.";
+    leg.font = { italic: true, color: { argb: "FF1F4E79" } };
+  });
+  await telechargerClasseur(wb, "horaires_reconnus_" + b.annee + "-" + String(b.mois).padStart(2, "0") + ".xlsx");
 }
 
 /* EXPORT 2 — Récapitulatif individuel : lignes = médecins, colonnes = jours,
@@ -2316,6 +2370,7 @@ async function exporterExcelRecap() {
 if (exportPlanningBtn) exportPlanningBtn.addEventListener("click", exporterExcelPlanning);
 if (exportTrimestreBtn) exportTrimestreBtn.addEventListener("click", exporterExcelTrimestre);
 if (exportRecapBtn) exportRecapBtn.addEventListener("click", exporterExcelRecap);
+if (exportReconnusBtn) exportReconnusBtn.addEventListener("click", exporterExcelReconnus);
 
 
 /* ===================================================================== */

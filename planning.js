@@ -1186,14 +1186,19 @@ function plCompleterMinimumHeures(sortie, medecins, etat, dates) {
   // n'est DOUBLABLE que si elle a exactement 1 titulaire (max 2 par unité) et
   // n'est pas le Labo de choc (1 personne max, jamais de doublure).
   const occupation = {}; // date -> { poste -> nb }
+  const tenuePar24h = new Set(); // "date|poste" : unité tenue par une garde 24 h
   sortie.forEach((s) => {
     if ((s.shift_type === "jour" || s.shift_type === "garde_24h") && s.poste) {
       const o = (occupation[s.date] = occupation[s.date] || {});
       o[s.poste] = (o[s.poste] || 0) + 1;
+      if (s.shift_type === "garde_24h") tenuePar24h.add(s.date + "|" + s.poste);
     }
   });
+  // RÈGLE (révision) : pas de doublure sur une unité tenue par une GARDE 24 H
+  // (le médecin de 24 h couvre déjà jour + nuit ; règle valable pour toutes
+  // les doublures SAUF celles du nouvel engagé, posées ailleurs).
   const stationsDoublables = (d) => Object.keys(occupation[d] || {})
-    .filter((c) => !plSansContinuite(c) && occupation[d][c] === 1);
+    .filter((c) => !plSansContinuite(c) && occupation[d][c] === 1 && !tenuePar24h.has(d + "|" + c));
   // Jours de REPOS DE GARDE par médecin : ce ne sont PAS des jours
   // travaillables → ils sortent du prorata ET des jours doublables.
   const reposDe = {}; // id -> Set(dates)

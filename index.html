@@ -165,6 +165,7 @@
           <button id="export-planning-btn" class="secondary">⬇ Excel — Planning (mois)</button>
           <button id="export-trimestre-btn" class="secondary">⬇ Excel — Planning (trimestre)</button>
           <button id="export-recap-btn" class="secondary">⬇ Excel — Récap individuel</button>
+          <button id="export-reconnus-btn" class="secondary">⬇ Excel — Horaires reconnus</button>
         </div>
         <p class="zone-info">
           La génération crée un <strong>brouillon</strong> (greedy v1) pour le mois affiché ci-dessus,
@@ -369,6 +370,8 @@
               <label for="d-conges100"><input type="checkbox" id="d-conges100" /> Congés à 100 % malgré FTE réduit</label>
               <label for="d-nouvel-engage" title="14 premiers jours de contrat : doublure quotidienne d'une unité, jamais de garde ni de week-end. À RETIRER par l'admin avant la génération du trimestre suivant.">
                 <input type="checkbox" id="d-nouvel-engage" /> 🆕 Nouvel engagé (2 sem. de doublage, pas de garde)</label>
+              <label for="d-reconnu" title="Médecin reconnu. L'export « Excel — Horaires reconnus » surligne en bleu les jours sans médecin reconnu parmi les personnes de garde.">
+                <input type="checkbox" id="d-reconnu" /> ✔️ Médecin reconnu</label>
             </div>
             <div class="form-grid-full">
               <label>Périodes contractuelles</label>
