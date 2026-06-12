@@ -141,6 +141,13 @@ function plNouvelEtat(medecins) {
     // par la révision). Les cumuls pour les statistiques sont *Total ci-dessous.
     nbGardes: {}, nbWeekend: {}, nbGardesTotal: {}, nbWeekendTotal: {},
     heures: {}, station: {},
+    // CRÉDIT D'ÉQUITÉ pour les jours de CONGÉ (préférences bloquantes) : un
+    // jour ouvré de congé est crédité PL_HEURES.jour dans ce compteur, utilisé
+    // UNIQUEMENT par le tri d'équité (jamais dans les stats ni les plafonds).
+    // Sans lui, un médecin en congé paraissait « en déficit d'heures » et
+    // l'algorithme le surchargeait à son retour (dépassements horaires) alors
+    // que des collègues sans congé faisaient moins d'heures.
+    heuresEquite: {},
     // Heures par semaine ISO (lundi) et par médecin : { id: { lundiISO: h } }.
     // Sert au PLAFOND 60 h/semaine souple (Module 12, priorité N2).
     heuresSemaine: {},
@@ -183,6 +190,7 @@ function plNouvelEtat(medecins) {
     e.nbGardesTotal[m.id] = 0;
     e.nbWeekendTotal[m.id] = 0;
     e.heures[m.id] = 0;
+    e.heuresEquite[m.id] = 0; // crédit congés (équité uniquement)
     e.gardesSemaine[m.id] = {};
     e.heuresSemaine[m.id] = {};
     e.weekendsTravailles[m.id] = new Set();
@@ -302,6 +310,32 @@ function plRangDesiderata(m) {
 /* `date` (optionnel) active la prise en compte des souhaits/indispos de GARDE.
    Les souhaits/indispos n'agissent QUE pour les critères de garde ('garde' /
    'weekend'), jamais pour les journées de station ('jour'). */
+/* RATIO D'ÉQUITÉ HORAIRE d'un médecin : heures réelles + crédit congés,
+   rapportées à la cible hebdomadaire. Le crédit (plCrediterAbsences) neutralise
+   les jours de congé : un médecin en congé n'est plus « rattrapé » au-delà des
+   autres à son retour. */
+function plRatioHeures(m, etat) {
+  const credit = (etat.heuresEquite && etat.heuresEquite[m.id]) || 0; // état minimal toléré (tests)
+  return (etat.heures[m.id] + credit) / (m.weekly_hours_target || 52);
+}
+
+/* Crédite, pour un JOUR OUVRÉ donné, les médecins en congé (préférence
+   bloquante) d'un équivalent journée (PL_HEURES.jour) dans heuresEquite.
+   Conditions : sous contrat, jour travaillable, jour ouvré (les week-ends ont
+   leur propre équilibrage). À appeler une fois par date dans les boucles de
+   génération. */
+function plCrediterAbsences(date, medecins, etat) {
+  if (plEstWeekendOuFerie(date)) return;
+  medecins.forEach((m) => {
+    if (!plSousContrat(m, date)) return;
+    const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
+    if (!jt.includes(plJourSemaine(date))) return;
+    if (etat.indispo[m.id] && etat.indispo[m.id].has(date)) {
+      etat.heuresEquite[m.id] += PL_HEURES.jour;
+    }
+  });
+}
+
 function plTrier(liste, critere, etat, date, favoriId) {
   const estGarde = (critere === "garde" || critere === "weekend");
   const congres = !!(date && etat._congresJour);
@@ -328,16 +362,23 @@ function plTrier(liste, critere, etat, date, favoriId) {
       if (pa !== pb) return pb - pa;
       if (pa > 0) { const ra2 = plRangDesiderata(a), rb2 = plRangDesiderata(b); if (ra2 !== rb2) return rb2 - ra2; }
     }
-    const ra = etat.heures[a.id] / (a.weekly_hours_target || 52);
-    const rb = etat.heures[b.id] / (b.weekly_hours_target || 52);
-    if (ra !== rb) return ra - rb;
-    // Couplage des gardes (Pt 6) : à équité STRICTEMENT égale, favoriser le
-    // médecin à coupler (garde de nuit de l'avant-veille) pour déclencher le
-    // repos compensatoire couplé, sans modifier l'ordre d'équité.
-    if (favoriId) {
-      if (a.id === favoriId && b.id !== favoriId) return -1;
-      if (b.id === favoriId && a.id !== favoriId) return 1;
+    const ra = plRatioHeures(a, etat);
+    const rb = plRatioHeures(b, etat);
+    // Couplage des gardes (Pt 6, révisé) : favoriser le(s) médecin(s) de la
+    // garde de nuit de l'avant-veille (jeudi→samedi, vendredi→dimanche) pour
+    // la 24 h de week-end, dans une TOLÉRANCE horaire bornée
+    // (EQUITE.couplage_tolerance_h, défaut 15 h = une garde de nuit).
+    // L'ancien départage « à égalité stricte » ne se déclenchait JAMAIS : la
+    // garde du jeudi augmentait les heures du médecin, qui n'était donc plus
+    // strictement à égalité le samedi.
+    const favs = !favoriId ? [] : (Array.isArray(favoriId) ? favoriId : [favoriId]);
+    const aF = favs.indexOf(a.id) !== -1, bF = favs.indexOf(b.id) !== -1;
+    if (aF !== bF) {
+      const eqC = plEquite();
+      const tol = ((typeof eqC.couplage_tolerance_h === "number") ? eqC.couplage_tolerance_h : 15) / 52;
+      if (Math.abs(ra - rb) <= tol) return aF ? -1 : 1;
     }
+    if (ra !== rb) return ra - rb;
     return String(a.id).localeCompare(String(b.id)); // déterministe
   });
 }
@@ -385,8 +426,8 @@ function plTrierGardeNuit(liste, date, etat) {
     if (pa > 0) { const ra2 = plRangDesiderata(a), rb2 = plRangDesiderata(b); if (ra2 !== rb2) return rb2 - ra2; }
     const ra = plRecenceGarde(a.id, date, etat), rb = plRecenceGarde(b.id, date, etat);
     if (ra !== rb) return rb - ra;                            // ex aequo → garde récente d'abord
-    const ha = etat.heures[a.id] / (a.weekly_hours_target || 52);
-    const hb = etat.heures[b.id] / (b.weekly_hours_target || 52);
+    const ha = plRatioHeures(a, etat);
+    const hb = plRatioHeures(b, etat);
     if (ha !== hb) return ha - hb;
     return String(a.id).localeCompare(String(b.id)); // déterministe
   });
@@ -451,12 +492,21 @@ function plPeutWeekend(id, date, etat) {
   return n < PL_MAX_WEEKENDS_MOIS;
 }
 
-/* Choisit le meilleur candidat (critère 'weekend') en privilégiant ceux qui
-   respectent le plafond de 2 week-ends/mois ; repli sur toute la liste si
-   aucun ne le respecte (la règle N2 est violable en dernier recours). */
-function plChoisirWE(liste, date, etat, favoriId) {
+/* Choisit le meilleur candidat (critère 'weekend') parmi ceux qui respectent
+   le plafond de 2 week-ends/mois — CONTRAINTE DURE (révision) : plus de repli
+   silencieux. Le repli sur la liste complète ne subsiste qu'en DERNIER recours
+   (sinon la garde resterait vide, et la couverture / le ≥1 résident par nuit
+   priment) et il est alors SIGNALÉ par un conflit explicite. */
+function plChoisirWE(liste, date, etat, favoriId, conflits) {
   const ok = liste.filter((m) => plPeutWeekend(m.id, date, etat));
-  return plTrier(ok.length ? ok : liste, "weekend", etat, date, favoriId)[0] || null;
+  if (ok.length) return plTrier(ok, "weekend", etat, date, favoriId)[0] || null;
+  const repli = plTrier(liste, "weekend", etat, date, favoriId)[0] || null;
+  if (repli && conflits) {
+    conflits.push({ date, message: repli.name || repli.id ?
+      `${repli.name || repli.id} : plafond 2 week-ends/mois DÉPASSÉ (effectif insuffisant ce ${date}).` :
+      `Plafond 2 week-ends/mois dépassé le ${date} (effectif insuffisant).` });
+  }
+  return repli;
 }
 
 /* Enregistre un shift et met à jour l'état (heures, gardes, repos 12 h). */
@@ -591,12 +641,18 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
     const st = plChoisirStation(m, postes, plan, etat, cle);
     if (st && !(st in plan)) {
       plan[st] = m.id; mode24[m.id] = true;
-      if (!plSansContinuite(st)) etat.station[m.id][cle] = st;
+      // Pendant un congrès on n'ancre PAS la continuité : les stations doivent
+      // TOURNER de jour en jour pour égaliser les jours de congrès de chacun.
+      if (!congresJour && !plSansContinuite(st)) etat.station[m.id][cle] = st;
     }
   });
   const pool = plTrier(libres.filter((m) => !pris.has(m.id)), "jour", etat, date);
   // 2a) Continuité : on replace chacun sur sa station de la semaine si libre.
-  pool.forEach((m) => {
+  //     SUSPENDUE pendant un CONGRÈS (M17) : l'équité des jours de congrès
+  //     prime — sans cela, les mêmes médecins retenaient leur station toute la
+  //     semaine et travaillaient TOUS les jours du congrès pendant que les
+  //     autres n'en travaillaient aucun (écart constaté : 4-5 jours).
+  if (!congresJour) pool.forEach((m) => {
     if (Object.values(plan).includes(m.id)) return;
     // Continuité de la semaine, sinon l'unité de référence (rotation, M20).
     const st = etat.station[m.id][cle] || m.unite_reference;
@@ -609,8 +665,9 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
     const cand = pool.find((m) => !Object.values(plan).includes(m.id));
     if (cand) {
       plan[code] = cand.id;
-      // Pas d'ancrage de continuité pour le Labo de choc (rotation libre).
-      if (!plSansContinuite(code)) etat.station[cand.id][cle] = code;
+      // Pas d'ancrage de continuité pour le Labo de choc (rotation libre),
+      // ni pendant un congrès (rotation quotidienne voulue, équité congrès).
+      if (!congresJour && !plSansContinuite(code)) etat.station[cand.id][cle] = code;
     }
   });
 
@@ -633,7 +690,7 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
       const st = plChoisirStation(m, postes, plan, etat, cle);
       if (st && !(st in plan)) {
         plan[st] = m.id; mode24[m.id] = true;
-        if (!plSansContinuite(st)) etat.station[m.id][cle] = st;
+        if (!congresJour && !plSansContinuite(st)) etat.station[m.id][cle] = st;
       }
     }
   }
@@ -731,10 +788,13 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits, pp) {
   // pour la garde 24 h, ce qui déclenche le repos compensatoire couplé (lundi /
   // mardi via materialiserReposCouples) sans dégrader l'équité (simple départage,
   // cf. tiebreaker dans plTrier). À défaut d'ex æquo, l'équité prime.
+  // (les gardes du jeudi/vendredi d'un médecin couplé sont par construction
+  //  des 17h–9h : seuls les shifts garde_nuit alimentent le couplage)
   let coupleId = null;
   if (j === 6 || j === 7) {
-    const sNuit = sortie.find((s) => s.shift_type === "garde_nuit" && s.date === plAdd(date, -2));
-    if (sNuit) coupleId = sNuit.doctor_id;
+    const ids = sortie.filter((s) => s.shift_type === "garde_nuit" && s.date === plAdd(date, -2))
+      .map((s) => s.doctor_id);
+    if (ids.length) coupleId = ids; // favoris multiples (les 2 gardes de J-2)
   }
 
   // Gardes 24 h : on complète jusqu'à 2 en tenant compte de celles ÉPINGLÉES,
@@ -746,7 +806,7 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits, pp) {
     if (residentDejaGarde) {
       // un résident est déjà de garde (pré-placement) → on complète librement
     } else if (residentsG.length > 0) {
-      g1 = plChoisirWE(plFiltrerPlafond(residentsG, date, etat, PL_HEURES.garde_24h), date, etat, coupleId);
+      g1 = plChoisirWE(plFiltrerPlafond(residentsG, date, etat, PL_HEURES.garde_24h), date, etat, coupleId, conflits);
       manqueG--;
     } else {
       conflits.push({ date, message: "Week-end nuit : aucun résident disponible (≥1 obligatoire)." });
@@ -755,13 +815,13 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits, pp) {
     if (manqueG > 0) {
       const exclu = g1 ? g1.id : null;
       const reste = plFiltrerPlafond(libresGarde.filter((m) => m.id !== exclu), date, etat, PL_HEURES.garde_24h);
-      g2 = plChoisirWE(reste, date, etat, coupleId);
+      g2 = plChoisirWE(reste, date, etat, coupleId, conflits);
     }
   }
 
   // TWE-seul : l'imposé (binôme/épinglé) sinon le plus prioritaire restant.
   const pris = new Set([g1 && g1.id, g2 && g2.id, t1 && t1.id].filter(Boolean));
-  if (!t1) t1 = plChoisirWE(plFiltrerPlafond(libres.filter((m) => !pris.has(m.id)), date, etat, PL_HEURES.twe), date, etat);
+  if (!t1) t1 = plChoisirWE(plFiltrerPlafond(libres.filter((m) => !pris.has(m.id)), date, etat, PL_HEURES.twe), date, etat, null, conflits);
 
   // Samedi : on mémorise le binôme à imposer le dimanche.
   if (j === 6 && t1) etat.tweForce[plAdd(date, 1)] = t1.id;
@@ -791,11 +851,15 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits, pp) {
     if (!g) return;
     plAffecter(sortie, etat, date, "garde_24h", g.id, null);
     majWE(g.id);
-    if (j === 6) {
-      etat.bloque[g.id].add(plAdd(date, 2)); // samedi → lundi off (dimanche déjà repos 12 h)
-    } else if (j === 7) {
-      etat.bloque[g.id].add(plAdd(date, 1)); // dimanche → lundi
-      etat.bloque[g.id].add(plAdd(date, 2)); //          → mardi
+    // Repos de la SEMAINE SUIVANTE (révision) : uniquement pour des gardes
+    // COUPLÉES — jeudi+samedi → lundi ; vendredi+dimanche → mardi. Une 24 h
+    // de week-end isolée ne donne que le repos du lendemain (déjà bloqué par
+    // plAffecter). On détecte le couplage dans la sortie (garde à J-2).
+    if (j === 6 || j === 7) {
+      const couple = sortie.some((s) =>
+        s.doctor_id === g.id && s.date === plAdd(date, -2) &&
+        (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h"));
+      if (couple) etat.bloque[g.id].add(plAdd(date, 2)); // lundi (sam) / mardi (dim)
     }
   });
   if (t1) {
@@ -837,6 +901,7 @@ function genererPlanning(opts) {
   for (let j = 1; j <= nbJours; j++) {
     const date = annee + "-" + String(mois).padStart(2, "0") + "-" + String(j).padStart(2, "0");
     const pp = ppParDate[date] || [];
+    plCrediterAbsences(date, medecins, etat); // crédit d'équité des congés
     if (plEstWeekendOuFerie(date)) plGenererWeekend(date, medecins, etat, sortie, conflits, pp);
     else plGenererSemaine(date, medecins, etat, sortie, conflits, pp);
   }
@@ -964,6 +1029,7 @@ function genererTrimestre(opts) {
     });
     plDatesDuMois(annee, mois).forEach((date) => {
       const pp = ppParDate[date] || [];
+      plCrediterAbsences(date, medecins, etat); // crédit d'équité des congés
       if (plEstWeekendOuFerie(date)) plGenererWeekend(date, medecins, etat, sortie, conflits, pp);
       else plGenererSemaine(date, medecins, etat, sortie, conflits, pp);
     });
@@ -1157,9 +1223,11 @@ function materialiserRepos(shifts, dansPeriode) {
   const out = [];
   shifts.forEach((s) => {
     if (s.shift_type !== "garde_nuit" && s.shift_type !== "garde_24h") return;
-    const j = plJourSemaine(s.date);
+    // RÈGLE (révision) : toute garde donne le repos du LENDEMAIN uniquement.
+    // Le jour SUPPLÉMENTAIRE de la semaine suivante (lundi/mardi) n'est dû que
+    // pour des gardes COUPLÉES (jeudi+samedi → lundi ; vendredi+dimanche →
+    // mardi) — matérialisé par materialiserReposCouples, plus ici.
     const jours = [plAdd(s.date, 1)]; // repos 12 h le lendemain
-    if (s.shift_type === "garde_24h" && (j === 6 || j === 7)) jours.push(plAdd(s.date, 2));
     jours.forEach((d) => {
       if (dansPeriode && !dansPeriode(d)) return;
       const cle = s.doctor_id + "|" + d;
@@ -1384,20 +1452,19 @@ function validerPlanning(opts) {
         conflits.push({ date, message: `${nom(id)} : repos 12h non respecté (travail au lendemain d'une garde).` });
       }
 
-      // 2d) Récup week-end : garde 24h le samedi → lundi off ;
-      //     le dimanche → lundi + mardi off.
-      const sam = plAdd(date, -2);
-      if (dm[sam] && plJourSemaine(sam) === 6 &&
-          dm[sam].some((s) => s.shift_type === "garde_24h") && plJourSemaine(date) === 1) {
-        conflits.push({ date, message: `${nom(id)} : récup non respectée (travail le lundi après garde du samedi).` });
-      }
-      const dim1 = plAdd(date, -1);
-      const dim2 = plAdd(date, -2);
-      if (dm[dim1] && plJourSemaine(dim1) === 7 && dm[dim1].some((s) => s.shift_type === "garde_24h")) {
-        conflits.push({ date, message: `${nom(id)} : récup non respectée (travail le lundi après garde du dimanche).` });
-      }
-      if (dm[dim2] && plJourSemaine(dim2) === 7 && dm[dim2].some((s) => s.shift_type === "garde_24h") && plJourSemaine(date) === 2) {
-        conflits.push({ date, message: `${nom(id)} : récup non respectée (travail le mardi après garde du dimanche).` });
+      // 2d) Récup COUPLÉE (révision) : le jour de repos de la semaine suivante
+      //     n'est dû QUE pour des gardes couplées — jeudi+samedi → lundi off ;
+      //     vendredi+dimanche → mardi off. (Une 24 h de week-end isolée ne
+      //     donne que le repos du lendemain, déjà contrôlé en 2c.)
+      const avantVeille = plAdd(date, -2); // samedi (si lundi) / dimanche (si mardi)
+      const jMoins4 = plAdd(date, -4);     // jeudi (si lundi) / vendredi (si mardi)
+      const jSem = plJourSemaine(date);
+      if ((jSem === 1 || jSem === 2) &&
+          dm[avantVeille] && dm[avantVeille].some((s) => s.shift_type === "garde_24h") &&
+          dm[jMoins4] && dm[jMoins4].some(estGarde)) {
+        const lib = jSem === 1 ? "lundi après gardes couplées jeudi+samedi"
+                               : "mardi après gardes couplées vendredi+dimanche";
+        conflits.push({ date, message: `${nom(id)} : récup non respectée (travail le ${lib}).` });
       }
     });
   });
@@ -1482,7 +1549,7 @@ function validerPlanning(opts) {
        au fte / à la disponibilité).
    À appeler avec l'ensemble des shifts du trimestre. Renvoie [{date,message}].
    ===================================================================== */
-function validerEquite(shifts, medecins) {
+function validerEquite(shifts, medecins, preferences) {
   const eq = plEquite();
   const conflits = [];
   const medById = {};
@@ -1505,10 +1572,35 @@ function validerEquite(shifts, medecins) {
     }
   });
 
-  // --- Plancher horaire (charge relative à la cible) ---
+  // --- Crédit d'équité des CONGÉS (mêmes principes que plCrediterAbsences) :
+  //     un jour ouvré de congé compte comme une journée pour la CHARGE (pas pour
+  //     les heures affichées), afin de ne pas signaler « sous le plancher » un
+  //     médecin simplement parti en congé — ni masquer une vraie surcharge. ---
+  let dateFin = null;
+  shifts.forEach((s) => { if (!dateFin || s.date > dateFin) dateFin = s.date; });
+  const creditConge = {};
+  if (preferences && dateAncre && dateFin) {
+    const bloquantes = plBloq();
+    (preferences || []).forEach((p) => {
+      if (!bloquantes.includes(p.pref_type)) return;
+      const m = medById[p.doctor_id];
+      if (!m) return;
+      let d = p.start_date < dateAncre ? dateAncre : p.start_date;
+      const fin = p.end_date > dateFin ? dateFin : p.end_date;
+      while (d <= fin) {
+        const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
+        if (!plEstWeekendOuFerie(d) && plSousContrat(m, d) && jt.includes(plJourSemaine(d))) {
+          creditConge[p.doctor_id] = (creditConge[p.doctor_id] || 0) + PL_HEURES.jour;
+        }
+        d = plAdd(d, 1);
+      }
+    });
+  }
+
+  // --- Plancher horaire (charge relative à la cible, congés crédités) ---
   const charges = Object.keys(heuresTotales).map((id) => {
     const cible = (medById[id] && medById[id].weekly_hours_target) ? medById[id].weekly_hours_target : 52;
-    return { id, charge: heuresTotales[id] / cible, heures: heuresTotales[id] };
+    return { id, charge: (heuresTotales[id] + (creditConge[id] || 0)) / cible, heures: heuresTotales[id] };
   });
   if (charges.length >= 2) {
     const moyenne = charges.reduce((a, c) => a + c.charge, 0) / charges.length;
@@ -1617,8 +1709,13 @@ function alertesAbsences(opts) {
    Échange « à valeur égale » : garde↔garde, journée↔journée, tour↔tour. REFUSÉ
    si ça casse une règle de garde (≥1 résident, jamais 2 A/S) sur les jours
    concernés. Un échange de GARDE échange AUSSI les repos de garde associés
-   (le repos suit la garde). FONCTION PURE : ne mute rien, renvoie
-   { ok, message, changes:[{ id, doctor_id }] } à appliquer côté base.
+   (le repos suit la garde ; le repos COUPLÉ — jeudi+samedi → lundi,
+   vendredi+dimanche → mardi — est RECALCULÉ : transféré, créé ou supprimé
+   selon que le nouveau titulaire est couplé ou non). Vérifie aussi la
+   DISPONIBILITÉ du receveur (même jour, veille, lendemain). FONCTION PURE :
+   ne mute rien, renvoie { ok, message, changes } avec changes =
+   [{ id, doctor_id }] (réaffecter) | [{ id, supprimer:true }] |
+   [{ creer:{date, shift_type, poste, doctor_id} }] à appliquer côté base.
    ===================================================================== */
 const PL_GROUPE_SHIFT = { garde_nuit: "garde", garde_24h: "garde", jour: "journee", twe: "tour" };
 function plGroupeShift(t) { return PL_GROUPE_SHIFT[t] || null; }
@@ -1635,21 +1732,65 @@ function validerEchange(shifts, idA, idB, medecins) {
   const dA = sA.doctor_id, dB = sB.doctor_id;
   const changes = [{ id: sA.id, doctor_id: dB }, { id: sB.id, doctor_id: dA }];
 
-  // Échange des repos de garde associés (lendemain, +2 pour les 24 h de week-end).
-  if (gA === "garde") {
-    const reposDe = (id, date) => (shifts || []).filter((s) =>
-      s.shift_type === "repos_garde" && s.doctor_id === id &&
-      (s.date === plAdd(date, 1) || s.date === plAdd(date, 2)));
-    reposDe(dA, sA.date).forEach((s) => changes.push({ id: s.id, doctor_id: dB }));
-    reposDe(dB, sB.date).forEach((s) => changes.push({ id: s.id, doctor_id: dA }));
+  // Propriétaire APRÈS échange (réaffectations + suppressions au fil de l'eau).
+  const reaff = {}; reaff[sA.id] = dB; reaff[sB.id] = dA;
+  const suppr = new Set();
+  const docDe = (s) => (reaff[s.id] !== undefined ? reaff[s.id] : s.doctor_id);
+  const estG = (t) => t === "garde_nuit" || t === "garde_24h";
+  const estTravail = (t) => t === "jour" || t === "twe" || t === "off" || estG(t);
+  const aGardeApres = (id, date) => (shifts || []).some((s) =>
+    !suppr.has(s.id) && estG(s.shift_type) && s.date === date && docDe(s) === id);
+  const estWE = (d) => { const j = plJourSemaine(d); return j === 6 || j === 7; };
 
-    // Règles de garde APRÈS échange, sur les dates concernées.
+  // Les deux sens de l'échange : [shift gagné, ancien titulaire, nouveau].
+  const sens = [[sA, dA, dB], [sB, dB, dA]];
+
+  if (gA === "garde") {
+    // 1) Le repos du LENDEMAIN suit toujours la garde.
+    sens.forEach(([g, ancien, nouveau]) => {
+      const r1 = (shifts || []).find((s) => s.shift_type === "repos_garde" &&
+        s.doctor_id === ancien && s.date === plAdd(g.date, 1));
+      if (r1) { changes.push({ id: r1.id, doctor_id: nouveau }); reaff[r1.id] = nouveau; }
+    });
+
+    // 2) Repos COUPLÉ (J+2 d'une 24 h de week-end) — règle révisée : il n'est
+    //    dû que si le titulaire a AUSSI gardé l'avant-veille (jeudi+samedi →
+    //    lundi ; vendredi+dimanche → mardi). On le recalcule pour les deux
+    //    médecins, dans les deux directions possibles :
+    //    a) la garde échangée EST la 24 h de week-end ;
+    //    b) la garde échangée est la garde de semaine (jeudi/vendredi) couplée
+    //       à une 24 h de week-end existante 2 jours plus tard.
+    const recalc = []; // [weekendGarde (post-échange), candidatRepos]
+    sens.forEach(([g]) => {
+      if (estWE(g.date) && g.shift_type === "garde_24h") recalc.push(g);
+      const dWE = plAdd(g.date, 2);
+      (shifts || []).forEach((s) => {
+        if (estG(s.shift_type) && s.shift_type === "garde_24h" && s.date === dWE && estWE(dWE)) recalc.push(s);
+      });
+    });
+    const vus = new Set();
+    recalc.forEach((w) => {
+      if (vus.has(w.id)) return; vus.add(w.id);
+      const titulaire = docDe(w);                       // titulaire post-échange
+      const couple = aGardeApres(titulaire, plAdd(w.date, -2));
+      const rep = (shifts || []).find((s) => s.shift_type === "repos_garde" &&
+        !suppr.has(s.id) && s.date === plAdd(w.date, 2) &&
+        (s.doctor_id === titulaire || s.doctor_id === dA || s.doctor_id === dB));
+      if (couple) {
+        if (rep && docDe(rep) !== titulaire) { changes.push({ id: rep.id, doctor_id: titulaire }); reaff[rep.id] = titulaire; }
+        else if (!rep) changes.push({ creer: { date: plAdd(w.date, 2), shift_type: "repos_garde", poste: null, doctor_id: titulaire } });
+      } else if (rep && docDe(rep) !== titulaire) {
+        // le repos appartenait à l'ancien titulaire qui n'est plus couplé
+        changes.push({ id: rep.id, supprimer: true }); suppr.add(rep.id);
+      } else if (rep && docDe(rep) === titulaire && !couple) {
+        changes.push({ id: rep.id, supprimer: true }); suppr.add(rep.id);
+      }
+    });
+
+    // 3) Règles de composition de garde APRÈS échange (≥1 résident, jamais 2 A/S).
     const byId = {}; (medecins || []).forEach((m) => { byId[m.id] = m; });
-    const swap = {}; swap[sA.id] = dB; swap[sB.id] = dA;
-    const docDe = (s) => (swap[s.id] !== undefined ? swap[s.id] : s.doctor_id);
     for (const date of [sA.date, sB.date]) {
-      const gardes = (shifts || []).filter((s) => s.date === date &&
-        (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h"));
+      const gardes = (shifts || []).filter((s) => !suppr.has(s.id) && s.date === date && estG(s.shift_type));
       const grades = gardes.map((g) => byId[docDe(g)] && byId[docDe(g)].grade);
       const nbRes = grades.filter((x) => x === "resident").length;
       const nbAS = grades.filter((x) => x === "assistant_specialiste").length;
@@ -1659,6 +1800,27 @@ function validerEchange(shifts, idA, idB, medecins) {
         return { ok: false, message: "Échange refusé : 2 A/S de garde le " + date + " (interdit)." };
     }
   }
+
+  // 4) DISPONIBILITÉ du receveur (toutes natures d'échange) — post-échange :
+  //    - pas d'autre shift le même jour (congé, station, repos…) ;
+  //    - pas de garde la veille (il serait en repos de garde) ;
+  //    - pour une garde gagnée : pas de shift de TRAVAIL le lendemain.
+  const nomDe = (id) => { const m = (medecins || []).find((x) => x.id === id); return (m && m.name) || id; };
+  for (const [g, , nouveau] of sens) {
+    const memeJour = (shifts || []).find((s) => !suppr.has(s.id) && s.id !== g.id &&
+      s.date === g.date && docDe(s) === nouveau);
+    if (memeJour)
+      return { ok: false, message: "Échange refusé : " + nomDe(nouveau) + " a déjà « " + memeJour.shift_type + " » le " + g.date + "." };
+    if (aGardeApres(nouveau, plAdd(g.date, -1)))
+      return { ok: false, message: "Échange refusé : " + nomDe(nouveau) + " est de garde la veille du " + g.date + " (repos de garde)." };
+    if (estG(g.shift_type)) {
+      const lendemain = (shifts || []).find((s) => !suppr.has(s.id) && estTravail(s.shift_type) &&
+        s.date === plAdd(g.date, 1) && docDe(s) === nouveau);
+      if (lendemain)
+        return { ok: false, message: "Échange refusé : " + nomDe(nouveau) + " travaille le lendemain de la garde du " + g.date + " (repos impossible)." };
+    }
+  }
+
   return { ok: true, message: "Échange valide.", changes };
 }
 

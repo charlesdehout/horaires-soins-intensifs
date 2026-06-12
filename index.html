@@ -80,6 +80,8 @@
         <button type="button" class="tab tab-admin hidden" data-tab="periodes">Congrès &amp; fermetures</button>
         <button type="button" class="tab tab-admin hidden" data-tab="medecins">Médecins</button>
         <button type="button" class="tab tab-doctor hidden" data-tab="prefs">Mes préférences</button>
+        <button type="button" class="tab tab-doctor hidden" data-tab="echanges">Échanges
+          <span id="tab-badge-echanges" class="tab-badge hidden"></span></button>
       </nav>
 
       <!-- ============ ONGLET PLANNING (tous) ============ -->
@@ -489,6 +491,63 @@
         </table>
         <p id="prefs-empty" class="zone-info hidden">Aucune préférence encodée pour l'instant.</p>
         </div><!-- /panel-prefs -->
+
+        <!-- ====== Module 23 : Échanges de shifts (workflow médecin) ====== -->
+        <div id="panel-echanges" class="tab-panel hidden">
+          <div class="zone-header">
+            <h2>Échanges de shifts</h2>
+          </div>
+          <p class="zone-info">
+            Propose à un collègue d'échanger un de tes shifts <strong>publiés</strong>
+            (à venir) contre l'un des siens, à valeur égale : garde ↔ garde,
+            journée ↔ journée, tour ↔ tour. L'échange n'est appliqué que si le
+            collègue accepte et que les règles de garde restent respectées
+            (un échange de garde transfère aussi le repos de garde).
+          </p>
+
+          <form id="ech-form" class="doctor-form">
+            <div class="form-grid">
+              <div>
+                <label for="ech-mien">Mon shift (publié, à venir)</label>
+                <select id="ech-mien" required>
+                  <option value="">— choisir —</option>
+                </select>
+              </div>
+              <div>
+                <label for="ech-cible">Contre le shift d'un collègue (même nature)</label>
+                <select id="ech-cible" required disabled>
+                  <option value="">— choisir d'abord mon shift —</option>
+                </select>
+              </div>
+              <div>
+                <label for="ech-note">Note (optionnel)</label>
+                <input type="text" id="ech-note" maxlength="200" placeholder="ex. raison de l'échange…" />
+              </div>
+            </div>
+            <div class="form-actions">
+              <button type="submit" id="ech-proposer-btn">Proposer l'échange</button>
+            </div>
+            <p id="ech-msg" class="message"></p>
+          </form>
+
+          <h3>Propositions reçues</h3>
+          <table id="ech-recues-table" class="data-table">
+            <thead>
+              <tr><th>De</th><th>Il/elle me propose</th><th>Contre mon shift</th><th>Note</th><th>Statut</th><th></th></tr>
+            </thead>
+            <tbody id="ech-recues-tbody"></tbody>
+          </table>
+          <p id="ech-recues-empty" class="zone-info hidden">Aucune proposition reçue.</p>
+
+          <h3>Mes propositions émises</h3>
+          <table id="ech-emises-table" class="data-table">
+            <thead>
+              <tr><th>À</th><th>Je propose</th><th>Contre son shift</th><th>Note</th><th>Statut</th><th></th></tr>
+            </thead>
+            <tbody id="ech-emises-tbody"></tbody>
+          </table>
+          <p id="ech-emises-empty" class="zone-info hidden">Aucune proposition émise.</p>
+        </div><!-- /panel-echanges -->
       </div><!-- /doctor-zone -->
     </section>
 

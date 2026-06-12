@@ -42,9 +42,13 @@ testable sous Node (`test_planning.js`, ~59 cas).
 
 - **Jamais 2 A/S ensemble en garde** ; **≥ 1 résident** de garde chaque nuit.
 - **Max 3 gardes par semaine** ISO et par médecin.
-- **Max 2 week-ends par mois** et par médecin.
-- **Repos de garde obligatoire** : lendemain de toute garde non planifiable (12 h) ;
-  garde 24 h de week-end → repos prolongé (samedi → lundi ; dimanche → lundi + mardi).
+- **Max 2 week-ends par mois** et par médecin — contrainte **dure** : plus de
+  repli silencieux ; en dernier recours absolu (garde sinon vide), la violation
+  est **signalée par un conflit explicite**.
+- **Repos de garde obligatoire** : lendemain de toute garde non planifiable (12 h).
+  Le jour de repos de la **semaine suivante** n'est dû **que pour des gardes
+  COUPLÉES** : jeudi + samedi → lundi off ; vendredi + dimanche → mardi off.
+  Une garde 24 h de week-end **isolée** ne donne que le repos du lendemain.
 - **Hors contrat** → non planifiable ; **jours travaillés** (`jours_travailles`) respectés.
 - **Binôme TWE week-end** : le tour du samedi et du dimanche est la **même personne**.
 - **Férié en semaine** : suit les règles de couverture du week-end mais **ne compte pas**
@@ -82,8 +86,17 @@ testable sous Node (`test_planning.js`, ~59 cas).
   structurel : moins de résidents que d'A/S et ≥ 1 résident/nuit obligatoire).
 - **Gardes** équilibrées au **mois** ; **week-ends** au **trimestre**, comptés en
   **week-ends distincts** (sam + dim = 1). Écart visé ≤ 2 par grade.
-- **Couplage des gardes** (Pt 6, souple) : à équité strictement égale, la garde de nuit
-  de l'avant-veille reprend la 24 h du week-end → repos compensatoire couplé.
+- **Crédit d'équité des congés** : un jour ouvré de congé est crédité comme une
+  journée dans le compteur d'équité horaire (jamais dans les stats ni les
+  plafonds). Un médecin en congé n'est donc plus « rattrapé » au-delà des autres
+  à son retour (fini les dépassements pendant que des collègues sans congé font
+  moins d'heures).
+- **Couplage des gardes** (Pt 6, révisé) : le médecin de la garde de nuit de
+  l'avant-veille (jeudi → samedi, vendredi → dimanche) est préféré pour la 24 h
+  du week-end, dans une **tolérance horaire bornée**
+  (`EQUITE.couplage_tolerance_h`, défaut 15 h ≈ une garde de nuit ; 0 =
+  désactivé) → déclenche le repos compensatoire couplé du lundi/mardi. La garde
+  de semaine du médecin couplé reste une **17h–9h** (jamais une 24 h).
 - **Concentration des gardes de nuit** (M12c, souple) : à déficit strictement égal, on
   privilégie le médecin ayant gardé le plus récemment (regroupe les nuits sans coût
   d'équité). Tunable `EQUITE.concentration_*`.
@@ -164,7 +177,9 @@ testable sous Node (`test_planning.js`, ~59 cas).
 ## 10. Repos, continuité et rotation
 
 - **Deux repos** : **repos de garde** (auto, affiché, NON comptabilisé) vs **Récupération**
-  (`recup`, manuel, comptabilisé, bien visible).
+  (`recup`, manuel, comptabilisé, bien visible). Repos de garde = **lendemain de
+  toute garde** ; + **lundi** si gardes couplées jeudi+samedi, + **mardi** si
+  vendredi+dimanche (cf. §3).
 - **Continuité d'unité** sur la semaine, base = **unité de référence** du trimestre.
 - **Rotation trimestrielle** (M20) : l'admin propose une rotation des unités maison
   (`unite_reference`), éditable, évitant l'unité du trimestre précédent.
@@ -185,6 +200,9 @@ testable sous Node (`test_planning.js`, ~59 cas).
   - **Équité des jours de congrès prioritaire** : on sert d'abord le médecin qui a
     travaillé le **moins** de jours de congrès → tout le monde a ~le même nombre de jours
     libres (au-dessus de l'équité gardes/heures, sous les contraintes dures).
+    La **continuité d'unité est suspendue** pendant les jours de congrès : les
+    stations **tournent** de jour en jour (sinon les mêmes médecins retenaient
+    leur station toute la semaine du congrès).
   - **Aucune demande de congé possible** pendant un congrès (gérée par l'admin + l'algo).
 - **Fermeture d'unité** : l'admin choisit une unité et une période ; le poste n'est ni
   pourvu ni exigé ; la continuité contourne l'unité fermée.
@@ -212,11 +230,19 @@ testable sous Node (`test_planning.js`, ~59 cas).
 
 ## 14. Échange de shifts (Module 23)
 
-- **Workflow entre médecins** (propose → accepte), sur le planning **publié**.
+- **Workflow entre médecins** (propose → accepte), sur le planning **publié**,
+  via l'onglet **« Échanges »** (médecin) : proposer (mes shifts publiés à venir
+  ↔ shift d'un collègue de même nature), listes reçues/émises, accepter /
+  refuser / annuler, badge des propositions en attente.
 - **À échange égal** : **garde ↔ garde**, **journée ↔ journée**, tour ↔ tour.
-- **Refusé** si ça casse une règle de garde (≥ 1 résident, jamais 2 A/S) sur les jours
-  concernés. Un **échange de garde échange aussi le repos de garde**.
-- Moteur `validerEchange` (testé) en place ; **UI du workflow à finaliser**.
+- **Refusé** si ça casse une règle de garde (≥ 1 résident, jamais 2 A/S), si le
+  receveur a **déjà un shift le même jour**, une **garde la veille**, ou (pour
+  une garde) **travaille le lendemain**.
+- Un **échange de garde transfère le repos du lendemain** ; le **repos couplé**
+  (lundi/mardi, cf. §3) est **recalculé** : transféré, créé ou supprimé selon
+  que le nouveau titulaire est couplé ou non.
+- Table `shift_swaps` (`sql/module23_echanges.sql`), moteur `validerEchange`
+  (pur, testé), application des changements par l'UI à l'acceptation.
 
 ---
 
@@ -255,8 +281,7 @@ testable sous Node (`test_planning.js`, ~59 cas).
 
 1. **Fériés (lot 2)** : demande « travailler un férié » → placement par l'algo + congé
    férié sous 6 sem. ; suppression de `recup_ferie` ; fériés éditables par l'admin.
-2. **Échange de shifts** : finaliser l'**UI du workflow** (proposer / accepter).
-3. Raffinements N3/N4 résiduels (cf. `CONFORMITE.md`).
+2. Raffinements N3/N4 résiduels (cf. `CONFORMITE.md`).
 
 ---
 

@@ -725,5 +725,100 @@ test("échange de garde : échange AUSSI le repos de garde", () => {
   assert(crp2 && crp2.doctor_id === "R1", "repos de g2 non transféré à R1");
 });
 
+console.log("\n=== Règle repos — jour de semaine suivante UNIQUEMENT si gardes couplées ===");
+
+test("repos : tout repos_garde de lundi/mardi est justifié (lendemain ou couplage)", () => {
+  // RÈGLE (révision) : le lundi de repos exige jeudi+samedi gardés ; le mardi
+  // exige vendredi+dimanche. Sinon, seul le repos du LENDEMAIN d'une garde
+  // existe. On vérifie sur un mois généré que chaque repos_garde d'un lundi ou
+  // mardi est justifié — et qu'aucune 24 h de week-end isolée n'ouvre de jour
+  // de repos la semaine suivante.
+  const meds = equipe();
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: [] });
+  const add = (d, n) => { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + n);
+    return x.toISOString().slice(0, 10); };
+  const jour = (d) => { const j = new Date(d + "T00:00:00Z").getUTCDay(); return j === 0 ? 7 : j; };
+  const gardes = new Set(r.shifts.filter((s) => s.shift_type === "garde_nuit" || s.shift_type === "garde_24h")
+    .map((s) => s.doctor_id + "|" + s.date));
+  const aGarde = (id, d) => gardes.has(id + "|" + d);
+  r.shifts.filter((s) => s.shift_type === "repos_garde").forEach((s) => {
+    const j = jour(s.date);
+    if (j !== 1 && j !== 2) return; // seuls lundi/mardi sont concernés par la règle
+    const lendemain = aGarde(s.doctor_id, add(s.date, -1));
+    const couple = aGarde(s.doctor_id, add(s.date, -2)) && aGarde(s.doctor_id, add(s.date, -4));
+    assert(lendemain || couple,
+      s.doctor_id + " : repos_garde injustifié le " + s.date +
+      " (ni lendemain de garde, ni couplage jeudi+samedi / vendredi+dimanche)");
+  });
+});
+
+test("échange : le repos couplé est SUPPRIMÉ si le receveur n'est pas couplé", () => {
+  // R1 a gardé jeudi 11/6 (nuit) + samedi 13/6 (24h) → repos dimanche 14 + lundi 15.
+  // R1 échange sa 24 h du samedi contre la 24 h du dimanche 21/6 de R2 (non couplé
+  // au vendredi) : le lundi 15 de R1 doit SAUTER (R2 n'a pas gardé le jeudi 11),
+  // et R2 ne reçoit pas de mardi (R1 n'a pas gardé le vendredi 19).
+  const meds = [{ id: "R1", grade: "resident", name: "R1" }, { id: "R2", grade: "resident", name: "R2" }];
+  const shifts = [
+    { id: "gj", date: "2026-06-11", shift_type: "garde_nuit", doctor_id: "R1", poste: null }, // jeudi
+    { id: "rj", date: "2026-06-12", shift_type: "repos_garde", doctor_id: "R1", poste: null },
+    { id: "gs", date: "2026-06-13", shift_type: "garde_24h", doctor_id: "R1", poste: null },  // samedi
+    { id: "rd", date: "2026-06-14", shift_type: "repos_garde", doctor_id: "R1", poste: null },
+    { id: "rl", date: "2026-06-15", shift_type: "repos_garde", doctor_id: "R1", poste: null }, // lundi (couplé)
+    { id: "gd2", date: "2026-06-21", shift_type: "garde_24h", doctor_id: "R2", poste: null }, // dimanche
+    { id: "rl2", date: "2026-06-22", shift_type: "repos_garde", doctor_id: "R2", poste: null },
+  ];
+  const r = validerEchange(shifts, "gs", "gd2", meds);
+  assert(r.ok, "échange refusé à tort : " + r.message);
+  const supprime = r.changes.find((c) => c.id === "rl" && c.supprimer);
+  assert(supprime, "le repos couplé du lundi 15 de R1 devait être supprimé (R2 non couplé)");
+  const creeMardi = r.changes.find((c) => c.creer && c.creer.date === "2026-06-23");
+  assert(!creeMardi, "aucun mardi de repos ne devait être créé (R1 n'a pas gardé le vendredi 19)");
+});
+
+test("échange refusé : le receveur a déjà un shift le même jour", () => {
+  const meds = [{ id: "R1", grade: "resident", name: "R1" }, { id: "R2", grade: "resident", name: "R2" }];
+  const shifts = [
+    { id: "j1", date: "2026-06-10", shift_type: "jour", doctor_id: "R1", poste: "usi1" },
+    { id: "j2", date: "2026-06-11", shift_type: "jour", doctor_id: "R2", poste: "usi2" },
+    { id: "j3", date: "2026-06-10", shift_type: "jour", doctor_id: "R2", poste: "usi3" }, // R2 déjà posté le 10
+  ];
+  const r = validerEchange(shifts, "j1", "j2", meds);
+  assert(!r.ok, "échange accepté alors que R2 a déjà un shift le 10/6");
+});
+
+test("échange refusé : le receveur travaille le lendemain de la garde gagnée", () => {
+  const meds = [{ id: "R1", grade: "resident", name: "R1" }, { id: "R2", grade: "resident", name: "R2" }];
+  const shifts = [
+    { id: "g1", date: "2026-06-10", shift_type: "garde_nuit", doctor_id: "R1", poste: null },
+    { id: "g2", date: "2026-06-17", shift_type: "garde_nuit", doctor_id: "R2", poste: null },
+    { id: "j1", date: "2026-06-11", shift_type: "jour", doctor_id: "R2", poste: "usi1" }, // R2 posté le 11
+  ];
+  const r = validerEchange(shifts, "g1", "g2", meds);
+  assert(!r.ok, "échange accepté alors que R2 travaille le lendemain de la garde du 10/6");
+});
+
+console.log("\n=== Équilibre des heures — crédit d'équité des congés ===");
+
+test("congé : un médecin en congé 2 semaines ne dépasse pas les heures de ses pairs", () => {
+  // resident1 est en congé annuel du 1er au 14 juin (2 semaines pleines).
+  // SANS crédit d'équité, l'algorithme le considérait « en déficit d'heures »
+  // et le surchargeait à son retour, au point de dépasser des collègues SANS
+  // congé. AVEC crédit : ses heures réelles restent NETTEMENT sous la moyenne
+  // des autres résidents.
+  const meds = equipe();
+  const prefs = [{ doctor_id: "resident1", pref_type: "conge_annuel",
+                   start_date: "2026-06-01", end_date: "2026-06-14", status: "approuve" }];
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: prefs });
+  const heures = {};
+  meds.forEach((m) => { heures[m.id] = 0; });
+  const H = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24, off: 10.5 };
+  r.shifts.forEach((s) => { if (H[s.shift_type]) heures[s.doctor_id] += H[s.shift_type]; });
+  const autres = meds.filter((m) => m.grade === "resident" && m.id !== "resident1");
+  const moyenne = autres.reduce((a, m) => a + heures[m.id], 0) / autres.length;
+  assert(heures["resident1"] < moyenne,
+    "resident1 (congé 2 sem) fait " + heures["resident1"] + " h ≥ moyenne des autres résidents (" +
+    Math.round(moyenne) + " h) — le congé n'allège pas sa charge");
+});
+
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");
 process.exit(reussis === total ? 0 : 1);

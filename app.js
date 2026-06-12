@@ -200,7 +200,7 @@ function afficherEspace(profil) {
 
   // Côté admin : liste des médecins. Côté médecin : ses préférences.
   if (estAdmin) chargerMedecins();
-  else chargerPreferences();
+  else { chargerPreferences(); initEchanges(); }
 
   // Planning (Module 4) : visible par tous. La légende « Mes shifts »
   // n'apparaît que pour un médecin (l'admin n'est pas dans le planning).
@@ -1790,7 +1790,7 @@ async function genererTrimestrePourMoisAffiche() {
   //    s'évalue sur TOUT le trimestre (équilibrage trimestriel) via validerEquite.
   genererTrimBtn.disabled = false;
   const alertesEquite = (typeof validerEquite === "function")
-    ? validerEquite(res.shifts, medecins || []) : [];
+    ? validerEquite(res.shifts, medecins || [], prefs || []) : [];
   const nbConf = res.conflits.length;
   const base = "Trimestre " + libelleTrim + " généré : " + res.shifts.length + " shifts. ";
   if (nbConf === 0 && alertesEquite.length === 0) {
@@ -3491,7 +3491,7 @@ if (vueGrilleBtn) vueGrilleBtn.addEventListener("click", () => basculerVuePlanni
 /* les onglets ne gèrent que l'affichage.                                */
 /* ===================================================================== */
 
-const ONGLETS = ["planning", "demandes", "periodes", "medecins", "prefs"];
+const ONGLETS = ["planning", "demandes", "periodes", "medecins", "prefs", "echanges"];
 
 function basculerOnglet(nom) {
   ONGLETS.forEach((t) => {
@@ -3650,3 +3650,297 @@ if (rotationEnregistrerBtn) rotationEnregistrerBtn.addEventListener("click", enr
     if (profil) afficherEspace(profil);
   }
 })();
+
+
+/* ===================================================================== */
+/* MODULE 23 — Échanges de shifts : UI du workflow (médecin)              */
+/* --------------------------------------------------------------------- */
+/* Proposer (mes shifts publiés à venir ↔ shift d'un collègue de même     */
+/* nature), lister reçues/émises, accepter (validerEchange + application  */
+/* des changes : réaffectation / suppression / création de repos),        */
+/* refuser, annuler. Tout se fait sur le planning PUBLIÉ uniquement.      */
+/* ===================================================================== */
+const echMienSel    = document.getElementById("ech-mien");
+const echCibleSel   = document.getElementById("ech-cible");
+const echNoteInput  = document.getElementById("ech-note");
+const echForm       = document.getElementById("ech-form");
+const echMsg        = document.getElementById("ech-msg");
+const echRecuesBody = document.getElementById("ech-recues-tbody");
+const echEmisesBody = document.getElementById("ech-emises-tbody");
+
+let echDocteurs = {};   // id -> { name, grade }
+let echMesShifts = {};  // id -> shift (mes shifts publiés à venir)
+let echCibles = {};     // id -> shift (candidats du collègue)
+
+function echMessage(txt, type) {
+  if (!echMsg) return;
+  echMsg.textContent = txt || "";
+  echMsg.className = "message" + (type ? " " + type : "");
+}
+
+function echAujourdhui() { return new Date().toISOString().slice(0, 10); }
+
+const ECH_GROUPES = { garde_nuit: "garde", garde_24h: "garde", jour: "journee", twe: "tour" };
+const ECH_TYPES_DU_GROUPE = { garde: ["garde_nuit", "garde_24h"], journee: ["jour"], tour: ["twe"] };
+
+function echLibellePoste(code) {
+  const p = (typeof POSTES_JOUR !== "undefined" ? POSTES_JOUR : []).find((x) => x.code === code);
+  return p ? p.label : (code || "");
+}
+
+function echLibelleShift(s, avecNom) {
+  const cfg = SHIFT_CONFIG[s.shift_type] || { label: s.shift_type };
+  const d = s.date.split("-");
+  let lib = d[2] + "/" + d[1] + "/" + d[0] + " — " + cfg.label;
+  if (s.poste) lib += " (" + echLibellePoste(s.poste) + ")";
+  if (avecNom) lib += " · " + ((echDocteurs[s.doctor_id] && echDocteurs[s.doctor_id].name) || s.doctor_id);
+  return lib;
+}
+
+/* IDs des schedules PUBLIÉS (les échanges ne portent que sur du publié). */
+async function echSchedulesPublies() {
+  const { data, error } = await sb.from("schedules").select("id").eq("status", "published");
+  if (error) throw error;
+  return (data || []).map((s) => s.id);
+}
+
+async function echChargerDocteurs() {
+  const { data, error } = await sb.from("doctors").select("id, name, grade");
+  if (error) throw error;
+  echDocteurs = {}; (data || []).forEach((m) => { echDocteurs[m.id] = m; });
+}
+
+/* Mes shifts publiés à venir → select « Mon shift ». */
+async function echChargerMesShifts() {
+  if (!echMienSel || !medecinCourant) return;
+  const pubIds = await echSchedulesPublies();
+  echMesShifts = {};
+  echMienSel.innerHTML = "<option value=''>— choisir —</option>";
+  if (!pubIds.length) return;
+  const { data, error } = await sb.from("shifts")
+    .select("id, date, shift_type, poste, doctor_id, schedule_id")
+    .eq("doctor_id", medecinCourant.id)
+    .in("schedule_id", pubIds)
+    .gte("date", echAujourdhui())
+    .order("date");
+  if (error) { echMessage("Erreur de lecture de tes shifts : " + error.message, "error"); return; }
+  (data || []).forEach((s) => {
+    if (!ECH_GROUPES[s.shift_type]) return; // seuls les shifts de travail s'échangent
+    echMesShifts[s.id] = s;
+    const opt = document.createElement("option");
+    opt.value = s.id; opt.textContent = echLibelleShift(s, false);
+    echMienSel.appendChild(opt);
+  });
+}
+
+/* Candidats du collègue (même nature, publiés, à venir). */
+async function echChargerCibles() {
+  if (!echCibleSel) return;
+  echCibleSel.innerHTML = "<option value=''>— choisir —</option>";
+  echCibles = {};
+  const mien = echMesShifts[echMienSel.value];
+  echCibleSel.disabled = !mien;
+  if (!mien) return;
+  const types = ECH_TYPES_DU_GROUPE[ECH_GROUPES[mien.shift_type]] || [];
+  const pubIds = await echSchedulesPublies();
+  const { data, error } = await sb.from("shifts")
+    .select("id, date, shift_type, poste, doctor_id, schedule_id")
+    .in("shift_type", types)
+    .neq("doctor_id", medecinCourant.id)
+    .in("schedule_id", pubIds)
+    .gte("date", echAujourdhui())
+    .order("date");
+  if (error) { echMessage("Erreur de lecture des shifts des collègues : " + error.message, "error"); return; }
+  (data || []).forEach((s) => {
+    echCibles[s.id] = s;
+    const opt = document.createElement("option");
+    opt.value = s.id; opt.textContent = echLibelleShift(s, true);
+    echCibleSel.appendChild(opt);
+  });
+}
+
+/* Proposer un échange. */
+if (echForm) echForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  echMessage("");
+  const mien = echMesShifts[echMienSel.value];
+  const cible = echCibles[echCibleSel.value];
+  if (!mien || !cible) return echMessage("Choisis ton shift et celui du collègue.", "error");
+  const { error } = await sb.from("shift_swaps").insert({
+    from_doctor_id: medecinCourant.id,
+    from_shift_id: String(mien.id),
+    to_doctor_id: cible.doctor_id,
+    to_shift_id: String(cible.id),
+    note: (echNoteInput && echNoteInput.value.trim()) || null,
+  });
+  if (error) return echMessage("Erreur à la proposition : " + error.message, "error");
+  echMessage("Proposition envoyée à " + ((echDocteurs[cible.doctor_id] || {}).name || "ton collègue") + ". ✅", "info");
+  if (echNoteInput) echNoteInput.value = "";
+  chargerEchanges();
+});
+
+/* Applique les `changes` du moteur (réaffecter / supprimer / créer). */
+async function echAppliquerChanges(changes, shiftsContexte) {
+  // schedule_id par mois (pour les repos créés), déduit du contexte chargé.
+  const schedParMois = {};
+  (shiftsContexte || []).forEach((s) => {
+    if (s.schedule_id) schedParMois[s.date.slice(0, 7)] = s.schedule_id;
+  });
+  for (const c of changes) {
+    if (c.creer) {
+      let sid = schedParMois[c.creer.date.slice(0, 7)];
+      if (!sid) {
+        const [y, m] = c.creer.date.split("-").map(Number);
+        const { data } = await sb.from("schedules").select("id").eq("year", y).eq("month", m).maybeSingle();
+        sid = data && data.id;
+      }
+      if (!sid) continue; // pas de schedule pour ce mois → on n'invente pas
+      const { error } = await sb.from("shifts").insert({
+        date: c.creer.date, shift_type: c.creer.shift_type, poste: c.creer.poste,
+        doctor_id: c.creer.doctor_id, schedule_id: sid,
+      });
+      if (error) throw error;
+    } else if (c.supprimer) {
+      const { error } = await sb.from("shifts").delete().eq("id", c.id);
+      if (error) throw error;
+    } else {
+      const { error } = await sb.from("shifts").update({ doctor_id: c.doctor_id }).eq("id", c.id);
+      if (error) throw error;
+    }
+  }
+}
+
+/* Accepter une proposition reçue : valider PUIS appliquer. */
+async function echAccepter(swap) {
+  echMessage("");
+  try {
+    // 1) Recharger les 2 shifts (le planning peut avoir changé depuis la proposition).
+    const { data: paire, error: e1 } = await sb.from("shifts")
+      .select("id, date, shift_type, poste, doctor_id, schedule_id")
+      .in("id", [swap.from_shift_id, swap.to_shift_id]);
+    if (e1) throw e1;
+    const sFrom = (paire || []).find((s) => String(s.id) === String(swap.from_shift_id));
+    const sTo   = (paire || []).find((s) => String(s.id) === String(swap.to_shift_id));
+    if (!sFrom || !sTo) return echMessage("Échange impossible : un des shifts n'existe plus (planning régénéré ?).", "error");
+    if (sFrom.doctor_id !== swap.from_doctor_id || sTo.doctor_id !== swap.to_doctor_id)
+      return echMessage("Échange impossible : le planning a changé depuis la proposition.", "error");
+    const pubIds = await echSchedulesPublies();
+    if (!pubIds.includes(sFrom.schedule_id) || !pubIds.includes(sTo.schedule_id))
+      return echMessage("Échange impossible : le planning concerné n'est plus publié.", "error");
+
+    // 2) Contexte : tous les shifts autour des deux dates (±6 jours, pour les
+    //    règles de garde, repos et couplage).
+    const dates = [sFrom.date, sTo.date].sort();
+    const ajd = (d, n) => { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+    const { data: ctx, error: e2 } = await sb.from("shifts")
+      .select("id, date, shift_type, poste, doctor_id, schedule_id")
+      .gte("date", ajd(dates[0], -6)).lte("date", ajd(dates[1], 6));
+    if (e2) throw e2;
+
+    // 3) Validation par le moteur (planning.js, fonction pure).
+    const docs = Object.keys(echDocteurs).map((id) => ({ id, name: echDocteurs[id].name, grade: echDocteurs[id].grade }));
+    const r = validerEchange(ctx || [], swap.from_shift_id, swap.to_shift_id, docs);
+    if (!r.ok) return echMessage(r.message, "error");
+
+    // 4) Application + clôture de la proposition.
+    await echAppliquerChanges(r.changes, ctx || []);
+    const { error: e3 } = await sb.from("shift_swaps")
+      .update({ status: "accepte", decided_at: new Date().toISOString() })
+      .eq("id", swap.id);
+    if (e3) throw e3;
+    echMessage("Échange appliqué. ✅", "info");
+    if (calendrier) calendrier.refetchEvents();
+    chargerEchanges();
+    echChargerMesShifts();
+  } catch (err) {
+    echMessage("Erreur à l'acceptation : " + (err.message || err), "error");
+  }
+}
+
+async function echDecider(swap, statut) {
+  const { error } = await sb.from("shift_swaps")
+    .update({ status: statut, decided_at: new Date().toISOString() })
+    .eq("id", swap.id);
+  if (error) return echMessage("Erreur : " + error.message, "error");
+  chargerEchanges();
+}
+
+const ECH_STATUTS = { en_attente: "⏳ En attente", accepte: "✅ Accepté", refuse: "❌ Refusé", annule: "🚫 Annulé" };
+
+/* Listes reçues / émises + badge. */
+async function chargerEchanges() {
+  if (!echRecuesBody || !medecinCourant) return;
+  const me = medecinCourant.id;
+  const { data: swaps, error } = await sb.from("shift_swaps")
+    .select("*")
+    .or("from_doctor_id.eq." + me + ",to_doctor_id.eq." + me)
+    .order("created_at", { ascending: false })
+    .limit(40);
+  if (error) { echMessage("Erreur de lecture des échanges : " + error.message, "error"); return; }
+
+  // Détails des shifts référencés (pour l'affichage).
+  const ids = []; (swaps || []).forEach((w) => { ids.push(w.from_shift_id, w.to_shift_id); });
+  let parId = {};
+  if (ids.length) {
+    const { data: sh } = await sb.from("shifts")
+      .select("id, date, shift_type, poste, doctor_id").in("id", ids);
+    (sh || []).forEach((s) => { parId[String(s.id)] = s; });
+  }
+  const lib = (sid) => { const s = parId[String(sid)]; return s ? echLibelleShift(s, false) : "(shift disparu)"; };
+  const nom = (did) => (echDocteurs[did] && echDocteurs[did].name) || did;
+
+  const recues = (swaps || []).filter((w) => w.to_doctor_id === me);
+  const emises = (swaps || []).filter((w) => w.from_doctor_id === me);
+
+  const remplir = (tbody, liste, estRecue) => {
+    tbody.innerHTML = "";
+    liste.forEach((w) => {
+      const tr = document.createElement("tr");
+      const actions = document.createElement("td");
+      if (w.status === "en_attente") {
+        if (estRecue) {
+          const ok = document.createElement("button");
+          ok.type = "button"; ok.textContent = "Accepter"; ok.className = "mini";
+          ok.addEventListener("click", () => echAccepter(w));
+          const non = document.createElement("button");
+          non.type = "button"; non.textContent = "Refuser"; non.className = "mini danger";
+          non.addEventListener("click", () => echDecider(w, "refuse"));
+          actions.appendChild(ok); actions.appendChild(non);
+        } else {
+          const ann = document.createElement("button");
+          ann.type = "button"; ann.textContent = "Annuler"; ann.className = "mini danger";
+          ann.addEventListener("click", () => echDecider(w, "annule"));
+          actions.appendChild(ann);
+        }
+      }
+      const cols = estRecue
+        ? [nom(w.from_doctor_id), lib(w.from_shift_id), lib(w.to_shift_id), w.note || "", ECH_STATUTS[w.status] || w.status]
+        : [nom(w.to_doctor_id), lib(w.from_shift_id), lib(w.to_shift_id), w.note || "", ECH_STATUTS[w.status] || w.status];
+      cols.forEach((c) => { const td = document.createElement("td"); td.textContent = c; tr.appendChild(td); });
+      tr.appendChild(actions);
+      tbody.appendChild(tr);
+    });
+  };
+  remplir(echRecuesBody, recues, true);
+  remplir(echEmisesBody, emises, false);
+  document.getElementById("ech-recues-empty").classList.toggle("hidden", recues.length > 0);
+  document.getElementById("ech-emises-empty").classList.toggle("hidden", emises.length > 0);
+
+  // Badge : propositions reçues en attente.
+  const badge = document.getElementById("tab-badge-echanges");
+  const n = recues.filter((w) => w.status === "en_attente").length;
+  if (badge) { badge.textContent = n; badge.classList.toggle("hidden", n === 0); }
+}
+
+/* Point d'entrée (appelé à la connexion d'un médecin). */
+async function initEchanges() {
+  if (!echMienSel) return;
+  try {
+    await echChargerDocteurs();
+    await echChargerMesShifts();
+    await chargerEchanges();
+  } catch (err) {
+    echMessage("Erreur d'initialisation des échanges : " + (err.message || err), "error");
+  }
+}
+if (echMienSel) echMienSel.addEventListener("change", echChargerCibles);

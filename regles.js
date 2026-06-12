@@ -80,6 +80,12 @@ const EQUITE = {
   concentration_nuits: true, // activer/désactiver le biais
   concentration_coeff: 0.5,  // intensité ∈ ]0,1[ (0,5 = discret ; <1 garantit la borne)
   fenetre_nuits:       14,    // « récent » = dernière garde ≤ 14 jours avant
+  // Pt 6 — COUPLAGE des gardes (jeudi→samedi, vendredi→dimanche) : tolérance
+  // horaire (en h) dans laquelle le médecin de la garde de nuit de l'avant-
+  // veille est préféré pour la 24 h de week-end. 15 h ≈ une garde de nuit :
+  // le couplage se déclenche réellement sans écraser l'équité (les critères
+  // week-end/gardes restent prioritaires). 0 = désactiver le couplage.
+  couplage_tolerance_h: 15,
 };
 
 
