@@ -152,6 +152,11 @@ function plNouvelEtat(medecins) {
     // l'algorithme le surchargeait à son retour (dépassements horaires) alors
     // que des collègues sans congé faisaient moins d'heures.
     heuresEquite: {},
+    // MINIMUM CUMULÉ ATTENDU (révision) : à chaque jour ouvré disponible, on
+    // ajoute la part quotidienne du minimum hebdo (minimum_hebdo_h × fte ÷
+    // jours ouvrés travaillables). Sert à PROMOUVOIR en 24 h la garde de
+    // semaine d'un médecin resté sous son minimum (compensation).
+    attenduMin: {},
     // Heures par semaine ISO (lundi) et par médecin : { id: { lundiISO: h } }.
     // Sert au PLAFOND 60 h/semaine souple (Module 12, priorité N2).
     heuresSemaine: {},
@@ -195,6 +200,7 @@ function plNouvelEtat(medecins) {
     e.nbWeekendTotal[m.id] = 0;
     e.heures[m.id] = 0;
     e.heuresEquite[m.id] = 0; // crédit congés (équité uniquement)
+    e.attenduMin[m.id] = 0;   // minimum cumulé attendu (40 h/sem proratisé)
     e.gardesSemaine[m.id] = {};
     e.heuresSemaine[m.id] = {};
     e.weekendsTravailles[m.id] = new Set();
@@ -359,12 +365,21 @@ function plRatioHeures(m, etat) {
    génération. */
 function plCrediterAbsences(date, medecins, etat) {
   if (plEstWeekendOuFerie(date)) return;
+  const eqM = plEquite();
+  const minH = (typeof eqM.minimum_hebdo_h === "number") ? eqM.minimum_hebdo_h : 40;
   medecins.forEach((m) => {
     if (!plSousContrat(m, date)) return;
     const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
     if (!jt.includes(plJourSemaine(date))) return;
     if (etat.indispo[m.id] && etat.indispo[m.id].has(date)) {
       etat.heuresEquite[m.id] += PL_HEURES.jour;
+      return; // jour de congé : pas d'attendu minimal ce jour-là
+    }
+    // Jour ouvré DISPONIBLE (hors repos de garde) → part quotidienne du minimum.
+    if (minH && etat.attenduMin && !(etat.bloque[m.id] && etat.bloque[m.id].has(date))) {
+      const jtSem = jt.filter((j) => j >= 1 && j <= 5).length || 1;
+      const fte = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1;
+      etat.attenduMin[m.id] += (minH * fte) / jtSem;
     }
   });
 }
@@ -725,6 +740,19 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
   let aForcer24 = [];
   if (congresJour) aForcer24 = gardesNuit.slice();
   else if (cfgG.garde24h_obligatoire && second) aForcer24 = [second];
+  // RÈGLE (révision 2026-06-13) : un médecin resté SOUS son minimum cumulé
+  // (40 h/sem proratisé) prend sa garde de semaine en 24 H pour compenser
+  // (il tient une station + la nuit : +24 h au lieu de +15 h, et libère un
+  // médecin du vivier de jour). Seuil = GARDES.promotion_24h_deficit_h
+  // (défaut 9 h ≈ le gain d'une promotion ; 0 = désactivé).
+  if (!congresJour) {
+    const seuilP = (typeof cfgG.promotion_24h_deficit_h === "number") ? cfgG.promotion_24h_deficit_h : 9;
+    if (seuilP > 0) gardesNuit.forEach((m) => {
+      if (aForcer24.indexOf(m) !== -1) return;
+      const attendu = (etat.attenduMin && etat.attenduMin[m.id]) || 0;
+      if (attendu - etat.heures[m.id] >= seuilP) aForcer24.push(m);
+    });
+  }
   aForcer24.forEach((m) => {
     if (mode24[m.id]) return;
     const st = plChoisirStation(m, postes, plan, etat, cle);
@@ -1119,6 +1147,8 @@ function plReequilibrerGardes(sortie, medecins, etat) {
     if (!plSousContrat(m, d)) return false;
     const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
     if (!jt.includes(plJourSemaine(d))) return false;
+    if (etat.bloque[m.id] && etat.bloque[m.id].has(d)) return false;            // repos/récup (couplée incluse)
+    if (etat.bloque[m.id] && etat.bloque[m.id].has(plAdd(d, 1))) return false;  // lendemain déjà repos d'une autre garde
     if (etat.indispo[m.id] && etat.indispo[m.id].has(d)) return false;          // congé
     if (!plDispoIndependant(m, d, etat.dispoDeclaree[m.id])) return false;      // indépendant
     if (parDoc[m.id].has(d) || parDoc[m.id].has(plAdd(d, 1))) return false;     // libre J et J+1
@@ -1135,11 +1165,23 @@ function plReequilibrerGardes(sortie, medecins, etat) {
       const pool = medecins.filter((m) => m.grade === grade);
       if (pool.length < 2) continue;
       const tri = pool.slice().sort((a, b) => compte[b.id] - compte[a.id]);
-      const haut = tri[0], bas = tri[tri.length - 1];
-      if (compte[haut.id] - compte[bas.id] <= 2) continue; // écart acceptable (±1 visé, 2 toléré)
-      // garde de nuit de DÉBUT de semaine du médecin excédentaire, transférable.
-      const cand = sortie.find((s) => s.doctor_id === haut.id && s.shift_type === "garde_nuit" &&
-        [1, 2, 3].includes(plJourSemaine(s.date)) && peutRecevoir(bas, s.date));
+      // Recherche PERSÉVÉRANTE : tous les couples (excédentaire, déficitaire)
+      // avec écart > 2, et toutes les gardes de début de semaine transférables
+      // de l'excédentaire — pas seulement le premier couple/candidat.
+      let haut = null, bas = null, cand = null;
+      for (let hi = 0; hi < tri.length && !cand; hi++) {
+        for (let bi = tri.length - 1; bi > hi && !cand; bi--) {
+          if (compte[tri[hi].id] - compte[tri[bi].id] <= 2) break; // bas trop proche → couple suivant
+          // Lundi→mercredi d'abord (jamais de combo), puis jeudi/vendredi en
+          // dernier recours (le combo suivra le nouveau titulaire).
+          const cands = sortie.filter((s) => s.doctor_id === tri[hi].id &&
+            s.shift_type === "garde_nuit" && plJourSemaine(s.date) <= 5)
+            .sort((a, b) => (plJourSemaine(a.date) <= 3 ? 0 : 1) - (plJourSemaine(b.date) <= 3 ? 0 : 1));
+          for (const c of cands) {
+            if (peutRecevoir(tri[bi], c.date)) { haut = tri[hi]; bas = tri[bi]; cand = c; break; }
+          }
+        }
+      }
       if (!cand) continue;
       // Transfert : shift + état (heures, compteurs, index locaux).
       parDoc[haut.id].delete(cand.date); gardesDates[haut.id].delete(cand.date); compte[haut.id]--;

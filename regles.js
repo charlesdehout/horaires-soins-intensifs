@@ -116,6 +116,11 @@ const GARDES = {
   garde24h_obligatoire:  false,
   pref_as_24h:           true,
   eviter_24h_a_3_gardes: true,
+  // Révision 2026-06-13 — COMPENSATION DU MINIMUM D'HEURES : un médecin resté
+  // sous son minimum cumulé (EQUITE.minimum_hebdo_h proratisé) prend sa garde
+  // de SEMAINE en 24 h (station + nuit) pour rattraper. Seuil de déficit (h)
+  // déclenchant la promotion ; 0 = désactiver.
+  promotion_24h_deficit_h: 9,
 };
 
 
