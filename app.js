@@ -2033,8 +2033,7 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes) {
   stations.forEach(([lib, code]) => {
     lignes.push({ label: lib, fill: XL.station, estLabo: code === "labo_choc", code,
       get: (d) => nomsShift(shifts, d, (s) => s.poste === code && (s.shift_type === "jour" || s.shift_type === "garde_24h"), nomFn) });
-    // 1 ligne vide éditable sous chaque unité (saisie manuelle).
-    lignes.push({ ligneVide: true });
+    // (révision 2026-06-12 : plus de ligne vide intercalée sous chaque unité)
   });
   lignes.push({ label: "Autres (saisie libre)", fill: null, get: () => [] });
   lignes.push({ label: "Garde de nuit (17h–9h)", fill: XL.garde, get: (d) => nomsShift(shifts, d, P(["garde_nuit"]), nomFn) });
@@ -2259,7 +2258,13 @@ async function exporterExcelReconnus() {
   const { shifts, prefs, periodes } = await donneesMoisExport(b);
   const nomsCourts = construireNomsCourts(carteMedecins);
   const nomFn = (id) => nomsCourts[id] || (carteMedecins[id] && carteMedecins[id].name) || "?";
-  const estReconnu = (id) => !!(carteMedecins[id] && carteMedecins[id].reconnu);
+  // Statut « reconnu » relu FRAIS depuis la base : la carte des médecins en
+  // cache peut dater d'avant la colonne (→ tout sortait en bleu à tort).
+  const { data: docsRec, error: eRec } = await sb.from("doctors").select("id, reconnu");
+  if (eRec) { window.alert("Lecture du statut « reconnu » impossible : " + eRec.message +
+    "\n(Le SQL module25_reconnu a-t-il été exécuté dans Supabase ?)"); return; }
+  const reconnus = new Set((docsRec || []).filter((m) => m.reconnu).map((m) => String(m.id)));
+  const estReconnu = (id) => reconnus.has(String(id));
 
   // Jour « sans reconnu » = il y a des gardes ce jour-là et AUCUNE n'est
   // tenue par un médecin reconnu. (Sans données → pas de surlignage.)
