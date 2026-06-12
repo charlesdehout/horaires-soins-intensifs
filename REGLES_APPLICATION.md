@@ -240,6 +240,14 @@ testable sous Node (`test_planning.js`, ~59 cas).
   d'heures) et contrôlé par le validateur. **Pas de doublure sur une unité
   tenue par une garde 24 h** (le médecin de 24 h couvre déjà jour + nuit) —
   seule exception : la doublure de formation du **nouvel engagé**.
+- **Compensation par garde 24 h en semaine** (révision 2026-06-13) : un médecin
+  resté **sous son minimum cumulé** (40 h/sem proratisé sur ses jours
+  disponibles) prend sa **garde de semaine en 24 h** (station + nuit, +24 h au
+  lieu de +15 h) pour rattraper — seuil `GARDES.promotion_24h_deficit_h`
+  (défaut 9 h ; 0 = désactivé). Effet miroir : la station ainsi tenue libère un
+  jour pour un médecin **en excédent d'heures**, qui récupère (le tri des
+  journées sert toujours les moins chargés d'abord — les plus chargés restent
+  « non planifiés (repos) »).
 - **Minimum d'heures hebdomadaire** (`EQUITE.minimum_hebdo_h`, défaut 40 h ;
   0 = désactivé) : cible = 40 h × FTE × (jours de présence possibles / 5), les
   jours de **repos de garde n'étant pas travaillables**. Si le planning normal

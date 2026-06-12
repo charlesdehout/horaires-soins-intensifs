@@ -1021,6 +1021,26 @@ test("plancher 40 h : un temps plein SANS lundi (convenance) atteint quand même
   assert(moy >= 39, "resident5 (temps plein sans lundi) : moyenne " + moy.toFixed(1) + " h/sem < 39 h");
 });
 
+test("compensation 24h : personne sous 40 h/sem de moyenne sur le trimestre (équipe pleine dispo)", () => {
+  // Révision 2026-06-13 : un médecin resté sous son minimum cumulé prend sa
+  // garde de SEMAINE en 24 h (station + nuit) pour rattraper — et libère du
+  // même coup un jour de station pour un médecin en excédent (qui récupère).
+  const meds = equipe();
+  const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: meds, preferences: [] });
+  const H = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24, off: 10.5 };
+  const tot = {}; meds.forEach((m) => { tot[m.id] = 0; });
+  r.shifts.forEach((s) => { if (H[s.shift_type]) tot[s.doctor_id] += H[s.shift_type]; });
+  const sem = 92 / 7;
+  meds.forEach((m) => {
+    const moy = tot[m.id] / sem;
+    assert(moy >= 40, m.id + " : " + moy.toFixed(1) + " h/sem < 40 (compensation 24h inopérante)");
+  });
+  // La promotion 24 h en semaine doit exister (sinon la règle est inactive).
+  const dow = (d) => { const j = new Date(d + "T00:00:00Z").getUTCDay(); return j === 0 ? 7 : j; };
+  assert(r.shifts.some((s) => s.shift_type === "garde_24h" && dow(s.date) <= 5),
+    "aucune garde 24h de semaine générée (promotion par déficit inactive ?)");
+});
+
 console.log("\n=== Équilibre des heures — crédit d'équité des congés ===");
 
 test("congé : un médecin en congé 2 semaines ne dépasse pas les heures de ses pairs", () => {
