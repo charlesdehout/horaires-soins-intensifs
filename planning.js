@@ -59,6 +59,10 @@ function plGardes() {
 const PL_STATIONS_SANS_CONTINUITE = ["labo_choc"];
 function plSansContinuite(code) { return PL_STATIONS_SANS_CONTINUITE.indexOf(code) !== -1; }
 
+/* VERSION de l'algorithme — affichée dans le message de génération pour
+   vérifier que le navigateur exécute bien le code déployé (cache !). */
+const PL_VERSION = "v2026.06.13-1";
+
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
 

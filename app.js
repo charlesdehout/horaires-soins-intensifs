@@ -1814,7 +1814,10 @@ async function genererTrimestrePourMoisAffiche() {
   const alertesEquite = (typeof validerEquite === "function")
     ? validerEquite(res.shifts, medecins || [], prefs || []) : [];
   const nbConf = res.conflits.length;
-  const base = "Trimestre " + libelleTrim + " généré : " + res.shifts.length + " shifts. ";
+  const nbDoublures = res.shifts.filter((s) => s.doublure).length;
+  const base = "Trimestre " + libelleTrim + " généré : " + res.shifts.length + " shifts (" +
+    nbDoublures + " doublure" + (nbDoublures > 1 ? "s" : "") + ") · algo " +
+    (typeof PL_VERSION !== "undefined" ? PL_VERSION : "ANCIENNE VERSION (cache ?)") + ". ";
   if (nbConf === 0 && alertesEquite.length === 0) {
     messageGeneration(base + "Aucun conflit. ✅", "info");
   } else {
