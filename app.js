@@ -2734,13 +2734,15 @@ const COMPTEURS_COLS = [
   { key: "name",     label: "Médecin",      num: false },
   { key: "grade",    label: "Grade",        num: false },
   { key: "heures",   label: "Heures",       num: true },
-  { key: "cible",    label: "Cible (mois)", num: true },
+  { key: "cible",    label: "Cible",        num: true },
+  // Moyenne horaire HEBDOMADAIRE EFFECTIVE : heures réelles ÷ semaines de
+  // présence (les semaines de congé accepté sont déduites du dénominateur).
+  { key: "moyHebdo", label: "Moy. h/sem",   num: true },
   { key: "gardes",   label: "Gardes",       num: true },
   { key: "weekends", label: "Week-ends",    num: true },
   { key: "tours",    label: "Tours",        num: true },
   { key: "offs",     label: "Off",          num: true },
-  { key: "repos",    label: "Repos",        num: true },
-  // Révision 2026-06-12 — compteurs INFORMATIFS (non limitants) :
+  // Compteurs INFORMATIFS (non limitants) :
   { key: "reposGarde",   label: "Repos g.",  num: true },
   { key: "nonPlanifies", label: "Non plan.", num: true },
 ];
@@ -2900,10 +2902,14 @@ async function majCompteurs() {
     });
     const cibleBrute = cibleHebdo * semaines;
     const reduction = joursConge * (cibleHebdo / jt.length);
+    // Moyenne horaire hebdo EFFECTIVE : heures ÷ semaines de présence
+    // (période − équivalent-semaines de congé accepté).
+    const semainesEff = Math.max(semaines - joursConge / Math.max(jt.length, 1), 0);
+    const moyHebdo = semainesEff > 0.2 ? Math.round((st.heures / semainesEff) * 10) / 10 : 0;
     return {
       name: m.name || "", grade: GRADE_LABELS[m.grade] || m.grade || "",
       gradeCode: m.grade, // pour la pastille colorée
-      heures: st.heures, cible: Math.max(0, Math.round(cibleBrute - reduction)),
+      heures: st.heures, cible: Math.max(0, Math.round(cibleBrute - reduction)), moyHebdo,
       cibleBrute: Math.round(cibleBrute), reductionConge: Math.round(reduction), joursConge,
       gardes: st.gardes, weekends: st.weekends, tours: st.tours, offs: st.offs, repos: st.repos,
       reposGarde: st.reposGarde || 0, nonPlanifies: compterNonPlanifies(m),
@@ -2947,7 +2953,11 @@ async function majCompteurs() {
       tdCible.classList.add("cible-reduite");
     }
     tr.appendChild(tdCible);
-    [lg.gardes, lg.weekends, lg.tours, lg.offs, lg.repos, lg.reposGarde, lg.nonPlanifies].forEach((v) => {
+    const tdMoy = document.createElement("td");
+    tdMoy.textContent = lg.moyHebdo ? lg.moyHebdo + " h" : "—";
+    tdMoy.title = "Heures réelles ÷ semaines de présence (congés acceptés déduits).";
+    tr.appendChild(tdMoy);
+    [lg.gardes, lg.weekends, lg.tours, lg.offs, lg.reposGarde, lg.nonPlanifies].forEach((v) => {
       const td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
     });
     compteursTbody.appendChild(tr);
