@@ -28,9 +28,13 @@ testable sous Node (`test_planning.js`, ~59 cas).
   fermetures. **N'apparaît jamais à l'horaire** (exclu de la génération et des listes
   « repos / non planifiés »).
 - **Médecin** : voit le planning, encode ses préférences/demandes.
-- **Statut** : **Salarié** (anciennement « dépendant ») ou **Indépendant** (résident
-  qui déclare ses semaines disponibles — contrainte dure : planifiable uniquement sur
-  les jours déclarés `dispo`).
+- **Statut** : **Salarié** (anciennement « dépendant ») ou **Indépendant** : il
+  déclare ses jours de travail via la demande « **✅ Disponible** » (type
+  `dispo`, en tête de sa liste de demandes, validée par l'admin). Double effet
+  (révision 2026-06-13) : contrainte **dure** (planifiable uniquement sur ces
+  jours) **et priorité à l'horaire** — sur un jour déclaré, il passe devant
+  pour les journées de station (départage en sa faveur pour les gardes, sous
+  l'équité).
 - **Grades** : **Résident** et **Assistant spécialiste (A/S)**. (Le grade
   « Spécialiste » a été supprimé ; les ex-spécialistes sont des A/S.)
 - **Niveau administratif** (`admin_level`) : principal > secondaire > travailleur —
@@ -316,6 +320,11 @@ testable sous Node (`test_planning.js`, ~59 cas).
 
 ## 16. Affichage
 
+- **Congés acceptés bien visibles** (révision 2026-06-13) : tout congé/absence
+  **approuvé** apparaît au calendrier comme une **pastille nominative**
+  (🏖 Nom · Congé annuel…) — l'admin voit tout le monde, chaque médecin voit
+  les siens (RLS). Les demandes **en attente** restent en fond discret avec la
+  mention « (en attente) ».
 - **Calendrier (Mois / Liste)** : ordre des événements par jour imposé — USI 1→5,
   Bordet, Labo, gardes/tour, repos de garde, récup, off, congés, puis synthèse
   « 🛌 N au repos » (admin). Pas de repos affiché les week-ends/fériés.

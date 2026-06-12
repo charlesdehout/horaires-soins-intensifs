@@ -1055,6 +1055,31 @@ test("correction avant brouillon : écart d'heures cumulées ≤ 12 h sur le tri
   assert(ecart <= 12.5, "écart d'heures trimestriel = " + ecart + " h (> 12 h)");
 });
 
+test("indépendant : PRIORITAIRE à l'horaire sur ses jours déclarés disponibles", () => {
+  // Un indépendant n'est planifiable QUE sur ses jours déclarés (dur), et il y
+  // est désormais PRIORITAIRE pour les journées de station (il vient pour
+  // travailler) — il ne doit pas rester « non planifié » ces jours-là.
+  const meds = equipe();
+  meds.push({ id: "indep1", name: "Indep", grade: "resident", statut: "independant",
+    fte: 1, weekly_hours_target: 52, contract_start: null, contract_end: null,
+    jours_travailles: [1, 2, 3, 4, 5, 6, 7] });
+  const prefs = [
+    { doctor_id: "indep1", pref_type: "dispo", start_date: "2026-06-09", end_date: "2026-06-09", status: "approuve" },
+    { doctor_id: "indep1", pref_type: "dispo", start_date: "2026-06-16", end_date: "2026-06-16", status: "approuve" },
+  ];
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: prefs });
+  ["2026-06-09", "2026-06-16"].forEach((d) => {
+    const travail = r.shifts.some((s) => s.doctor_id === "indep1" && s.date === d &&
+      ["jour", "garde_nuit", "garde_24h", "twe"].includes(s.shift_type));
+    assert(travail, "indépendant non planifié le " + d + " malgré sa disponibilité déclarée");
+  });
+  // Et jamais en dehors de ses jours déclarés (contrainte dure existante).
+  const horsDispo = r.shifts.filter((s) => s.doctor_id === "indep1" &&
+    !["2026-06-09", "2026-06-16"].includes(s.date) && s.shift_type !== "repos_garde");
+  assert(horsDispo.length === 0, "planifié hors fenêtre déclarée : " +
+    horsDispo.map((s) => s.date + ":" + s.shift_type).join(", "));
+});
+
 console.log("\n=== Équilibre des heures — crédit d'équité des congés ===");
 
 test("congé : un médecin en congé 2 semaines ne dépasse pas les heures de ses pairs", () => {

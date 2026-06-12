@@ -150,7 +150,7 @@ function basculerVue(connecte) {
 async function chargerProfil(user) {
   const { data, error } = await sb
     .from("doctors")
-    .select("id, name, role, contract_start, contract_end, quota_conge_annuel, quota_conge_extralegal, quota_conge_scientifique")
+    .select("id, name, role, statut, contract_start, contract_end, quota_conge_annuel, quota_conge_extralegal, quota_conge_scientifique")
     .eq("email", user.email)
     .maybeSingle();
 
@@ -203,6 +203,17 @@ function afficherEspace(profil) {
   // Côté admin : liste des médecins. Côté médecin : ses préférences.
   if (estAdmin) chargerMedecins();
   else { chargerPreferences(); initEchanges(); }
+  // INDÉPENDANT : son outil principal est la déclaration de ses jours de
+  // travail (type « dispo », contrainte dure + PRIORITAIRE à l'horaire).
+  // On ajoute l'option en TÊTE de la liste des types de demande.
+  const pType = document.getElementById("p-type");
+  if (!estAdmin && pType && profil.statut === "independant" && !pType.querySelector('option[value="dispo"]')) {
+    const opt = document.createElement("option");
+    opt.value = "dispo";
+    opt.textContent = "✅ Disponible — je viens travailler ce jour (indépendant, PRIORITAIRE)";
+    pType.insertBefore(opt, pType.firstChild);
+    pType.value = "dispo";
+  }
 
   // Planning (Module 4) : visible par tous. La légende « Mes shifts »
   // n'apparaît que pour un médecin (l'admin n'est pas dans le planning).
@@ -660,6 +671,7 @@ const PREF_LABELS = {
   autre: "Congé autre",
   demande_weekend: "Demande WE/férié",
   recup_ferie: "Récup férié",
+  dispo: "✅ Disponible (indépendant, prioritaire)",
 };
 
 /* Affiche un message dans le formulaire de préférences */
@@ -1193,7 +1205,7 @@ const PREF_LABELS_FULL = {
   autre: "Congé autre (hors quota)",
   demande_weekend: "Demande week-end/férié",
   recup_ferie: "Récup férié (jour compensatoire)",
-  dispo: "Disponibilité déclarée",
+  dispo: "✅ Disponible — souhaite travailler ce jour (indépendant, prioritaire)",
 };
 
 let calendrier = null;       // instance FullCalendar (créée une seule fois)
@@ -1340,9 +1352,35 @@ async function construireEvenements(debutISO, finISO) {
   if (errPrefs) {
     console.error("Erreur chargement préférences (calendrier) :", errPrefs);
   } else {
+    // Types d'absence dont l'APPROBATION mérite une vraie pastille nominative
+    // (révision : les congés acceptés doivent être VISIBLES — admin : tous ;
+    // médecin : les siens, via la RLS).
+    const PREF_PASTILLE = {
+      conge: "🏖", conge_annuel: "🏖", conge_extralegal: "🏖", conge_scientifique: "🔬",
+      formation: "🎓", autre: "🏖", recuperation: "🛌", recup_ferie: "🛌",
+    };
     (prefs || []).forEach((p) => {
       const med = carteMedecins[p.doctor_id] || {};
       const libelle = PREF_LABELS_FULL[p.pref_type] || p.pref_type;
+      if (p.status === "approuve" && PREF_PASTILLE[p.pref_type]) {
+        // Congé/absence ACCEPTÉ → événement nominatif bien visible.
+        const cfg = SHIFT_CONFIG[p.pref_type];
+        events.push({
+          start: p.start_date,
+          end: lendemainDe(p.end_date),
+          allDay: true,
+          title: PREF_PASTILLE[p.pref_type] + " " + (med.name || "?") + " · " + libelle,
+          backgroundColor: (cfg && cfg.couleur) || "#1a7f37",
+          borderColor: (cfg && cfg.couleur) || "#1a7f37",
+          extendedProps: {
+            tooltip: (med.name || "?") + " — " + libelle + " ACCEPTÉ du " + p.start_date +
+                     " au " + p.end_date + (p.note ? " (" + p.note + ")" : ""),
+            ordre: 14,
+          },
+        });
+        return;
+      }
+      // Autres préférences (ou demandes en attente) : fond discret, comme avant.
       events.push({
         start: p.start_date,
         end: lendemainDe(p.end_date), // fin exclusive -> +1 jour pour inclure end_date
@@ -1350,6 +1388,7 @@ async function construireEvenements(debutISO, finISO) {
         backgroundColor: PREF_BG[p.pref_type] || "rgba(0,0,0,0.06)",
         extendedProps: {
           tooltip: (med.name ? med.name + " - " : "") + libelle +
+                   (p.status === "en_attente" ? " (en attente)" : "") +
                    (p.note ? " (" + p.note + ")" : ""),
         },
       });
@@ -2520,6 +2559,50 @@ async function chargerDemandes() {
   if (error) { console.error("Erreur chargement demandes :", error); return; }
   demandesEnAttente = data || [];
   rendreDemandes(demandesEnAttente);
+
+  // Demandes déjà VALIDÉES, période non terminée → révocables (révision).
+  const ajd = new Date().toISOString().slice(0, 10);
+  const { data: validees } = await sb.from("preferences")
+    .select("id, doctor_id, start_date, end_date, pref_type, note, status")
+    .eq("status", "approuve")
+    .gte("end_date", ajd)
+    .order("start_date", { ascending: true })
+    .limit(200);
+  rendreDemandesValidees(validees || []);
+}
+
+/* Tableau des demandes APPROUVÉES à venir, avec bouton « Révoquer ». */
+function rendreDemandesValidees(demandes) {
+  const tbody = document.getElementById("demandes-validees-tbody");
+  const table = document.getElementById("demandes-validees-table");
+  const empty = document.getElementById("demandes-validees-empty");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  const vide = demandes.length === 0;
+  if (table) table.classList.toggle("hidden", vide);
+  if (empty) empty.classList.toggle("hidden", !vide);
+  demandes.forEach((d) => {
+    const tr = document.createElement("tr");
+    const med = carteMedecins[d.doctor_id] || {};
+    [med.name || "?", PREF_LABELS_FULL[d.pref_type] || d.pref_type,
+     d.start_date, d.end_date, d.note || "—"].forEach((v) => {
+      const td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
+    });
+    const tdA = document.createElement("td");
+    tdA.className = "actions-cell";
+    const rv = document.createElement("button");
+    rv.textContent = "Révoquer"; rv.className = "mini danger";
+    rv.addEventListener("click", () => {
+      const lib = (med.name || "?") + " — " + (PREF_LABELS_FULL[d.pref_type] || d.pref_type) +
+        " du " + d.start_date + " au " + d.end_date;
+      if (!window.confirm("Révoquer cette demande validée ?\n\n" + lib +
+        "\n\nElle repassera en REFUSÉ. Si un planning en tenait compte, pense à le régénérer.")) return;
+      deciderDemande(d.id, "refuse");
+    });
+    tdA.appendChild(rv);
+    tr.appendChild(tdA);
+    tbody.appendChild(tr);
+  });
 }
 
 /* Construit le tableau des demandes en attente avec boutons Approuver/Refuser. */

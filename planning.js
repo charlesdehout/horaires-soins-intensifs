@@ -384,6 +384,15 @@ function plCrediterAbsences(date, medecins, etat) {
   });
 }
 
+/* INDÉPENDANT PRIORITAIRE (révision 2026-06-13) : sur un jour qu'il a
+   explicitement déclaré disponible (« je viens travailler »), l'indépendant
+   passe DEVANT pour les journées de station ; pour les gardes/week-ends ce
+   n'est qu'un départage (l'équité des gardes prime). */
+function plPrioIndep(m, date, etat) {
+  return (m && m.statut === "independant" && date &&
+    etat.dispoDeclaree[m.id] && etat.dispoDeclaree[m.id].has(date)) ? 1 : 0;
+}
+
 function plTrier(liste, critere, etat, date, favoriId) {
   const estGarde = (critere === "garde" || critere === "weekend");
   const congres = !!(date && etat._congresJour);
@@ -393,6 +402,11 @@ function plTrier(liste, critere, etat, date, favoriId) {
     if (congres) {
       const ca = etat.joursCongres[a.id] || 0, cb = etat.joursCongres[b.id] || 0;
       if (ca !== cb) return ca - cb;
+    }
+    // Indépendant prioritaire sur ses jours déclarés (JOURNÉES de station).
+    if (!estGarde && date) {
+      const ia = plPrioIndep(a, date, etat), ib = plPrioIndep(b, date, etat);
+      if (ia !== ib) return ib - ia;
     }
     if (critere === "garde") {
       const sa = plScoreGarde(a.id, etat), sb = plScoreGarde(b.id, etat);
@@ -420,6 +434,9 @@ function plTrier(liste, critere, etat, date, favoriId) {
       const pa = plBiaisGarde(a, date, etat), pb = plBiaisGarde(b, date, etat);
       if (pa !== pb) return pb - pa;
       if (pa > 0) { const ra2 = plRangDesiderata(a), rb2 = plRangDesiderata(b); if (ra2 !== rb2) return rb2 - ra2; }
+      // Indépendant : départage en sa faveur sur ses jours déclarés.
+      const ia = plPrioIndep(a, date, etat), ib = plPrioIndep(b, date, etat);
+      if (ia !== ib) return ib - ia;
     }
     const ra = plRatioHeures(a, etat);
     const rb = plRatioHeures(b, etat);
@@ -494,6 +511,9 @@ function plTrierGardeNuit(liste, date, etat) {
     const pa = plBiaisGarde(a, date, etat), pb = plBiaisGarde(b, date, etat);
     if (pa !== pb) return pb - pa;
     if (pa > 0) { const ra2 = plRangDesiderata(a), rb2 = plRangDesiderata(b); if (ra2 !== rb2) return rb2 - ra2; }
+    // Indépendant : départage en sa faveur sur ses jours déclarés.
+    const iaI = plPrioIndep(a, date, etat), ibI = plPrioIndep(b, date, etat);
+    if (iaI !== ibI) return ibI - iaI;
     const ra = plRecenceGarde(a.id, date, etat), rb = plRecenceGarde(b.id, date, etat);
     if (ra !== rb) return rb - ra;                            // ex aequo → garde récente d'abord
     // COMBO jeudi+samedi / vendredi+dimanche préparé EN AMONT : le jeudi et le

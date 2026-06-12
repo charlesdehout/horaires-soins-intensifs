@@ -247,6 +247,20 @@
           <tbody id="demandes-tbody"></tbody>
         </table>
         <p id="demandes-empty" class="zone-info">Aucune demande en attente. ✅</p>
+
+        <!-- Demandes déjà VALIDÉES (révision 2026-06-13) : l'admin peut les
+             révoquer dans un second temps (le statut repasse à « refusé »). -->
+        <div class="zone-header"><h3 class="sous-titre">Demandes validées (à venir)</h3></div>
+        <p class="zone-info">Demandes approuvées dont la période n'est pas terminée.
+          « Révoquer » repasse la demande en refusé — pense à régénérer le planning
+          concerné s'il en tenait compte.</p>
+        <table id="demandes-validees-table" class="data-table hidden">
+          <thead>
+            <tr><th>Médecin</th><th>Type</th><th>Début</th><th>Fin</th><th>Note</th><th></th></tr>
+          </thead>
+          <tbody id="demandes-validees-tbody"></tbody>
+        </table>
+        <p id="demandes-validees-empty" class="zone-info">Aucune demande validée à venir.</p>
         </div><!-- /panel-demandes -->
 
         <!-- Onglet CONGRÈS & FERMETURES (Module 17) — saisie ADMIN uniquement -->
