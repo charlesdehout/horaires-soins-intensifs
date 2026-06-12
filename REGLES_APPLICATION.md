@@ -234,6 +234,10 @@ testable sous Node (`test_planning.js`, ~59 cas).
   par l'algo, variable d'un jour à l'autre) ; **jamais** de garde, de week-end
   ni de tour. Le statut **doit être retiré par l'admin** : la génération d'un
   trimestre est **bloquée** si la fenêtre est entièrement passée.
+- **Occupation des unités** : **jamais plus d'une personne au Labo de choc**
+  (aucune doublure possible) ; **maximum 2 personnes par unité** (titulaire +
+  1 doublure). Respecté par toutes les doublures (nouvel engagé, plancher
+  d'heures) et contrôlé par le validateur.
 - **Minimum d'heures hebdomadaire** (`EQUITE.minimum_hebdo_h`, défaut 40 h ;
   0 = désactivé) : cible = 40 h × FTE × (jours de présence possibles / 5), les
   jours de **repos de garde n'étant pas travaillables**. Si le planning normal

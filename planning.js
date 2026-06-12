@@ -824,11 +824,16 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
 
   // DOUBLURE des nouveaux engagés : un « jour » sur une unité déjà pourvue
   // (répartie au fil des jours pour varier l'unité de doublage).
+  // RÈGLES (révision) : JAMAIS le Labo de choc (1 personne max) et MAXIMUM
+  // 2 personnes par unité (titulaire + 1 doublure) → unités déjà doublées
+  // exclues, et deux nouveaux engagés ne s'empilent pas sur la même unité.
+  const dejaDouble = new Set();
   nouveaux.forEach((m, k) => {
-    const pourvues = Object.keys(plan);
-    const st = pourvues.length
-      ? pourvues[(parseInt(date.slice(8, 10), 10) + k) % pourvues.length]
-      : (postes[0] || null);
+    const pourvues = Object.keys(plan)
+      .filter((c) => !plSansContinuite(c) && !dejaDouble.has(c));
+    if (!pourvues.length) return; // aucune unité doublable ce jour
+    const st = pourvues[(parseInt(date.slice(8, 10), 10) + k) % pourvues.length];
+    dejaDouble.add(st);
     plAffecter(sortie, etat, date, "jour", m.id, st);
     sortie[sortie.length - 1].doublure = true; // doublure du nouvel engagé
   });
@@ -1177,12 +1182,18 @@ function plCompleterMinimumHeures(sortie, medecins, etat, dates) {
     const m = (heuresSem[s.doctor_id] = heuresSem[s.doctor_id] || {});
     m[lk] = (m[lk] || 0) + h;
   });
-  // Stations pourvues par date (pour choisir l'unité à doubler).
-  const stationsDe = {}; // date -> [postes]
+  // Occupation des stations par date : nb de personnes par unité. Une unité
+  // n'est DOUBLABLE que si elle a exactement 1 titulaire (max 2 par unité) et
+  // n'est pas le Labo de choc (1 personne max, jamais de doublure).
+  const occupation = {}; // date -> { poste -> nb }
   sortie.forEach((s) => {
-    if ((s.shift_type === "jour" || s.shift_type === "garde_24h") && s.poste)
-      (stationsDe[s.date] = stationsDe[s.date] || []).push(s.poste);
+    if ((s.shift_type === "jour" || s.shift_type === "garde_24h") && s.poste) {
+      const o = (occupation[s.date] = occupation[s.date] || {});
+      o[s.poste] = (o[s.poste] || 0) + 1;
+    }
   });
+  const stationsDoublables = (d) => Object.keys(occupation[d] || {})
+    .filter((c) => !plSansContinuite(c) && occupation[d][c] === 1);
   // Jours de REPOS DE GARDE par médecin : ce ne sont PAS des jours
   // travaillables → ils sortent du prorata ET des jours doublables.
   const reposDe = {}; // id -> Set(dates)
@@ -1211,10 +1222,11 @@ function plCompleterMinimumHeures(sortie, medecins, etat, dates) {
         if (h >= cible) break;
         if (aShift[m.id] && aShift[m.id].has(d)) continue;  // déjà occupé ce jour
         if (etat.bloque[m.id].has(d)) continue;             // repos de garde
-        const pourvues = stationsDe[d] || [];
-        const st = pourvues.length
-          ? pourvues[parseInt(d.slice(8, 10), 10) % pourvues.length]
-          : null;
+        const pourvues = stationsDoublables(d);
+        if (!pourvues.length) continue; // plus d'unité doublable ce jour
+        const st = pourvues[parseInt(d.slice(8, 10), 10) % pourvues.length];
+        const occ = (occupation[d] = occupation[d] || {});
+        occ[st] = (occ[st] || 0) + 1; // l'unité passe à 2 → plus doublable
         plAffecter(sortie, etat, d, "jour", m.id, st);
         sortie[sortie.length - 1].doublure = true; // marqueur informatif (ignoré en base)
         (aShift[m.id] = aShift[m.id] || new Set()).add(d);
@@ -1701,6 +1713,8 @@ function validerPlanning(opts) {
       const travail = duJour.filter((s) => !plEstAbsence(s.shift_type));
       const aTravail = travail.length > 0;
 
+      // 2a-0) (les contrôles d'occupation des unités sont faits plus bas,
+      //        après la boucle par médecin — cf. « occupation des unités »)
       // 2a) Double affectation le même jour (toutes catégories confondues).
       if (duJour.length > 1) {
         conflits.push({ date, message: `${nom(id)} : ${duJour.length} entrées le même jour (double affectation).` });
@@ -1764,6 +1778,26 @@ function validerPlanning(opts) {
       const n = gardesParSemaine[id][lk];
       if (n > 3) {
         conflits.push({ date: lk, message: `${nom(id)} : ${n} gardes dans la semaine du ${lk} (max 3).` });
+      }
+    });
+  });
+
+  // ---- 3 bis) OCCUPATION DES UNITÉS (révision 2026-06-12) ----
+  //  - Labo de choc : JAMAIS plus d'une personne ;
+  //  - autres unités : MAXIMUM 2 personnes (titulaire + 1 doublure).
+  const occParJour = {}; // date -> { poste -> nb }
+  shifts.forEach((s) => {
+    if ((s.shift_type !== "jour" && s.shift_type !== "garde_24h") || !s.poste) return;
+    const o = (occParJour[s.date] = occParJour[s.date] || {});
+    o[s.poste] = (o[s.poste] || 0) + 1;
+  });
+  Object.keys(occParJour).forEach((date) => {
+    Object.keys(occParJour[date]).forEach((poste) => {
+      const n = occParJour[date][poste];
+      if (plSansContinuite(poste) && n > 1) {
+        conflits.push({ date, message: `Labo de choc : ${n} personnes le ${date} (1 maximum, jamais de doublure).` });
+      } else if (!plSansContinuite(poste) && n > 2) {
+        conflits.push({ date, message: `${poste} : ${n} personnes le ${date} (2 maximum : titulaire + 1 doublure).` });
       }
     });
   });

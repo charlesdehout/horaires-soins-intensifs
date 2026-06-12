@@ -963,6 +963,38 @@ test("off-clinic : équilibre trimestriel (le moins d'offs cumulés est servi d'
     "le 01/06 devait aller à r1 (0 off cumulé) : " + JSON.stringify(lundi1));
 });
 
+test("unités : jamais 2 au Labo de choc, jamais 3 sur une unité (doublures comprises)", () => {
+  // Avec un nouvel engagé (doublures quotidiennes) ET le plancher 40 h
+  // (doublures de complément), l'occupation doit rester bornée :
+  // Labo de choc = 1 personne max ; autres unités = 2 max (titulaire + 1).
+  const meds = equipe();
+  meds[0].nouvel_engage = true; meds[0].contract_start = "2026-06-01";
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: [] });
+  const occ = {}; // date|poste -> n
+  r.shifts.forEach((s) => {
+    if ((s.shift_type !== "jour" && s.shift_type !== "garde_24h") || !s.poste) return;
+    occ[s.date + "|" + s.poste] = (occ[s.date + "|" + s.poste] || 0) + 1;
+  });
+  Object.keys(occ).forEach((k) => {
+    const [date, poste] = k.split("|");
+    if (poste === "labo_choc") assert(occ[k] <= 1, date + " : " + occ[k] + " personnes au Labo de choc");
+    else assert(occ[k] <= 2, date + " : " + occ[k] + " personnes sur " + poste);
+  });
+});
+
+test("validerPlanning signale 2 au Labo de choc et 3 sur une unité", () => {
+  const shifts = [
+    { date: "2026-06-01", shift_type: "jour", doctor_id: "resident1", poste: "labo_choc" },
+    { date: "2026-06-01", shift_type: "jour", doctor_id: "resident2", poste: "labo_choc" }, // interdit
+    { date: "2026-06-02", shift_type: "jour", doctor_id: "resident3", poste: "usi1" },
+    { date: "2026-06-02", shift_type: "jour", doctor_id: "resident4", poste: "usi1" },      // doublure OK
+    { date: "2026-06-02", shift_type: "jour", doctor_id: "resident5", poste: "usi1" },      // 3e : interdit
+  ];
+  const conflits = validerPlanning({ annee: 2026, mois: 6, shifts, medecins: equipe(), preferences: [] });
+  assert(conflits.some((c) => /Labo de choc : 2 personnes/.test(c.message)), "2 au labo non signalé");
+  assert(conflits.some((c) => /usi1 : 3 personnes/.test(c.message)), "3 sur usi1 non signalé");
+});
+
 console.log("\n=== Équilibre des heures — crédit d'équité des congés ===");
 
 test("congé : un médecin en congé 2 semaines ne dépasse pas les heures de ses pairs", () => {
