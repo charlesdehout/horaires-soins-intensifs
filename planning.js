@@ -351,7 +351,18 @@ function plTrier(liste, critere, etat, date, favoriId) {
       if (sa !== sb) return sa - sb;                            // équité gardes d'abord
     }
     if (critere === "weekend") {
-      const sa = plScoreWeekend(a.id, etat), sb = plScoreWeekend(b.id, etat);
+      // Coût MARGINAL en week-ends : qui est DÉJÀ engagé sur CE week-end (ex.
+      // garde du vendredi soir, clé samedi) ne « paie » rien à prendre la 24 h
+      // du dimanche → le tri pousse la consolidation vendredi+dimanche = UN
+      // SEUL week-end travaillé, et diminue le nombre total de week-ends
+      // entamés pour tout le monde.
+      const wk = date ? plWeekendKey(date) : null;
+      const cout = (id) => {
+        const deja = wk && etat.weekendsTravailles[id] && etat.weekendsTravailles[id].has(wk);
+        const n = etat.nbWeekend[id] + (deja ? 0 : 1);
+        return etat.poidsWeekend ? n / Math.max(etat.poidsWeekend[id] || 0, PL_EPS) : n;
+      };
+      const sa = cout(a.id), sb = cout(b.id);
       if (sa !== sb) return sa - sb;                            // équité week-ends d'abord
     }
     // Souhait(+) / indisponibilité(−) de GARDE — DÉPARTAGE souple (n'écrase pas
@@ -491,10 +502,13 @@ function plFiltrerPlafond(liste, date, etat, ajout) {
 /* Plafond N2 : max 2 week-ends travaillés par mois et par personne (§6 N2). */
 const PL_MAX_WEEKENDS_MOIS = 2;
 
-/* Clé d'un week-end = samedi ISO. Samedi -> lui-même ; dimanche -> la veille.
-   Un jour de semaine (férié isolé) ne définit pas de clé (return null). */
+/* Clé d'un week-end = samedi ISO. Samedi -> lui-même ; dimanche -> la veille ;
+   VENDREDI -> le lendemain (révision : une garde du vendredi soir se termine le
+   samedi matin — elle ENTAME le week-end et doit compter comme tel).
+   Un autre jour de semaine (férié isolé) ne définit pas de clé (null). */
 function plWeekendKey(date) {
   const j = plJourSemaine(date);
+  if (j === 5) return plAdd(date, 1); // vendredi soir → samedi
   if (j === 6) return date;
   if (j === 7) return plAdd(date, -1);
   return null;
@@ -619,7 +633,18 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
     if (residentDejaNuit) {
       // un résident est déjà de garde (pré-placement) → on complète librement
     } else if (residents.length > 0) {
-      const resPool = plFiltrerPlafond(residents, date, etat, PL_HEURES.garde_nuit);
+      // VENDREDI : la garde de nuit ENTAME le samedi matin → elle compte comme
+      // week-end travaillé et respecte le plafond DUR 2 week-ends/mois (repli
+      // en dernier recours, signalé).
+      const j5 = plJourSemaine(date) === 5;
+      const filtreWE = (pool) => {
+        if (!j5 || !pool.length) return pool;
+        const ok = pool.filter((m) => plPeutWeekend(m.id, date, etat));
+        if (ok.length) return ok;
+        conflits.push({ date, message: "Vendredi soir : plafond 2 week-ends/mois dépassé (effectif insuffisant)." });
+        return pool;
+      };
+      const resPool = filtreWE(plFiltrerPlafond(residents, date, etat, PL_HEURES.garde_nuit));
       // Module 12c : tri par déficit + biais (borné) de concentration des nuits.
       resNuit = plTrierGardeNuit(resPool, date, etat)[0];
       manqueNuit--;
@@ -628,8 +653,14 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
       manqueNuit = 0; // pas de garde sans résident (comme l'historique)
     }
     if (manqueNuit > 0) {
+      const j5b = plJourSemaine(date) === 5;
       const exclu = resNuit ? resNuit.id : null;
-      const reste = plFiltrerPlafond(libresG.filter((m) => m.id !== exclu), date, etat, PL_HEURES.garde_24h);
+      let reste = plFiltrerPlafond(libresG.filter((m) => m.id !== exclu), date, etat, PL_HEURES.garde_24h);
+      if (j5b && reste.length) {
+        const ok = reste.filter((m) => plPeutWeekend(m.id, date, etat));
+        if (ok.length) reste = ok;
+        else conflits.push({ date, message: "Vendredi soir : plafond 2 week-ends/mois dépassé (effectif insuffisant)." });
+      }
       second = plTrierGardeNuit(reste, date, etat)[0] || null;
     }
   }
@@ -740,6 +771,17 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
       plAffecter(sortie, etat, date, "garde_nuit", m.id, null);
     }
   });
+  // VENDREDI : comptabilise le week-end ENTAMÉ (clé samedi) pour toutes les
+  // gardes du soir (épinglées comprises) → équité, plafond 2 WE/mois et
+  // consolidation vendredi+dimanche (coût marginal nul le dimanche).
+  if (plJourSemaine(date) === 5) {
+    const wk = plWeekendKey(date);
+    gardesNuit.map((m) => m.id).concat(ppGardes.map((s) => s.doctor_id)).forEach((id) => {
+      if (!etat.weekendsTravailles[id] || etat.weekendsTravailles[id].has(wk)) return;
+      etat.weekendsTravailles[id].add(wk);
+      etat.nbWeekend[id]++; etat.nbWeekendTotal[id]++;
+    });
+  }
   Object.keys(plan).forEach((code) => {
     const id = plan[code];
     if (pris.has(id)) return;   // garde de nuit (24 h) déjà affectée ci-dessus
@@ -1591,10 +1633,12 @@ function validerPlanning(opts) {
   // Un week-end = clé samedi ISO ; sam OU dim travaillé en garde 24h/tour le compte.
   const weekendsParMois = {}; // id -> { "YYYY-MM": Set(clé samedi) }
   shifts.forEach((s) => {
-    if (s.shift_type !== "garde_24h" && s.shift_type !== "twe") return;
     const jr = plJourSemaine(s.date);
-    if (jr !== 6 && jr !== 7) return; // férié en semaine : ne compte pas (§7)
-    const key = jr === 6 ? s.date : plAdd(s.date, -1);
+    let key = null;
+    // Sam/dim : garde 24h ou tour. Vendredi : garde du soir (entame le samedi).
+    if ((jr === 6 || jr === 7) && (s.shift_type === "garde_24h" || s.shift_type === "twe")) key = jr === 6 ? s.date : plAdd(s.date, -1);
+    if (jr === 5 && (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h")) key = plAdd(s.date, 1);
+    if (!key) return; // autre jour / férié en semaine : ne compte pas (§7)
     const mois = s.date.slice(0, 7);
     const parMois = (weekendsParMois[s.doctor_id] = weekendsParMois[s.doctor_id] || {});
     (parMois[mois] = parMois[mois] || new Set()).add(key);
@@ -1754,12 +1798,20 @@ function compterParMedecin(shifts) {
     // automatique ('repos_garde') est volontairement EXCLU des totaux : il est
     // seulement affiché dans le planning.
     if (s.shift_type === "recup") st.repos++;
-    // Week-end travaillé = garde 24h ou tour un SAMEDI/DIMANCHE (spec §7).
-    // Un férié en semaine ne compte pas.
+    // Week-end travaillé = clé samedi DISTINCTE (spec §7 révisée) : garde 24h
+    // ou tour le samedi/dimanche, ET garde du VENDREDI soir (elle entame le
+    // samedi matin). Sam+dim du même week-end, ou vendredi+dimanche, = 1 seul.
     const jr = plJourSemaine(s.date);
-    if ((jr === 6 || jr === 7) && (s.shift_type === "garde_24h" || s.shift_type === "twe")) st.weekends++;
+    let wk = null;
+    if ((jr === 6 || jr === 7) && (s.shift_type === "garde_24h" || s.shift_type === "twe")) wk = plWeekendKey(s.date);
+    if (jr === 5 && (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h")) wk = plWeekendKey(s.date);
+    if (wk) (st._wk = st._wk || new Set()).add(wk);
   });
-  Object.keys(stats).forEach((id) => { stats[id].heures = Math.round(stats[id].heures * 10) / 10; });
+  Object.keys(stats).forEach((id) => {
+    stats[id].heures = Math.round(stats[id].heures * 10) / 10;
+    stats[id].weekends = stats[id]._wk ? stats[id]._wk.size : 0;
+    delete stats[id]._wk;
+  });
   return stats;
 }
 

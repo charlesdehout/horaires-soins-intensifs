@@ -44,7 +44,8 @@ testable sous Node (`test_planning.js`, ~59 cas).
 - **Max 3 gardes par semaine** ISO et par médecin.
 - **Max 2 week-ends par mois** et par médecin — contrainte **dure** : plus de
   repli silencieux ; en dernier recours absolu (garde sinon vide), la violation
-  est **signalée par un conflit explicite**.
+  est **signalée par un conflit explicite**. **La garde du vendredi soir compte**
+  (elle se termine le samedi matin : elle **entame** le week-end, clé = samedi).
 - **Repos de garde obligatoire** : lendemain de toute garde non planifiable (12 h).
   Le jour de repos de la **semaine suivante** n'est dû **que pour des gardes
   COUPLÉES** : jeudi + samedi → lundi off ; vendredi + dimanche → mardi off.
@@ -85,7 +86,15 @@ testable sous Node (`test_planning.js`, ~59 cas).
 - Mesurée **INTRA-grade** : résidents entre eux, A/S entre eux (l'écart inter-grade est
   structurel : moins de résidents que d'A/S et ≥ 1 résident/nuit obligatoire).
 - **Gardes** équilibrées au **mois** ; **week-ends** au **trimestre**, comptés en
-  **week-ends distincts** (sam + dim = 1). Écart visé ≤ 2 par grade.
+  **week-ends distincts** (sam + dim = 1 ; **vendredi soir + dimanche = 1** —
+  la garde du vendredi entame le samedi matin). Écart visé ≤ 2 par grade.
+- **Minimisation des week-ends entamés** (révision 2026-06-12) : le tri des
+  gardes de week-end raisonne en **coût marginal** — un médecin déjà engagé sur
+  CE week-end (garde du vendredi soir) ne « paie » rien à reprendre la 24 h du
+  dimanche → il est prioritaire. Vendredi+dimanche ne mobilise ainsi qu'**une**
+  personne-week-end au lieu de deux (~77 % des dimanches couplés au vendredi,
+  ~81 % des samedis couplés au jeudi sur un trimestre type ; compteurs et
+  validateur alignés sur ce comptage).
 - **Crédit d'équité des congés** : un jour ouvré de congé est crédité comme une
   journée dans le compteur d'équité horaire (jamais dans les stats ni les
   plafonds). Un médecin en congé n'est donc plus « rattrapé » au-delà des autres

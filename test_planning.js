@@ -819,6 +819,40 @@ test("combos MAXIMISÉS : la majorité des 24h de week-end sont couplées (jeudi
   assert(combos / we >= 0.5, "combos " + combos + "/" + we + " (" + Math.round(100 * combos / we) + " % < 50 %)");
 });
 
+test("vendredi soir + dimanche = UN SEUL week-end travaillé (compteurs)", () => {
+  // Une garde du vendredi soir se termine le samedi matin : elle ENTAME le
+  // week-end. Combinée à la 24 h du dimanche, elle ne compte qu'UN week-end.
+  const stats = compterParMedecin([
+    { date: "2026-06-12", shift_type: "garde_nuit", doctor_id: "x", poste: null }, // vendredi
+    { date: "2026-06-14", shift_type: "garde_24h", doctor_id: "x", poste: null },  // dimanche
+    { date: "2026-06-06", shift_type: "garde_24h", doctor_id: "y", poste: null },  // samedi (autre WE)
+    { date: "2026-06-07", shift_type: "twe", doctor_id: "y", poste: null },        // dimanche même WE
+  ]);
+  assert.strictEqual(stats.x.weekends, 1, "x (ven+dim) = " + stats.x.weekends + " week-end(s), attendu 1");
+  assert.strictEqual(stats.y.weekends, 1, "y (sam+dim même WE) = " + stats.y.weekends + ", attendu 1");
+});
+
+test("consolidation : la majorité des 24h du DIMANCHE sont tenues par une garde du vendredi", () => {
+  // Objectif (révision 2026-06-12) : diminuer le nombre total de week-ends
+  // entamés — le médecin du vendredi soir reprend la 24 h du dimanche
+  // (vendredi+dimanche = 1 week-end). Mesuré ~77 % ; plancher verrouillé à 60 %.
+  const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: equipe(), preferences: [] });
+  const add = (d, n) => { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + n);
+    return x.toISOString().slice(0, 10); };
+  const dow = (d) => { const j = new Date(d + "T00:00:00Z").getUTCDay(); return j === 0 ? 7 : j; };
+  const gardes = new Set(r.shifts.filter((s) => s.shift_type === "garde_nuit" || s.shift_type === "garde_24h")
+    .map((s) => s.doctor_id + "|" + s.date));
+  let dim = 0, couples = 0;
+  r.shifts.forEach((s) => {
+    if (s.shift_type !== "garde_24h" || dow(s.date) !== 7) return;
+    dim++;
+    if (gardes.has(s.doctor_id + "|" + add(s.date, -2))) couples++;
+  });
+  assert(dim > 0, "aucune 24h de dimanche générée");
+  assert(couples / dim >= 0.6, "dimanches couplés au vendredi : " + couples + "/" + dim +
+    " (" + Math.round(100 * couples / dim) + " % < 60 %)");
+});
+
 console.log("\n=== Équilibre des heures — crédit d'équité des congés ===");
 
 test("congé : un médecin en congé 2 semaines ne dépasse pas les heures de ses pairs", () => {
