@@ -1210,7 +1210,7 @@ function lendemainDe(dateStr) {
    La lecture de doctors est ouverte à tous les connectés (RLS). */
 async function chargerCarteMedecins() {
   const { data, error } = await sb.from("doctors")
-    .select("id, name, grade, role, contract_start, contract_end, contract_periods, reconnu");
+    .select("id, name, grade, role, contract_start, contract_end, contract_periods, reconnu, jours_travailles");
   if (error) {
     console.error("Erreur chargement médecins (calendrier) :", error);
     return;
@@ -1420,7 +1420,8 @@ async function construireEvenements(debutISO, finISO) {
       const cg = congeJ[d] || new Set();
       const repos = idsTous.filter((id) => {
         const m = carteMedecins[id];
-        return m && m.role !== "admin" && medActifISO(m, d) && !aS.has(id) && !cg.has(id); // hors contrat / admin exclus
+        return m && m.role !== "admin" && medActifISO(m, d) && jourTravaillableISO(m, d) &&
+          !aS.has(id) && !cg.has(id); // hors contrat / admin / jour non travaillable exclus
       });
       if (!repos.length) continue;
       const noms = repos.map((id) => (carteMedecins[id] && carteMedecins[id].name) || "?")
@@ -1870,6 +1871,16 @@ const XL = {
   trait:    "FFB0B0B0",
 };
 
+/* Vrai si la date ISO tombe un jour TRAVAILLABLE du médecin (jours_travailles,
+   1 = lundi … 7 = dimanche ; vide = tous). Un médecin qui ne travaille jamais
+   le lundi (convenance) ne doit PAS apparaître « non planifié » un lundi. */
+function jourTravaillableISO(m, iso) {
+  const jt = (m && m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : null;
+  if (!jt) return true;
+  const j = new Date(iso + "T00:00:00Z").getUTCDay() || 7;
+  return jt.includes(j);
+}
+
 /* Vrai si la date ISO "AAAA-MM-JJ" est un samedi, dimanche ou jour férié belge.
    Utilise joursFeriesBE (regles.js, global dans le navigateur). Sert à
    l'affichage « Labo fermé » dans l'export planning (spec §3.2). */
@@ -2024,7 +2035,9 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes) {
       if (p.start_date <= d && p.end_date >= d) enConge.add(p.doctor_id);
     });
     return Object.keys(carteMedecins)
-      .filter((id) => carteMedecins[id].role !== "admin" && medActifISO(carteMedecins[id], d) && !aShift.has(id) && !enConge.has(id)) // hors contrat / admin exclus
+      .filter((id) => carteMedecins[id].role !== "admin" && medActifISO(carteMedecins[id], d) &&
+        jourTravaillableISO(carteMedecins[id], d) && // jour non travaillable ≠ non planifié
+        !aShift.has(id) && !enConge.has(id)) // hors contrat / admin exclus
       .map((id) => nomFn(id))
       .sort((a, b) => String(a).localeCompare(String(b)));
   };
@@ -3560,7 +3573,8 @@ async function construireGrille() {
         const enConge = congeDocsJour[iso] || new Set();
         // Pas de « repos » les week-ends / fériés (tout le monde est off).
         const repos = estWeekendOuFerieISO(iso) ? [] : rosterList.filter((m) =>
-          m.role !== "admin" && medActifISO(m, iso) && !aShift.has(m.id) && !enConge.has(m.id));
+          m.role !== "admin" && medActifISO(m, iso) && jourTravaillableISO(m, iso) &&
+          !aShift.has(m.id) && !enConge.has(m.id)); // jour non travaillable ≠ non planifié
         let contenuNP = "";
         repos.forEach((m) => {
           contenuNP += "<span class='grille-chip grille-chip-repos' title='" +
