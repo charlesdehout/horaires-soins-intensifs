@@ -797,6 +797,28 @@ test("échange refusé : le receveur travaille le lendemain de la garde gagnée"
   assert(!r.ok, "échange accepté alors que R2 travaille le lendemain de la garde du 10/6");
 });
 
+test("combos MAXIMISÉS : la majorité des 24h de week-end sont couplées (jeudi/sam, ven/dim)", () => {
+  // Demande (révision 2026-06-12) : favoriser au maximum les combos
+  // jeudi+samedi / vendredi+dimanche, sous l'équité (gardes rééquilibrées en
+  // fin de génération par plReequilibrerGardes). Mesuré ~75 % sur un trimestre
+  // type ; on verrouille un plancher de 50 %.
+  const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: equipe(), preferences: [] });
+  const add = (d, n) => { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + n);
+    return x.toISOString().slice(0, 10); };
+  const dow = (d) => { const j = new Date(d + "T00:00:00Z").getUTCDay(); return j === 0 ? 7 : j; };
+  const gardes = new Set(r.shifts.filter((s) => s.shift_type === "garde_nuit" || s.shift_type === "garde_24h")
+    .map((s) => s.doctor_id + "|" + s.date));
+  let we = 0, combos = 0;
+  r.shifts.forEach((s) => {
+    if (s.shift_type !== "garde_24h") return;
+    const j = dow(s.date); if (j !== 6 && j !== 7) return;
+    we++;
+    if (gardes.has(s.doctor_id + "|" + add(s.date, -2))) combos++;
+  });
+  assert(we > 0, "aucune 24h de week-end générée");
+  assert(combos / we >= 0.5, "combos " + combos + "/" + we + " (" + Math.round(100 * combos / we) + " % < 50 %)");
+});
+
 console.log("\n=== Équilibre des heures — crédit d'équité des congés ===");
 
 test("congé : un médecin en congé 2 semaines ne dépasse pas les heures de ses pairs", () => {

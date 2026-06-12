@@ -91,12 +91,20 @@ testable sous Node (`test_planning.js`, ~59 cas).
   plafonds). Un médecin en congé n'est donc plus « rattrapé » au-delà des autres
   à son retour (fini les dépassements pendant que des collègues sans congé font
   moins d'heures).
-- **Couplage des gardes** (Pt 6, révisé) : le médecin de la garde de nuit de
-  l'avant-veille (jeudi → samedi, vendredi → dimanche) est préféré pour la 24 h
-  du week-end, dans une **tolérance horaire bornée**
-  (`EQUITE.couplage_tolerance_h`, défaut 15 h ≈ une garde de nuit ; 0 =
-  désactivé) → déclenche le repos compensatoire couplé du lundi/mardi. La garde
-  de semaine du médecin couplé reste une **17h–9h** (jamais une 24 h).
+- **Couplage des gardes MAXIMISÉ** (Pt 6, révisé 2026-06-12) : les combos
+  **jeudi+samedi** et **vendredi+dimanche** sont favorisés au maximum
+  (~75 % des 24 h de week-end couplées sur un trimestre type) :
+  le médecin de la garde de nuit de l'avant-veille est préféré pour la 24 h du
+  week-end (sans borne d'heures par défaut ; `EQUITE.couplage_tolerance_h` :
+  null = illimité, nombre = borne en h, 0 = désactivé), il reste candidat
+  même au-delà du plafond souple de 60 h/sem (le repos couplé compense), et le
+  jeudi/vendredi la garde de nuit est orientée vers les médecins en déficit de
+  week-ends (combo préparé en amont). Garde-fous : équité week-end prioritaire,
+  pas de favori déjà en excédent de gardes, et **rééquilibrage final des
+  gardes** (`plReequilibrerGardes` : transfert de gardes de nuit lundi→mercredi
+  des excédentaires vers les déficitaires, sans toucher aux combos) → équité
+  ±1-2 gardes intra-grade conservée. La garde de semaine du médecin couplé
+  reste une **17h–9h** (jamais une 24 h).
 - **Concentration des gardes de nuit** (M12c, souple) : à déficit strictement égal, on
   privilégie le médecin ayant gardé le plus récemment (regroupe les nuits sans coût
   d'équité). Tunable `EQUITE.concentration_*`.

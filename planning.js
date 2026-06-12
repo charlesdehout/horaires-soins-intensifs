@@ -375,8 +375,19 @@ function plTrier(liste, critere, etat, date, favoriId) {
     const aF = favs.indexOf(a.id) !== -1, bF = favs.indexOf(b.id) !== -1;
     if (aF !== bF) {
       const eqC = plEquite();
-      const tol = ((typeof eqC.couplage_tolerance_h === "number") ? eqC.couplage_tolerance_h : 15) / 52;
-      if (Math.abs(ra - rb) <= tol) return aF ? -1 : 1;
+      // Par défaut (null) : PAS de borne d'heures — on favorise le combo au
+      // maximum dès que l'équité week-end (critère du dessus) est égale.
+      const tol = ((typeof eqC.couplage_tolerance_h === "number") ? eqC.couplage_tolerance_h : 24) / 52;
+      // GARDE-FOU équité gardes : le favori ne double pas quelqu'un s'il est
+      // déjà en EXCÉDENT de gardes par rapport à lui (l'équité ±1 garde reste
+      // tenue sur le trimestre malgré la maximisation des combos).
+      // Double garde-fou : score mensuel (équilibrage gardes du mois) ET cumul
+      // trimestriel ±1 (équité ±1 garde mesurée sur le trimestre).
+      const ga = plScoreGarde(a.id, etat), gb = plScoreGarde(b.id, etat);
+      const ta = (etat.nbGardesTotal && etat.nbGardesTotal[a.id]) || 0;
+      const tb = (etat.nbGardesTotal && etat.nbGardesTotal[b.id]) || 0;
+      const favOk = aF ? (ga <= gb + PL_EPS && ta <= tb + 1) : (gb <= ga + PL_EPS && tb <= ta + 1);
+      if (favOk && Math.abs(ra - rb) <= tol) return aF ? -1 : 1;
     }
     if (ra !== rb) return ra - rb;
     return String(a.id).localeCompare(String(b.id)); // déterministe
@@ -426,6 +437,16 @@ function plTrierGardeNuit(liste, date, etat) {
     if (pa > 0) { const ra2 = plRangDesiderata(a), rb2 = plRangDesiderata(b); if (ra2 !== rb2) return rb2 - ra2; }
     const ra = plRecenceGarde(a.id, date, etat), rb = plRecenceGarde(b.id, date, etat);
     if (ra !== rb) return rb - ra;                            // ex aequo → garde récente d'abord
+    // COMBO jeudi+samedi / vendredi+dimanche préparé EN AMONT : le jeudi et le
+    // vendredi, à équité de gardes égale, on préfère le médecin en déficit de
+    // week-ends — c'est lui qui prendra la 24 h du week-end (couplage aval).
+    if (date) {
+      const js = plJourSemaine(date);
+      if (js === 4 || js === 5) {
+        const wa = plScoreWeekend(a.id, etat), wb = plScoreWeekend(b.id, etat);
+        if (wa !== wb) return wa - wb;
+      }
+    }
     const ha = plRatioHeures(a, etat);
     const hb = plRatioHeures(b, etat);
     if (ha !== hb) return ha - hb;
@@ -802,11 +823,23 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits, pp) {
   let g1 = null, g2 = null;
   const residentDejaGarde = gardePinned.some((m) => m.grade === "resident");
   let manqueG = 2 - gardePinned.length;
+  // Les FAVORIS de couplage (garde de nuit de l'avant-veille) restent candidats
+  // même au-delà du plafond 60 h SOUPLE : sans cela, jeudi GN + semaine de
+  // station + samedi 24 h dépassait presque toujours 60 h et le combo
+  // jeudi+samedi / vendredi+dimanche ne se réalisait jamais. Le repos couplé du
+  // lundi/mardi compense la semaine suivante.
+  const garderFavoris = (pool, source) => {
+    if (!coupleId) return pool;
+    const favs = Array.isArray(coupleId) ? coupleId : [coupleId];
+    const dedans = new Set(pool.map((m) => m.id));
+    source.forEach((m) => { if (favs.indexOf(m.id) !== -1 && !dedans.has(m.id)) pool.push(m); });
+    return pool;
+  };
   if (manqueG > 0) {
     if (residentDejaGarde) {
       // un résident est déjà de garde (pré-placement) → on complète librement
     } else if (residentsG.length > 0) {
-      g1 = plChoisirWE(plFiltrerPlafond(residentsG, date, etat, PL_HEURES.garde_24h), date, etat, coupleId, conflits);
+      g1 = plChoisirWE(garderFavoris(plFiltrerPlafond(residentsG, date, etat, PL_HEURES.garde_24h), residentsG), date, etat, coupleId, conflits);
       manqueG--;
     } else {
       conflits.push({ date, message: "Week-end nuit : aucun résident disponible (≥1 obligatoire)." });
@@ -814,7 +847,8 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits, pp) {
     }
     if (manqueG > 0) {
       const exclu = g1 ? g1.id : null;
-      const reste = plFiltrerPlafond(libresGarde.filter((m) => m.id !== exclu), date, etat, PL_HEURES.garde_24h);
+      const sourceG2 = libresGarde.filter((m) => m.id !== exclu);
+      const reste = garderFavoris(plFiltrerPlafond(sourceG2, date, etat, PL_HEURES.garde_24h), sourceG2);
       g2 = plChoisirWE(reste, date, etat, coupleId, conflits);
     }
   }
@@ -960,6 +994,69 @@ function plDispoStatique(m, date, indispoSet, dispoSet) {
   return true;
 }
 
+/* RÉÉQUILIBRAGE FINAL DES GARDES (équité ±1, après maximisation des combos).
+   La maximisation des combos jeudi+samedi / vendredi+dimanche peut laisser un
+   écart de gardes > 2 intra-grade sur le trimestre. On déplace alors des
+   gardes de NUIT de DÉBUT de semaine (lundi→mercredi, jamais jeudi/vendredi
+   ni week-end pour PRÉSERVER les combos) d'un médecin EXCÉDENTAIRE vers un
+   médecin DÉFICITAIRE du même grade, en respectant : libre ce jour-là et le
+   lendemain, pas de garde la veille, max 3 gardes/semaine, congés/contrat/
+   dispo déclarée. À appeler AVANT materialiserRepos (les repos suivront).
+   Mute `sortie` (doctor_id) et l'état (heures, compteurs). */
+function plReequilibrerGardes(sortie, medecins, etat) {
+  const estG = (x) => x === "garde_nuit" || x === "garde_24h";
+  const parDoc = {}; // id -> Set(dates de shift, tous types)
+  const gardesDates = {}; // id -> Set(dates de garde)
+  const compte = {}; // id -> nb gardes (trimestre)
+  medecins.forEach((m) => { parDoc[m.id] = new Set(); gardesDates[m.id] = new Set(); compte[m.id] = 0; });
+  sortie.forEach((s) => {
+    if (!parDoc[s.doctor_id]) return;
+    parDoc[s.doctor_id].add(s.date);
+    if (estG(s.shift_type)) { gardesDates[s.doctor_id].add(s.date); compte[s.doctor_id]++; }
+  });
+  const peutRecevoir = (m, d) => {
+    if (!plSousContrat(m, d)) return false;
+    const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
+    if (!jt.includes(plJourSemaine(d))) return false;
+    if (etat.indispo[m.id] && etat.indispo[m.id].has(d)) return false;          // congé
+    if (!plDispoIndependant(m, d, etat.dispoDeclaree[m.id])) return false;      // indépendant
+    if (parDoc[m.id].has(d) || parDoc[m.id].has(plAdd(d, 1))) return false;     // libre J et J+1
+    if (gardesDates[m.id].has(plAdd(d, -1))) return false;                      // pas de garde la veille
+    // max 3 gardes / semaine ISO
+    const lk = plLundiDe(d);
+    let n = 0; gardesDates[m.id].forEach((g) => { if (plLundiDe(g) === lk) n++; });
+    return n < PL_MAX_GARDES_SEMAINE;
+  };
+  const grades = ["resident", "assistant_specialiste"];
+  for (let iter = 0; iter < 40; iter++) {
+    let bouge = false;
+    for (const grade of grades) {
+      const pool = medecins.filter((m) => m.grade === grade);
+      if (pool.length < 2) continue;
+      const tri = pool.slice().sort((a, b) => compte[b.id] - compte[a.id]);
+      const haut = tri[0], bas = tri[tri.length - 1];
+      if (compte[haut.id] - compte[bas.id] <= 2) continue; // écart acceptable (±1 visé, 2 toléré)
+      // garde de nuit de DÉBUT de semaine du médecin excédentaire, transférable.
+      const cand = sortie.find((s) => s.doctor_id === haut.id && s.shift_type === "garde_nuit" &&
+        [1, 2, 3].includes(plJourSemaine(s.date)) && peutRecevoir(bas, s.date));
+      if (!cand) continue;
+      // Transfert : shift + état (heures, compteurs, index locaux).
+      parDoc[haut.id].delete(cand.date); gardesDates[haut.id].delete(cand.date); compte[haut.id]--;
+      parDoc[bas.id].add(cand.date); gardesDates[bas.id].add(cand.date); compte[bas.id]++;
+      cand.doctor_id = bas.id;
+      etat.heures[haut.id] -= PL_HEURES.garde_nuit; etat.heures[bas.id] += PL_HEURES.garde_nuit;
+      etat.nbGardesTotal[haut.id]--; etat.nbGardesTotal[bas.id]++;
+      const lk = plLundiDe(cand.date);
+      etat.heuresSemaine[haut.id][lk] = (etat.heuresSemaine[haut.id][lk] || 0) - PL_HEURES.garde_nuit;
+      etat.heuresSemaine[bas.id][lk] = (etat.heuresSemaine[bas.id][lk] || 0) + PL_HEURES.garde_nuit;
+      etat.gardesSemaine[haut.id][lk] = (etat.gardesSemaine[haut.id][lk] || 1) - 1;
+      etat.gardesSemaine[bas.id][lk] = (etat.gardesSemaine[bas.id][lk] || 0) + 1;
+      bouge = true;
+    }
+    if (!bouge) break;
+  }
+}
+
 /* Liste des dates ISO d'un mois (1-12). */
 function plDatesDuMois(annee, mois) {
   const nbJours = new Date(Date.UTC(annee, mois, 0)).getUTCDate();
@@ -1034,6 +1131,10 @@ function genererTrimestre(opts) {
       else plGenererSemaine(date, medecins, etat, sortie, conflits, pp);
     });
   });
+
+  // Rééquilibrage final des gardes (équité ±1 intra-grade) APRÈS la
+  // maximisation des combos, AVANT la matérialisation des repos.
+  plReequilibrerGardes(sortie, medecins, etat);
 
   // Repos de garde matérialisés sur tout le trimestre (avant l'off-clinic).
   const bDeb = plBornesMois(annee, moisTrim[0]).debut;
