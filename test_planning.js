@@ -654,7 +654,9 @@ test("rotation : l'unité de référence sert de base à la continuité", () => 
   const meds = equipe().map((m) => m.id === "assistant_specialiste1"
     ? Object.assign({}, m, { unite_reference: "usi5" }) : m);
   const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: [] });
-  const jours = r.shifts.filter((s) => s.doctor_id === "assistant_specialiste1" && s.shift_type === "jour");
+  // Les DOUBLURES (plancher 40 h / nouvel engagé) ne sont pas des journées de
+  // titulaire : la continuité ne s'applique qu'aux affectations normales.
+  const jours = r.shifts.filter((s) => s.doctor_id === "assistant_specialiste1" && s.shift_type === "jour" && !s.doublure);
   assert(jours.length > 0, "le médecin ne fait aucune journée de station");
   assert(jours.every((s) => s.poste === "usi5"), "journées hors unité de référence : " +
     jours.filter((s) => s.poste !== "usi5").map((s) => s.date + ":" + s.poste).join(", "));
@@ -851,6 +853,114 @@ test("consolidation : la majorité des 24h du DIMANCHE sont tenues par une garde
   assert(dim > 0, "aucune 24h de dimanche générée");
   assert(couples / dim >= 0.6, "dimanches couplés au vendredi : " + couples + "/" + dim +
     " (" + Math.round(100 * couples / dim) + " % < 60 %)");
+});
+
+test("échange : céder sa garde du JEUDI fait perdre la récup couplée du lundi", () => {
+  // X a jeudi (nuit) + samedi (24h) → lundi de récup couplée. S'il échange sa
+  // garde du JEUDI, le couplage est rompu : son lundi doit être SUPPRIMÉ
+  // (le samedi seul ne donne que le repos du dimanche).
+  const meds = [{ id: "X", grade: "resident", name: "X" }, { id: "Y", grade: "resident", name: "Y" }];
+  const shifts = [
+    { id: "gj",  date: "2026-06-11", shift_type: "garde_nuit",  doctor_id: "X", poste: null }, // jeudi
+    { id: "rv",  date: "2026-06-12", shift_type: "repos_garde", doctor_id: "X", poste: null },
+    { id: "gs",  date: "2026-06-13", shift_type: "garde_24h",   doctor_id: "X", poste: null }, // samedi
+    { id: "rd",  date: "2026-06-14", shift_type: "repos_garde", doctor_id: "X", poste: null },
+    { id: "rl",  date: "2026-06-15", shift_type: "repos_garde", doctor_id: "X", poste: null }, // lundi couplé
+    { id: "gm",  date: "2026-06-17", shift_type: "garde_nuit",  doctor_id: "Y", poste: null }, // mercredi
+    { id: "rj2", date: "2026-06-18", shift_type: "repos_garde", doctor_id: "Y", poste: null },
+  ];
+  const r = validerEchange(shifts, "gj", "gm", meds);
+  assert(r.ok, "échange refusé à tort : " + r.message);
+  assert(r.changes.some((c) => c.id === "rl" && c.supprimer),
+    "la récup couplée du lundi devait être supprimée (jeudi cédé → couplage rompu)");
+  assert(r.changes.some((c) => c.id === "rv" && c.doctor_id === "Y"),
+    "le repos du vendredi devait suivre la garde du jeudi vers Y");
+});
+
+console.log("\n=== Révision 2026-06-12 — Nouvel engagé, plancher 40 h, offs trimestre ===");
+
+test("nouvel engagé : doublure quotidienne 2 semaines, jamais de garde/WE, puis vie normale", () => {
+  const meds = equipe();
+  meds[0].nouvel_engage = true; meds[0].contract_start = "2026-06-01"; // resident1
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: [] });
+  const fenetre = r.shifts.filter((s) => s.doctor_id === "resident1" && s.date <= "2026-06-14");
+  // Jamais de garde / TWE / week-end pendant la fenêtre.
+  assert(fenetre.every((s) => s.shift_type === "jour"),
+    "types interdits en fenêtre : " + fenetre.filter((s) => s.shift_type !== "jour").map((s) => s.date + ":" + s.shift_type).join(", "));
+  const dow = (d) => { const j = new Date(d + "T00:00:00Z").getUTCDay(); return j === 0 ? 7 : j; };
+  assert(fenetre.every((s) => dow(s.date) <= 5), "présent un week-end pendant la fenêtre");
+  // Présence CHAQUE jour ouvré (10 jours ouvrés du 1 au 14 juin), en DOUBLURE
+  // d'une unité déjà pourvue par un titulaire.
+  assert.strictEqual(fenetre.length, 10, "jours de doublure = " + fenetre.length + " (10 attendus)");
+  assert(fenetre.every((s) => s.doublure), "shift de fenêtre non marqué doublure");
+  fenetre.forEach((s) => {
+    const titulaires = r.shifts.filter((x) => x.date === s.date && x.poste === s.poste && x.doctor_id !== "resident1");
+    assert(titulaires.length >= 1, s.date + " : doublé sur une unité sans titulaire (" + s.poste + ")");
+  });
+  // Après la fenêtre : il reprend des gardes.
+  const apres = r.shifts.filter((s) => s.doctor_id === "resident1" && s.date > "2026-06-14" &&
+    (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h"));
+  assert(apres.length >= 1, "aucune garde après la fenêtre des 2 semaines");
+});
+
+test("nouvel engagé : statut PÉRIMÉ signalé en conflit (à retirer par l'admin)", () => {
+  const meds = equipe();
+  meds[0].nouvel_engage = true; meds[0].contract_start = "2026-03-01"; // fenêtre finie
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: [] });
+  assert(r.conflits.some((c) => /nouvel engagé.*PÉRIMÉ/i.test(c.message)),
+    "statut périmé non signalé");
+});
+
+test("plancher 40 h/sem : sous la cible proratisée ⇒ plus aucun jour ouvré libre (doublures posées)", () => {
+  // Cible hebdo = 40 h × fte × (jours de présence possibles / 5), où les jours
+  // de repos de garde ne sont PAS travaillables. Si un médecin est sous sa
+  // cible, c'est que TOUS ses jours ouvrés sont occupés (l'algo a doublé les
+  // unités tant qu'il restait des jours libres).
+  const meds = equipe();
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: [] });
+  const H = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24, off: 10.5 };
+  const lundi = (d) => { const x = new Date(d + "T00:00:00Z"); const j = (x.getUTCDay() + 6) % 7;
+    x.setUTCDate(x.getUTCDate() - j); return x.toISOString().slice(0, 10); };
+  const par = {};
+  r.shifts.forEach((s) => { ((par[s.doctor_id] = par[s.doctor_id] || {})[s.date] =
+    (par[s.doctor_id] || {})[s.date] || []).push(s.shift_type); });
+  const semaines = { "2026-06-01": [1, 2, 3, 4, 5], "2026-06-08": [8, 9, 10, 11, 12],
+    "2026-06-15": [15, 16, 17, 18, 19], "2026-06-22": [22, 23, 24, 25, 26] };
+  Object.keys(semaines).forEach((lk) => {
+    meds.forEach((m) => {
+      let h = 0;
+      r.shifts.forEach((s) => { if (s.doctor_id === m.id && lundi(s.date) === lk) h += H[s.shift_type] || 0; });
+      const jours = semaines[lk].map((j) => "2026-06-" + String(j).padStart(2, "0"));
+      const presence = jours.filter((d) => !(((par[m.id] || {})[d]) || []).includes("repos_garde"));
+      const cible = 40 * presence.length / 5;
+      const libres = jours.filter((d) => !(((par[m.id] || {})[d]) || []).length);
+      assert(!(h < cible - 0.01 && libres.length > 0),
+        m.id + " semaine " + lk + " : " + h + " h < cible " + cible.toFixed(1) + " avec jours libres " + libres.join(","));
+    });
+  });
+  assert(r.shifts.some((s) => s.doublure), "aucune doublure posée (plancher inactif ?)");
+});
+
+test("off-clinic : équilibre trimestriel (le moins d'offs cumulés est servi d'abord)", () => {
+  // r2 a déjà 2 offs posés (mois précédent du trimestre) ; r1 n'en a aucun.
+  // À capacité réduite (1 seul jour plaçable), r1 doit passer AVANT r2.
+  const r1 = { id: "r1", name: "R1", grade: "resident", statut: "dependant", fte: 1,
+    jours_travailles: [1, 2, 3, 4, 5], contract_start: null, contract_end: null };
+  const r2 = Object.assign({}, r1, { id: "r2", name: "R2" });
+  const shifts = [
+    { date: "2026-05-04", shift_type: "off", doctor_id: "r2", poste: null },
+    { date: "2026-05-11", shift_type: "off", doctor_id: "r2", poste: null },
+  ];
+  // Saturer presque tout juin : r1 et r2 occupés tous les jours ouvrés sauf le 1er.
+  for (let j = 2; j <= 30; j++) {
+    const d = "2026-06-" + String(j).padStart(2, "0");
+    shifts.push({ date: d, shift_type: "jour", doctor_id: "r1", poste: "usi1" });
+    shifts.push({ date: d, shift_type: "jour", doctor_id: "r2", poste: "usi2" });
+  }
+  const offs = genererOffClinic({ annee: 2026, mois: 6, medecins: [r1, r2], shifts, preferences: [] });
+  const lundi1 = offs.filter((o) => o.date === "2026-06-01");
+  assert(lundi1.length === 1 && lundi1[0].doctor_id === "r1",
+    "le 01/06 devait aller à r1 (0 off cumulé) : " + JSON.stringify(lundi1));
 });
 
 console.log("\n=== Équilibre des heures — crédit d'équité des congés ===");

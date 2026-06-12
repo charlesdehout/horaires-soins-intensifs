@@ -80,6 +80,11 @@ const EQUITE = {
   concentration_nuits: true, // activer/désactiver le biais
   concentration_coeff: 0.5,  // intensité ∈ ]0,1[ (0,5 = discret ; <1 garantit la borne)
   fenetre_nuits:       14,    // « récent » = dernière garde ≤ 14 jours avant
+  // MINIMUM D'HEURES HEBDOMADAIRE (révision 2026-06-12) : équivalent à
+  // atteindre par semaine pour un ETP complet présent tous les jours ouvrés
+  // (proratisé fte × jours disponibles). Complété par des DOUBLURES d'unités
+  // si le planning normal ne suffit pas. 0 = désactiver.
+  minimum_hebdo_h: 40,
   // Pt 6 — COUPLAGE des gardes (jeudi→samedi, vendredi→dimanche) : le médecin
   // de la garde de nuit de l'avant-veille est préféré pour la 24 h du week-end
   // (combo MAXIMISÉ, sous l'équité week-end et les contraintes dures).

@@ -174,8 +174,14 @@
         </p>
         <p id="generer-msg" class="message"></p>
 
-        <!-- Compteurs par médecin (heures / gardes / week-ends) du mois affiché -->
-        <div class="zone-header"><h3 class="sous-titre">Compteurs du mois</h3></div>
+        <!-- Compteurs par médecin (heures / gardes / week-ends), mois ou trimestre -->
+        <div class="zone-header">
+          <h3 class="sous-titre" id="compteurs-titre">Compteurs du mois</h3>
+          <select id="compteurs-portee" title="Portée des compteurs">
+            <option value="mois">Mois affiché</option>
+            <option value="trimestre">Trimestre</option>
+          </select>
+        </div>
         <table id="compteurs-table" class="data-table compteurs-table">
           <thead>
             <!-- En-tête (re)construit dynamiquement par majCompteurs() pour gérer
@@ -359,6 +365,8 @@
             </div>
             <div>
               <label for="d-conges100"><input type="checkbox" id="d-conges100" /> Congés à 100 % malgré FTE réduit</label>
+              <label for="d-nouvel-engage" title="14 premiers jours de contrat : doublure quotidienne d'une unité, jamais de garde ni de week-end. À RETIRER par l'admin avant la génération du trimestre suivant.">
+                <input type="checkbox" id="d-nouvel-engage" /> 🆕 Nouvel engagé (2 sem. de doublage, pas de garde)</label>
             </div>
             <div class="form-grid-full">
               <label>Périodes contractuelles</label>
@@ -524,6 +532,8 @@
                 <input type="text" id="ech-note" maxlength="200" placeholder="ex. raison de l'échange…" />
               </div>
             </div>
+            <!-- Aperçu en direct des conséquences de l'échange sélectionné -->
+            <div id="ech-preview" class="zone-info hidden"></div>
             <div class="form-actions">
               <button type="submit" id="ech-proposer-btn">Proposer l'échange</button>
             </div>

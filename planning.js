@@ -263,6 +263,35 @@ function plDispo(m, date, etat) {
   return true;
 }
 
+/* NOUVEL ENGAGÉ (révision 2026-06-12) : pendant ses 14 PREMIERS JOURS de
+   contrat (à défaut de date de contrat : les 14 premiers jours de la période
+   générée), un médecin marqué `nouvel_engage` :
+   - ne prend NI garde, NI week-end, NI tour (TWE) ;
+   - est présent chaque JOUR OUVRÉ en DOUBLURE d'une unité déjà pourvue
+     (unité choisie librement par l'algo, peut varier d'un jour à l'autre).
+   Le statut reste sur la fiche jusqu'à suppression par l'admin ; une fenêtre
+   entièrement passée est SIGNALÉE en conflit (à retirer avant de générer le
+   trimestre suivant). */
+function plEstNouvelEngage(m, date, debutPeriode) {
+  if (!m || !m.nouvel_engage) return false;
+  const debut = m.contract_start || debutPeriode;
+  if (!debut) return false;
+  return date >= debut && date <= plAdd(debut, 13);
+}
+
+/* Conflits « statut périmé » : nouvel engagé dont la fenêtre est entièrement
+   antérieure à la période générée → l'admin doit retirer le statut. */
+function plControlerNouveauxEngages(medecins, debutPeriode, conflits) {
+  (medecins || []).forEach((m) => {
+    if (!m.nouvel_engage) return;
+    const debut = m.contract_start || debutPeriode;
+    if (debut && plAdd(debut, 13) < debutPeriode) {
+      conflits.push({ date: debutPeriode, message:
+        `${m.name || m.id} : statut « nouvel engagé » PÉRIMÉ (fenêtre terminée le ${plAdd(debut, 13)}) — à retirer de la fiche avant génération.` });
+    }
+  });
+}
+
 /* Trie les médecins du plus « prioritaire à servir » au moins prioritaire.
    critere : 'garde' = le moins de gardes d'abord ; 'weekend' = le moins de
    week-ends ; sinon on départage par charge horaire relative à la cible.
@@ -613,7 +642,11 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
     ppDocs.add(s.doctor_id);
   });
 
-  const libres = medecins.filter((m) => plDispo(m, date, etat)); // pré-placés exclus (assignés)
+  let libres = medecins.filter((m) => plDispo(m, date, etat)); // pré-placés exclus (assignés)
+  // NOUVEAUX ENGAGÉS (fenêtre 14 j) : retirés des viviers normaux (pas de
+  // garde, pas de station en titulaire) ; posés en DOUBLURE en fin de journée.
+  const nouveaux = libres.filter((m) => plEstNouvelEngage(m, date, etat.debutPeriode));
+  if (nouveaux.length) libres = libres.filter((m) => !plEstNouvelEngage(m, date, etat.debutPeriode));
   // Vivier pour les GARDES : on retire ceux qui ont déjà atteint le max
   // hebdomadaire (contrainte DURE, spec §6 N1).
   const libresG = libres.filter((m) => plGardesSemaine(m.id, date, etat) < PL_MAX_GARDES_SEMAINE);
@@ -788,6 +821,17 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
     if (ppDocs.has(id)) return; // pré-placement déjà posé (étape 0)
     plAffecter(sortie, etat, date, "jour", id, code);
   });
+
+  // DOUBLURE des nouveaux engagés : un « jour » sur une unité déjà pourvue
+  // (répartie au fil des jours pour varier l'unité de doublage).
+  nouveaux.forEach((m, k) => {
+    const pourvues = Object.keys(plan);
+    const st = pourvues.length
+      ? pourvues[(parseInt(date.slice(8, 10), 10) + k) % pourvues.length]
+      : (postes[0] || null);
+    plAffecter(sortie, etat, date, "jour", m.id, st);
+    sortie[sortie.length - 1].doublure = true; // doublure du nouvel engagé
+  });
 }
 
 
@@ -813,7 +857,8 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits, pp) {
     .map((s) => medecins.find((m) => m.id === s.doctor_id)).filter(Boolean);
   const ppTweId = (pp.find((s) => s.shift_type === "twe") || {}).doctor_id || null;
 
-  const libres = medecins.filter((m) => plDispo(m, date, etat) && !ppDocs.has(m.id));
+  const libres = medecins.filter((m) => plDispo(m, date, etat) && !ppDocs.has(m.id) &&
+    !plEstNouvelEngage(m, date, etat.debutPeriode)); // nouvel engagé : jamais le week-end
 
   if (libres.length < couv.twe_weekend) {
     conflits.push({ date, message: `Week-end : ${libres.length} médecin(s) dispo (${couv.twe_weekend} requis).` });
@@ -972,6 +1017,8 @@ function genererPlanning(opts) {
 
   const sortie = [];
   const conflits = [];
+  etat.debutPeriode = plBornesMois(annee, mois).debut; // fenêtre « nouvel engagé »
+  plControlerNouveauxEngages(medecins, etat.debutPeriode, conflits);
   const nbJours = new Date(Date.UTC(annee, mois, 0)).getUTCDate();
 
   for (let j = 1; j <= nbJours; j++) {
@@ -992,6 +1039,9 @@ function genererPlanning(opts) {
   // Placement automatique des off-clinic (§9), une fois le planning posé.
   const offs = genererOffClinic({ annee, mois, medecins, shifts: sortie, preferences });
   offs.forEach((o) => { sortie.push(o); etat.heures[o.doctor_id] += PL_HEURES_OFFCLINIC; });
+
+  // Minimum d'heures hebdomadaire (doublures d'unités si nécessaire).
+  plCompleterMinimumHeures(sortie, medecins, etat, plDatesDuMois(annee, mois));
 
   const stats = medecins.map((m) => ({
     id: m.id,
@@ -1099,6 +1149,82 @@ function plReequilibrerGardes(sortie, medecins, etat) {
   }
 }
 
+/* MINIMUM D'HEURES HEBDOMADAIRE (révision 2026-06-12) : chaque médecin doit
+   atteindre l'équivalent de `EQUITE.minimum_hebdo_h` (défaut 40 h) par semaine,
+   proratisé : minimum × fte × (jours ouvrés DISPONIBLES de la semaine / 5).
+   Si le planning normal ne suffit pas, on AJOUTE des journées en DOUBLURE
+   d'une unité déjà pourvue (« quitte à doubler les unités »). À appeler en FIN
+   de génération (après off-clinic). Mute sortie + état via plAffecter. */
+function plCompleterMinimumHeures(sortie, medecins, etat, dates) {
+  const eq = plEquite();
+  const minH = (typeof eq.minimum_hebdo_h === "number") ? eq.minimum_hebdo_h : 40;
+  if (!minH) return;
+  // Index par semaine ISO (lundi) : dates ouvrées de la période.
+  const semaines = {}; // lundiISO -> [dates ouvrées]
+  dates.forEach((d) => {
+    if (plEstWeekendOuFerie(d)) return;
+    (semaines[plLundiDe(d)] = semaines[plLundiDe(d)] || []).push(d);
+  });
+  // Heures RÉELLES par médecin et par semaine (depuis la sortie, off compris).
+  const heuresSem = {}; // id -> { lundi -> h }
+  const aShift = {};    // id -> Set(dates)
+  sortie.forEach((s) => {
+    (aShift[s.doctor_id] = aShift[s.doctor_id] || new Set()).add(s.date);
+    let h = PL_HEURES[s.shift_type] || 0;
+    if (s.shift_type === "off") h = PL_HEURES_OFFCLINIC;
+    if (h <= 0) return;
+    const lk = plLundiDe(s.date);
+    const m = (heuresSem[s.doctor_id] = heuresSem[s.doctor_id] || {});
+    m[lk] = (m[lk] || 0) + h;
+  });
+  // Stations pourvues par date (pour choisir l'unité à doubler).
+  const stationsDe = {}; // date -> [postes]
+  sortie.forEach((s) => {
+    if ((s.shift_type === "jour" || s.shift_type === "garde_24h") && s.poste)
+      (stationsDe[s.date] = stationsDe[s.date] || []).push(s.poste);
+  });
+  // Jours de REPOS DE GARDE par médecin : ce ne sont PAS des jours
+  // travaillables → ils sortent du prorata ET des jours doublables.
+  const reposDe = {}; // id -> Set(dates)
+  sortie.forEach((s) => {
+    if (s.shift_type === "repos_garde")
+      (reposDe[s.doctor_id] = reposDe[s.doctor_id] || new Set()).add(s.date);
+  });
+  Object.keys(semaines).sort().forEach((lk) => {
+    const joursOuvres = semaines[lk];
+    medecins.forEach((m) => {
+      if (m.nouvel_engage && joursOuvres.some((d) => plEstNouvelEngage(m, d, etat.debutPeriode))) return; // déjà doublé chaque jour
+      // Jours ouvrés DISPONIBLES (statique : contrat, jours travaillés, congés).
+      const indispoSet = etat.indispo[m.id];
+      const dispoSet = etat.dispoDeclaree[m.id];
+      // Jours de PRÉSENCE possibles : disponibles (contrat, jours travaillés,
+      // congés) ET non bloqués par un repos de garde (jour non travaillable).
+      const joursDispo = joursOuvres.filter((d) =>
+        plDispoStatique(m, d, indispoSet, dispoSet) &&
+        !etat.bloque[m.id].has(d) &&
+        !(reposDe[m.id] && reposDe[m.id].has(d)));
+      if (!joursDispo.length) return;
+      const fte = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1;
+      const cible = minH * fte * Math.min(joursDispo.length / 5, 1);
+      let h = (heuresSem[m.id] && heuresSem[m.id][lk]) || 0;
+      for (const d of joursDispo) {
+        if (h >= cible) break;
+        if (aShift[m.id] && aShift[m.id].has(d)) continue;  // déjà occupé ce jour
+        if (etat.bloque[m.id].has(d)) continue;             // repos de garde
+        const pourvues = stationsDe[d] || [];
+        const st = pourvues.length
+          ? pourvues[parseInt(d.slice(8, 10), 10) % pourvues.length]
+          : null;
+        plAffecter(sortie, etat, d, "jour", m.id, st);
+        sortie[sortie.length - 1].doublure = true; // marqueur informatif (ignoré en base)
+        (aShift[m.id] = aShift[m.id] || new Set()).add(d);
+        h += PL_HEURES.jour;
+      }
+      if (heuresSem[m.id]) heuresSem[m.id][lk] = h;
+    });
+  });
+}
+
 /* Liste des dates ISO d'un mois (1-12). */
 function plDatesDuMois(annee, mois) {
   const nbJours = new Date(Date.UTC(annee, mois, 0)).getUTCDate();
@@ -1133,6 +1259,8 @@ function genererTrimestre(opts) {
 
   const sortie = [];
   const conflits = [];
+  etat.debutPeriode = plBornesMois(annee, moisTrim[0]).debut; // fenêtre « nouvel engagé »
+  plControlerNouveauxEngages(medecins, etat.debutPeriode, conflits);
   // POIDS WEEK-END = présence de week-end sur TOUT le trimestre. Les week-ends
   // sont équilibrés sur le trimestre (pas de reset mensuel de nbWeekend) : la
   // charge week-end est ainsi lissée d'un mois à l'autre. Les GARDES, elles,
@@ -1191,6 +1319,13 @@ function genererTrimestre(opts) {
     const offs = genererOffClinic({ annee, mois, medecins, shifts: sortie, preferences });
     offs.forEach((o) => { sortie.push(o); etat.heures[o.doctor_id] += PL_HEURES_OFFCLINIC; });
   });
+
+  // Minimum d'heures hebdomadaire sur tout le trimestre (doublures d'unités).
+  {
+    let datesTrim = [];
+    moisTrim.forEach((mois) => { datesTrim = datesTrim.concat(plDatesDuMois(annee, mois)); });
+    plCompleterMinimumHeures(sortie, medecins, etat, datesTrim);
+  }
 
   const stats = medecins.map((m) => ({
     id: m.id,
@@ -1305,13 +1440,17 @@ function genererOffClinic(opts) {
     const abs = absSet.size;
     const droit = abs <= 4 ? 2 : abs <= 9 ? 1 : 0;
     if (droit === 0) return;
-    elig.push({ m, idx, droit, nbAbs: abs, nbConges: congeDates.size });
+    // ÉQUILIBRE TRIMESTRIEL (révision) : offs déjà posés dans les shifts reçus
+    // (en génération trimestrielle, ils incluent les mois précédents).
+    const nbOffsCum = shifts.reduce((n, s) => n + (s.doctor_id === m.id && s.shift_type === "off" ? 1 : 0), 0);
+    elig.push({ m, idx, droit, nbAbs: abs, nbConges: congeDates.size, nbOffsCum });
   });
 
-  // Ceux qui ont le PLUS de congés (puis d'absences) cèdent EN PREMIER → traités
-  // EN DERNIER. Tri ascendant (moins de congés/absences d'abord), ordre original
-  // en départage stable.
+  // ÉQUILIBRE DES OFFS SUR LE TRIMESTRE d'abord (le moins d'offs cumulés est
+  // servi en premier), puis ceux qui ont le PLUS de congés (ensuite d'absences)
+  // cèdent EN PREMIER → traités EN DERNIER. Ordre original en départage stable.
   elig.sort((a, b) =>
+    (a.nbOffsCum - b.nbOffsCum) ||
     (a.nbConges - b.nbConges) ||
     (a.nbAbs - b.nbAbs) ||
     (a.idx - b.idx));
@@ -1787,7 +1926,7 @@ function compterParMedecin(shifts) {
   const stats = {}; // doctorId -> { heures, gardes, weekends, tours, offs }
   (shifts || []).forEach((s) => {
     const st = stats[s.doctor_id] ||
-      (stats[s.doctor_id] = { heures: 0, gardes: 0, weekends: 0, tours: 0, offs: 0, repos: 0 });
+      (stats[s.doctor_id] = { heures: 0, gardes: 0, weekends: 0, tours: 0, offs: 0, repos: 0, reposGarde: 0 });
     st.heures += PL_HEURES[s.shift_type] || 0;
     // Off-clinic crédité comme heures de travail (§9).
     if (s.shift_type === "off") { st.heures += PL_HEURES_OFFCLINIC; st.offs++; }
@@ -1798,6 +1937,8 @@ function compterParMedecin(shifts) {
     // automatique ('repos_garde') est volontairement EXCLU des totaux : il est
     // seulement affiché dans le planning.
     if (s.shift_type === "recup") st.repos++;
+    // Jours de repos de garde (révision : compteur INFORMATIF, non limitant).
+    if (s.shift_type === "repos_garde") st.reposGarde++;
     // Week-end travaillé = clé samedi DISTINCTE (spec §7 révisée) : garde 24h
     // ou tour le samedi/dimanche, ET garde du VENDREDI soir (elle entame le
     // samedi matin). Sam+dim du même week-end, ou vendredi+dimanche, = 1 seul.

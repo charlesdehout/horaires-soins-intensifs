@@ -226,6 +226,26 @@ testable sous Node (`test_planning.js`, ~59 cas).
 
 ---
 
+## 11 bis. Nouvel engagé, plancher d'heures et compteurs (révision 2026-06-12)
+
+- **Nouvel engagé** (case dans la fiche médecin, `module24_nouvel_engage.sql`) :
+  pendant ses **14 premiers jours de contrat**, le médecin est présent **chaque
+  jour ouvré en DOUBLURE** d'une unité déjà pourvue (unité choisie librement
+  par l'algo, variable d'un jour à l'autre) ; **jamais** de garde, de week-end
+  ni de tour. Le statut **doit être retiré par l'admin** : la génération d'un
+  trimestre est **bloquée** si la fenêtre est entièrement passée.
+- **Minimum d'heures hebdomadaire** (`EQUITE.minimum_hebdo_h`, défaut 40 h ;
+  0 = désactivé) : cible = 40 h × FTE × (jours de présence possibles / 5), les
+  jours de **repos de garde n'étant pas travaillables**. Si le planning normal
+  ne suffit pas, l'algo **double les unités** (journées marquées `doublure`)
+  jusqu'à la cible ou épuisement des jours libres.
+- **Off-clinic équilibrés sur le trimestre** : à capacité limitée, le résident
+  avec le **moins d'offs cumulés** sur le trimestre est servi en premier.
+- **Compteurs Mois / Trimestre** : sélecteur au-dessus du tableau (cumul du
+  trimestre civil du mois affiché). Nouvelles colonnes **informatives, non
+  limitantes** : « Repos g. » (jours de repos de garde) et « Non plan. »
+  (jours ouvrés sous contrat sans aucune affectation ni congé).
+
 ## 12. Pré-placements & alertes
 
 - **Pré-placement épinglé** (M19) : l'admin coche « 📌 Épingler » un shift ; les épinglés

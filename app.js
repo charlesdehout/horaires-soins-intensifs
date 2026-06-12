@@ -68,6 +68,7 @@ const dHours          = document.getElementById("d-hours");
 const dAdminLevel     = document.getElementById("d-admin-level");
 const dStatut         = document.getElementById("d-statut");
 const dConges100      = document.getElementById("d-conges100");
+const dNouvelEngage   = document.getElementById("d-nouvel-engage");
 const dStart          = document.getElementById("d-start");
 const dEnd            = document.getElementById("d-end");
 const dPeriodes       = document.getElementById("d-periodes");
@@ -421,6 +422,7 @@ function ouvrirEdition(med) {
   dAdminLevel.value = med.admin_level || (med.role === "admin" ? "principal" : "aucun");
   dStatut.value = med.statut || "dependant";
   dConges100.checked = !!med.conges_100pct;
+  if (dNouvelEngage) dNouvelEngage.checked = !!med.nouvel_engage;
   setPeriodes(
     (med.contract_periods && med.contract_periods.length)
       ? med.contract_periods
@@ -544,6 +546,7 @@ doctorForm.addEventListener("submit", async (e) => {
     admin_level: adminLevel,
     statut: dStatut.value,
     conges_100pct: dConges100.checked,
+    nouvel_engage: dNouvelEngage ? dNouvelEngage.checked : false,
     contract_type: fte >= 1 ? "temps_plein" : "temps_partiel",
     // Périodes contractuelles : 1re période = affichage/repli, tableau complet en jsonb.
     contract_start: periodes[0] ? periodes[0].start : null,
@@ -1593,7 +1596,7 @@ async function genererPlanningPourMoisAffiche() {
   // 1) Médecins planifiables (l'admin / chef de service n'est pas dans le planning).
   const { data: medecins, error: e1 } = await sb
     .from("doctors")
-    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference, nouvel_engage")
     .neq("role", "admin");
   if (e1) { genererBtn.disabled = false; return messageGeneration("Erreur lecture médecins : " + e1.message, "error"); }
 
@@ -1723,13 +1726,29 @@ async function genererTrimestrePourMoisAffiche() {
   // 3) Médecins planifiables (hors admin / chef de service).
   const { data: medecins, error: e1 } = await sb
     .from("doctors")
-    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference, nouvel_engage")
     .neq("role", "admin");
   if (e1) { genererTrimBtn.disabled = false; return messageGeneration("Erreur lecture médecins : " + e1.message, "error"); }
 
   // 4) Préférences APPROUVÉES chevauchant le trimestre + garde-fou §8.3.
   const debutTrim = bornesMois(annee, moisTrim[0]).debut;
   const finTrim = bornesMois(annee, moisTrim[2]).fin;
+
+  // Garde-fou « nouvel engagé » : un statut dont la fenêtre (14 j à partir du
+  // début de contrat) est entièrement ANTÉRIEURE au trimestre doit être retiré
+  // de la fiche par l'admin avant de pouvoir générer (révision 2026-06-12).
+  const perimes = (medecins || []).filter((m) => {
+    if (!m.nouvel_engage || !m.contract_start) return false;
+    const fin = new Date(m.contract_start + "T00:00:00Z");
+    fin.setUTCDate(fin.getUTCDate() + 13);
+    return fin.toISOString().slice(0, 10) < debutTrim;
+  });
+  if (perimes.length) {
+    genererTrimBtn.disabled = false;
+    return messageGeneration("Statut « nouvel engagé » périmé pour : " +
+      perimes.map((m) => m.name).join(", ") +
+      ". Retire-le dans l'onglet Médecins avant de générer ce trimestre.", "error");
+  }
   const nbAttente = await demandesEnAttenteSur(debutTrim, finTrim);
   if (nbAttente > 0) {
     genererTrimBtn.disabled = false;
@@ -2314,6 +2333,12 @@ const compteursTbody  = document.getElementById("compteurs-tbody");
 const compteursTable  = document.getElementById("compteurs-table");
 const compteursEmpty  = document.getElementById("compteurs-empty");
 const compteursTotal  = document.getElementById("compteurs-total");
+const compteursPorteeSel = document.getElementById("compteurs-portee");
+if (compteursPorteeSel) compteursPorteeSel.addEventListener("change", () => {
+  compteursPortee = compteursPorteeSel.value;
+  compteursTrimCache = null; // re-chargé à la demande (données fraîches)
+  majCompteurs();
+});
 const conflitsZone    = document.getElementById("conflits-zone");
 
 /* Modale d'édition / d'ajout de shift. */
@@ -2371,7 +2396,7 @@ async function rafraichirPanneauAdmin() {
 
   // 3) Médecins planifiables (hors admin) + 4) préférences du mois.
   const { data: meds } = await sb.from("doctors")
-    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference, nouvel_engage")
     .neq("role", "admin").order("name", { ascending: true });
   planningMois.medecins = meds || [];
 
@@ -2715,6 +2740,9 @@ const COMPTEURS_COLS = [
   { key: "tours",    label: "Tours",        num: true },
   { key: "offs",     label: "Off",          num: true },
   { key: "repos",    label: "Repos",        num: true },
+  // Révision 2026-06-12 — compteurs INFORMATIFS (non limitants) :
+  { key: "reposGarde",   label: "Repos g.",  num: true },
+  { key: "nonPlanifies", label: "Non plan.", num: true },
 ];
 
 /* État de tri du tableau des compteurs : colonne + direction (1 asc / -1 desc).
@@ -2749,22 +2777,60 @@ function rendreEnteteCompteurs() {
   thead.appendChild(tr);
 }
 
+/* PORTÉE des compteurs : « mois » (données du mois affiché) ou « trimestre »
+   (cumul du trimestre civil du mois affiché, chargé à la demande). */
+let compteursPortee = "mois";
+let compteursTrimCache = null; // { cle, shifts, preferences, debut, fin }
+
+async function chargerCompteursTrimestre() {
+  const trimestre = Math.floor((planningMois.mois - 1) / 3) + 1;
+  const cle = planningMois.annee + "-T" + trimestre;
+  if (compteursTrimCache && compteursTrimCache.cle === cle) return compteursTrimCache;
+  const m1 = (trimestre - 1) * 3 + 1;
+  const debut = bornesMois(planningMois.annee, m1).debut;
+  const fin = bornesMois(planningMois.annee, m1 + 2).fin;
+  const { data: sh } = await sb.from("shifts")
+    .select("date, shift_type, poste, doctor_id")
+    .gte("date", debut).lte("date", fin);
+  const { data: prefs } = await sb.from("preferences")
+    .select("doctor_id, start_date, end_date, pref_type")
+    .eq("status", "approuve").lte("start_date", fin).gte("end_date", debut);
+  compteursTrimCache = { cle, shifts: sh || [], preferences: prefs || [], debut, fin };
+  return compteursTrimCache;
+}
+
 /* Tableau des compteurs heures / gardes / week-ends par médecin.
    Colonne « # » (numéro de liste → le dernier numéro = total de médecins),
-   total affiché, et tri croissant/décroissant au clic sur chaque colonne. */
-function majCompteurs() {
-  const stats = compterParMedecin(planningMois.shifts);
+   total affiché, et tri croissant/décroissant au clic sur chaque colonne.
+   Portée MOIS (défaut) ou TRIMESTRE (sélecteur). */
+async function majCompteurs() {
+  // Source des données selon la portée.
+  let srcShifts = planningMois.shifts, srcPrefs = planningMois.preferences || [];
+  const nbJoursMois = new Date(planningMois.annee, planningMois.mois, 0).getDate();
+  const ms0 = String(planningMois.mois).padStart(2, "0");
+  let srcDebut = planningMois.annee + "-" + ms0 + "-01";
+  let srcFin = planningMois.annee + "-" + ms0 + "-" + String(nbJoursMois).padStart(2, "0");
+  if (compteursPortee === "trimestre") {
+    try {
+      const c = await chargerCompteursTrimestre();
+      srcShifts = c.shifts; srcPrefs = c.preferences; srcDebut = c.debut; srcFin = c.fin;
+    } catch (e) { /* repli silencieux sur le mois */ }
+  }
+  const titre = document.getElementById("compteurs-titre");
+  if (titre) titre.textContent = compteursPortee === "trimestre" ? "Compteurs du trimestre" : "Compteurs du mois";
+
+  const stats = compterParMedecin(srcShifts);
   const meds = planningMois.medecins;
   compteursTbody.innerHTML = "";
 
-  const vide = planningMois.shifts.length === 0;
+  const vide = srcShifts.length === 0;
   compteursTable.classList.toggle("hidden", vide);
   compteursEmpty.classList.toggle("hidden", !vide);
   if (compteursTotal) compteursTotal.classList.toggle("hidden", vide);
   if (vide) return;
 
-  // Nombre de semaines (approx.) du mois pour estimer la cible mensuelle.
-  const nbJours = new Date(planningMois.annee, planningMois.mois, 0).getDate();
+  // Nombre de semaines (approx.) de la période pour estimer la cible.
+  const nbJours = Math.round((new Date(srcFin + "T00:00:00Z") - new Date(srcDebut + "T00:00:00Z")) / 86400000) + 1;
   const semaines = nbJours / 7;
 
   // --- Congés ACCEPTÉS du mois → réduisent la cible horaire (révision) ---
@@ -2773,16 +2839,14 @@ function majCompteurs() {
   // diminue donc la cible d'exactement une semaine. On rassemble les jours de
   // congé depuis les préférences APPROUVÉES et depuis les shifts d'absence
   // « congé » du planning (dédupliqués par date).
-  const ms = String(planningMois.mois).padStart(2, "0");
-  const debutMois = planningMois.annee + "-" + ms + "-01";
-  const finMois = planningMois.annee + "-" + ms + "-" + String(nbJours).padStart(2, "0");
+  const debutMois = srcDebut, finMois = srcFin; // bornes de la PÉRIODE (mois ou trimestre)
   const CONGE_SET = new Set(["conge", "conge_annuel", "conge_extralegal", "conge_scientifique"]);
   const congeJours = {}; // doctorId -> Set(dateISO) des jours de congé du mois
   const ajouterConge = (id, date) => {
     if (date < debutMois || date > finMois) return;
     (congeJours[id] = congeJours[id] || new Set()).add(date);
   };
-  (planningMois.preferences || []).forEach((p) => {
+  (srcPrefs || []).forEach((p) => {
     if (!CONGE_SET.has(p.pref_type)) return;
     const deb = p.start_date < debutMois ? debutMois : p.start_date;
     const fin = p.end_date > finMois ? finMois : p.end_date;
@@ -2790,13 +2854,42 @@ function majCompteurs() {
     const dFin = new Date(fin + "T00:00:00Z");
     while (d <= dFin) { ajouterConge(p.doctor_id, d.toISOString().slice(0, 10)); d.setUTCDate(d.getUTCDate() + 1); }
   });
-  (planningMois.shifts || []).forEach((s) => {
+  (srcShifts || []).forEach((s) => {
     if (CONGE_SET.has(s.shift_type)) ajouterConge(s.doctor_id, s.date);
   });
 
+  // --- Jours NON PLANIFIÉS (informatif) : jours ouvrés sous contrat, jour
+  //     travaillable, SANS aucun shift et hors congé accepté. ---
+  const datesParMed = {}; // id -> Set(dates avec un shift, tous types)
+  (srcShifts || []).forEach((s) => {
+    (datesParMed[s.doctor_id] = datesParMed[s.doctor_id] || new Set()).add(s.date);
+  });
+  const joursOuvresPeriode = [];
+  { let d = new Date(srcDebut + "T00:00:00Z");
+    const fx = new Date(srcFin + "T00:00:00Z");
+    while (d <= fx) {
+      const iso = d.toISOString().slice(0, 10);
+      if (typeof plEstWeekendOuFerie !== "function" || !plEstWeekendOuFerie(iso)) joursOuvresPeriode.push(iso);
+      d.setUTCDate(d.getUTCDate() + 1);
+    } }
+  const compterNonPlanifies = (m) => {
+    const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
+    let n = 0;
+    joursOuvresPeriode.forEach((d) => {
+      const j = new Date(d + "T00:00:00Z").getUTCDay() || 7;
+      if (!jt.includes(j)) return;
+      if (m.contract_start && d < m.contract_start) return;
+      if (m.contract_end && d > m.contract_end) return;
+      if (datesParMed[m.id] && datesParMed[m.id].has(d)) return;
+      if (congeJours[m.id] && congeJours[m.id].has(d)) return;
+      n++;
+    });
+    return n;
+  };
+
   // 1) Données par médecin (toutes les colonnes, prêtes au tri).
   const lignes = meds.map((m) => {
-    const st = stats[m.id] || { heures: 0, gardes: 0, weekends: 0, tours: 0, offs: 0, repos: 0 };
+    const st = stats[m.id] || { heures: 0, gardes: 0, weekends: 0, tours: 0, offs: 0, repos: 0, reposGarde: 0 };
     const cibleHebdo = m.weekly_hours_target || 52;
     const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
     // Jours de congé tombant sur un jour travaillable du médecin.
@@ -2813,6 +2906,7 @@ function majCompteurs() {
       heures: st.heures, cible: Math.max(0, Math.round(cibleBrute - reduction)),
       cibleBrute: Math.round(cibleBrute), reductionConge: Math.round(reduction), joursConge,
       gardes: st.gardes, weekends: st.weekends, tours: st.tours, offs: st.offs, repos: st.repos,
+      reposGarde: st.reposGarde || 0, nonPlanifies: compterNonPlanifies(m),
     };
   });
 
@@ -2853,7 +2947,7 @@ function majCompteurs() {
       tdCible.classList.add("cible-reduite");
     }
     tr.appendChild(tdCible);
-    [lg.gardes, lg.weekends, lg.tours, lg.offs, lg.repos].forEach((v) => {
+    [lg.gardes, lg.weekends, lg.tours, lg.offs, lg.repos, lg.reposGarde, lg.nonPlanifies].forEach((v) => {
       const td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
     });
     compteursTbody.appendChild(tr);
@@ -3759,6 +3853,85 @@ async function echChargerCibles() {
   });
 }
 
+/* Contexte d'analyse d'un échange : les 2 shifts (re-lus), les shifts
+   alentour (±6 jours) et un contrôle propriétaires/publication.
+   Renvoie { erreur } ou { sFrom, sTo, ctx }. */
+async function echContexte(fromShiftId, toShiftId, fromDocAttendu, toDocAttendu) {
+  const { data: paire, error: e1 } = await sb.from("shifts")
+    .select("id, date, shift_type, poste, doctor_id, schedule_id")
+    .in("id", [fromShiftId, toShiftId]);
+  if (e1) return { erreur: e1.message };
+  const sFrom = (paire || []).find((s) => String(s.id) === String(fromShiftId));
+  const sTo   = (paire || []).find((s) => String(s.id) === String(toShiftId));
+  if (!sFrom || !sTo) return { erreur: "Un des shifts n'existe plus (planning régénéré ?)." };
+  if ((fromDocAttendu && sFrom.doctor_id !== fromDocAttendu) || (toDocAttendu && sTo.doctor_id !== toDocAttendu))
+    return { erreur: "Le planning a changé depuis la proposition." };
+  const pubIds = await echSchedulesPublies();
+  if (!pubIds.includes(sFrom.schedule_id) || !pubIds.includes(sTo.schedule_id))
+    return { erreur: "Le planning concerné n'est plus publié." };
+  const dates = [sFrom.date, sTo.date].sort();
+  const ajd = (d, n) => { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+  const { data: ctx, error: e2 } = await sb.from("shifts")
+    .select("id, date, shift_type, poste, doctor_id, schedule_id")
+    .gte("date", ajd(dates[0], -6)).lte("date", ajd(dates[1], 6));
+  if (e2) return { erreur: e2.message };
+  return { sFrom, sTo, ctx: ctx || [] };
+}
+
+/* Résumé HUMAIN des conséquences d'un échange validé (repos transférés,
+   récups couplées perdues/créées). N'inclut pas les 2 gardes elles-mêmes. */
+function echResumeChanges(changes, ctx) {
+  const byId = {}; (ctx || []).forEach((s) => { byId[String(s.id)] = s; });
+  const nom = (id) => (echDocteurs[id] && echDocteurs[id].name) || id;
+  const fmt = (d) => { const x = d.split("-"); return x[2] + "/" + x[1]; };
+  const lignes = [];
+  (changes || []).forEach((c) => {
+    if (c.creer) {
+      lignes.push("➕ " + nom(c.creer.doctor_id) + " gagne une récup de garde le " + fmt(c.creer.date) + " (couplage jeudi+samedi / vendredi+dimanche).");
+    } else if (c.supprimer) {
+      const s = byId[String(c.id)];
+      if (s) lignes.push("➖ " + nom(s.doctor_id) + " perd sa récup du " + fmt(s.date) + " (couplage rompu — le jour redevient libre, sans remise au travail).");
+    } else {
+      const s = byId[String(c.id)];
+      if (s && s.shift_type === "repos_garde") lignes.push("↪ Le repos de garde du " + fmt(s.date) + " passe à " + nom(c.doctor_id) + ".");
+    }
+  });
+  return lignes;
+}
+
+/* APERÇU EN DIRECT (proposant) : dès que les 2 shifts sont choisis, on
+   valide l'échange à blanc et on affiche soit le refus (et sa raison —
+   p. ex. « 2 A/S de garde »), soit les conséquences. */
+async function echApercu() {
+  const zone = document.getElementById("ech-preview");
+  const btn = document.getElementById("ech-proposer-btn");
+  if (!zone) return;
+  const mien = echMesShifts[echMienSel.value];
+  const cible = echCibles[echCibleSel.value];
+  if (!mien || !cible) { zone.classList.add("hidden"); if (btn) btn.disabled = false; return; }
+  zone.classList.remove("hidden");
+  zone.textContent = "Analyse de l'échange…";
+  try {
+    const c = await echContexte(mien.id, cible.id, medecinCourant.id, cible.doctor_id);
+    if (c.erreur) { zone.textContent = "⚠️ " + c.erreur; if (btn) btn.disabled = true; return; }
+    const docs = Object.keys(echDocteurs).map((id) => ({ id, name: echDocteurs[id].name, grade: echDocteurs[id].grade }));
+    const r = validerEchange(c.ctx, mien.id, cible.id, docs);
+    if (!r.ok) {
+      zone.textContent = "❌ " + r.message;
+      if (btn) btn.disabled = true;
+      return;
+    }
+    const lignes = echResumeChanges(r.changes, c.ctx);
+    zone.innerHTML = "✅ Échange possible." + (lignes.length
+      ? "<br>" + lignes.map((l) => "&nbsp;&nbsp;" + l).join("<br>")
+      : " Aucun repos/récup impacté.");
+    if (btn) btn.disabled = false;
+  } catch (err) {
+    zone.textContent = "⚠️ Analyse impossible : " + (err.message || err);
+    if (btn) btn.disabled = false; // la validation a aussi lieu à l'acceptation
+  }
+}
+
 /* Proposer un échange. */
 if (echForm) echForm.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -3814,33 +3987,23 @@ async function echAppliquerChanges(changes, shiftsContexte) {
 async function echAccepter(swap) {
   echMessage("");
   try {
-    // 1) Recharger les 2 shifts (le planning peut avoir changé depuis la proposition).
-    const { data: paire, error: e1 } = await sb.from("shifts")
-      .select("id, date, shift_type, poste, doctor_id, schedule_id")
-      .in("id", [swap.from_shift_id, swap.to_shift_id]);
-    if (e1) throw e1;
-    const sFrom = (paire || []).find((s) => String(s.id) === String(swap.from_shift_id));
-    const sTo   = (paire || []).find((s) => String(s.id) === String(swap.to_shift_id));
-    if (!sFrom || !sTo) return echMessage("Échange impossible : un des shifts n'existe plus (planning régénéré ?).", "error");
-    if (sFrom.doctor_id !== swap.from_doctor_id || sTo.doctor_id !== swap.to_doctor_id)
-      return echMessage("Échange impossible : le planning a changé depuis la proposition.", "error");
-    const pubIds = await echSchedulesPublies();
-    if (!pubIds.includes(sFrom.schedule_id) || !pubIds.includes(sTo.schedule_id))
-      return echMessage("Échange impossible : le planning concerné n'est plus publié.", "error");
-
-    // 2) Contexte : tous les shifts autour des deux dates (±6 jours, pour les
-    //    règles de garde, repos et couplage).
-    const dates = [sFrom.date, sTo.date].sort();
-    const ajd = (d, n) => { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
-    const { data: ctx, error: e2 } = await sb.from("shifts")
-      .select("id, date, shift_type, poste, doctor_id, schedule_id")
-      .gte("date", ajd(dates[0], -6)).lte("date", ajd(dates[1], 6));
-    if (e2) throw e2;
+    // 1+2) Shifts re-lus + contexte ±6 jours + contrôles (propriétaires, publié).
+    const c = await echContexte(swap.from_shift_id, swap.to_shift_id, swap.from_doctor_id, swap.to_doctor_id);
+    if (c.erreur) return echMessage("Échange impossible : " + c.erreur, "error");
+    const ctx = c.ctx;
 
     // 3) Validation par le moteur (planning.js, fonction pure).
     const docs = Object.keys(echDocteurs).map((id) => ({ id, name: echDocteurs[id].name, grade: echDocteurs[id].grade }));
     const r = validerEchange(ctx || [], swap.from_shift_id, swap.to_shift_id, docs);
     if (!r.ok) return echMessage(r.message, "error");
+
+    // 3bis) CONFIRMATION INFORMÉE : on montre les conséquences (repos
+    //       transférés, récups couplées perdues/créées) avant d'appliquer.
+    const lignes = echResumeChanges(r.changes, ctx).map((l) => l.replace(/^[➕➖↪] /, "- "));
+    const resume = "Accepter cet échange ?\n\n" +
+      echLibelleShift(c.sFrom, true) + "  ⇄  " + echLibelleShift(c.sTo, true) +
+      (lignes.length ? "\n\nConséquences :\n" + lignes.join("\n") : "\n\nAucun repos/récup impacté.");
+    if (!window.confirm(resume)) return;
 
     // 4) Application + clôture de la proposition.
     await echAppliquerChanges(r.changes, ctx || []);
@@ -3943,4 +4106,5 @@ async function initEchanges() {
     echMessage("Erreur d'initialisation des échanges : " + (err.message || err), "error");
   }
 }
-if (echMienSel) echMienSel.addEventListener("change", echChargerCibles);
+if (echMienSel) echMienSel.addEventListener("change", async () => { await echChargerCibles(); echApercu(); });
+if (echCibleSel) echCibleSel.addEventListener("change", echApercu);
