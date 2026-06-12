@@ -1007,6 +1007,20 @@ test("doublures : jamais sur une unité tenue par une garde 24h (sauf nouvel eng
   });
 });
 
+test("plancher 40 h : un temps plein SANS lundi (convenance) atteint quand même ~40 h/sem", () => {
+  // La cible se rapporte aux jours ouvrés TRAVAILLABLES du médecin (4 pour
+  // lui), pas à 5 fixes : avec /5, sa cible tombait à 32 h et il plafonnait
+  // à ~37 h/sem de moyenne malgré son temps plein.
+  const meds = equipe();
+  meds[4].jours_travailles = [2, 3, 4, 5, 6, 7]; // resident5 : jamais le lundi
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: meds, preferences: [] });
+  const H = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24, off: 10.5 };
+  let h = 0;
+  r.shifts.forEach((s) => { if (s.doctor_id === "resident5") h += H[s.shift_type] || 0; });
+  const moy = h / (30 / 7);
+  assert(moy >= 39, "resident5 (temps plein sans lundi) : moyenne " + moy.toFixed(1) + " h/sem < 39 h");
+});
+
 console.log("\n=== Équilibre des heures — crédit d'équité des congés ===");
 
 test("congé : un médecin en congé 2 semaines ne dépasse pas les heures de ses pairs", () => {

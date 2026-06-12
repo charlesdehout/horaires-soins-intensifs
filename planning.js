@@ -1221,7 +1221,14 @@ function plCompleterMinimumHeures(sortie, medecins, etat, dates) {
         !(reposDe[m.id] && reposDe[m.id].has(d)));
       if (!joursDispo.length) return;
       const fte = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1;
-      const cible = minH * fte * Math.min(joursDispo.length / 5, 1);
+      // Dénominateur = jours OUVRÉS TRAVAILLABLES du médecin (jours_travailles
+      // ∩ lun-ven), PAS 5 fixes : un temps plein qui ne travaille pas le lundi
+      // (convenance) doit quand même viser ~40 h sur ses 4 jours + week-ends —
+      // avec /5 fixe, sa cible tombait à 32 h et il restait sous-employé.
+      const jtSemaine = ((m.jours_travailles && m.jours_travailles.length)
+        ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7]).filter((j) => j >= 1 && j <= 5).length;
+      if (!jtSemaine) return; // ne travaille jamais en semaine → pas de doublure possible
+      const cible = minH * fte * Math.min(joursDispo.length / jtSemaine, 1);
       let h = (heuresSem[m.id] && heuresSem[m.id][lk]) || 0;
       for (const d of joursDispo) {
         if (h >= cible) break;
