@@ -80,6 +80,11 @@ const EQUITE = {
   concentration_nuits: true, // activer/désactiver le biais
   concentration_coeff: 0.5,  // intensité ∈ ]0,1[ (0,5 = discret ; <1 garantit la borne)
   fenetre_nuits:       14,    // « récent » = dernière garde ≤ 14 jours avant
+  // RÉÉQUILIBRAGE FINAL DES HEURES (révision 2026-06-13) : écart maximal
+  // d'heures cumulées toléré entre le plus et le moins chargé en fin de
+  // génération — au-delà, des journées de station sont transférées du plus
+  // chargé vers le moins chargé (correction avant brouillon). 0 = désactiver.
+  ecart_heures_max: 12,
   // MINIMUM D'HEURES HEBDOMADAIRE (révision 2026-06-12) : équivalent à
   // atteindre par semaine pour un ETP complet présent tous les jours ouvrés
   // (proratisé fte × jours disponibles). Complété par des DOUBLURES d'unités

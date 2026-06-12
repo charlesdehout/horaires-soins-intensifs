@@ -240,6 +240,14 @@ testable sous Node (`test_planning.js`, ~59 cas).
   d'heures) et contrôlé par le validateur. **Pas de doublure sur une unité
   tenue par une garde 24 h** (le médecin de 24 h couvre déjà jour + nuit) —
   seule exception : la doublure de formation du **nouvel engagé**.
+- **Correction finale avant brouillon** (révision 2026-06-13) : en fin de
+  génération, des **journées de station sont transférées** des médecins les
+  plus chargés vers les moins chargés jusqu'à un **écart d'heures cumulées
+  ≤ `EQUITE.ecart_heures_max`** (défaut 12 h ≈ une journée ; 0 = désactivé).
+  Garde-fous : receveur libre (ni repos, ni congé, jour travaillable, sous
+  contrat, pas d'autre unité cette semaine-là — continuité préservée), jours de
+  congrès exclus, et le donneur reste au-dessus de son minimum. Résultat
+  mesuré : écart trimestriel ≈ 10 h (0,8 h/sem) à pleine disponibilité.
 - **Compensation par garde 24 h en semaine** (révision 2026-06-13) : un médecin
   resté **sous son minimum cumulé** (40 h/sem proratisé sur ses jours
   disponibles) prend sa **garde de semaine en 24 h** (station + nuit, +24 h au

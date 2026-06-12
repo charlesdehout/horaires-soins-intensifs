@@ -1079,6 +1079,8 @@ function genererPlanning(opts) {
 
   // Minimum d'heures hebdomadaire (doublures d'unités si nécessaire).
   plCompleterMinimumHeures(sortie, medecins, etat, plDatesDuMois(annee, mois));
+  // Correction finale avant brouillon : écart d'heures resserré au maximum.
+  plReequilibrerHeures(sortie, medecins, etat);
 
   const stats = medecins.map((m) => ({
     id: m.id,
@@ -1295,6 +1297,86 @@ function plCompleterMinimumHeures(sortie, medecins, etat, dates) {
   });
 }
 
+/* RÉÉQUILIBRAGE FINAL DES HEURES (révision 2026-06-13) — correction avant
+   brouillon : on TRANSFÈRE des journées de station des médecins les plus
+   chargés vers les moins chargés jusqu'à ramener l'écart d'heures cumulées
+   sous EQUITE.ecart_heures_max (défaut 12 h ≈ une journée ; 0 = désactivé).
+   Garde-fous : le receveur est LIBRE ce jour-là (pas de shift, pas de repos,
+   pas de congé, jour travaillable, sous contrat), il ne tient pas une AUTRE
+   unité cette semaine-là (continuité clinique préservée), et le donneur reste
+   au-dessus de son minimum cumulé. À appeler en FIN de génération (après le
+   plancher d'heures), avant les stats. Mute sortie + etat.heures. */
+function plReequilibrerHeures(sortie, medecins, etat) {
+  const eq = plEquite();
+  const seuil = (typeof eq.ecart_heures_max === "number") ? eq.ecart_heures_max : 12;
+  if (!seuil) return;
+  const H = (t) => (t === "off" ? PL_HEURES_OFFCLINIC : (PL_HEURES[t] || 0));
+  const heures = {}; const occupe = {}; const unitesSem = {}; // id -> { lundi -> Set(postes jour) }
+  medecins.forEach((m) => { heures[m.id] = 0; occupe[m.id] = new Set(); unitesSem[m.id] = {}; });
+  sortie.forEach((s) => {
+    if (heures[s.doctor_id] === undefined) return;
+    heures[s.doctor_id] += H(s.shift_type);
+    occupe[s.doctor_id].add(s.date);
+    if (s.shift_type === "jour" && s.poste) {
+      const lk = plLundiDe(s.date);
+      (unitesSem[s.doctor_id][lk] = unitesSem[s.doctor_id][lk] || new Set()).add(s.poste);
+    }
+  });
+  const byId = {}; medecins.forEach((m) => { byId[m.id] = m; });
+  const peutRecevoirJour = (m, s) => {
+    const d = s.date;
+    if (plEstWeekendOuFerie(d)) return false;
+    // Jours de CONGRÈS exclus : leur équité propre (jours de congrès
+    // travaillés) prime et ne doit pas être perturbée par ce rééquilibrage.
+    if (etat.periodes && plEstCongres(d, etat.periodes)) return false;
+    if (!plSousContrat(m, d)) return false;
+    const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
+    if (!jt.includes(plJourSemaine(d))) return false;
+    if (occupe[m.id].has(d)) return false;
+    if (etat.bloque[m.id] && etat.bloque[m.id].has(d)) return false;
+    if (etat.indispo[m.id] && etat.indispo[m.id].has(d)) return false;
+    if (!plDispoIndependant(m, d, etat.dispoDeclaree[m.id])) return false;
+    if (plEstNouvelEngage(m, d, etat.debutPeriode)) return false;
+    // Continuité clinique : pas une AUTRE unité cette semaine (Labo exempt).
+    if (!plSansContinuite(s.poste)) {
+      const u = unitesSem[m.id][plLundiDe(d)];
+      if (u && u.size && !u.has(s.poste)) return false;
+    }
+    return true;
+  };
+  const actifs = medecins.filter((m) => heures[m.id] > 0 || occupe[m.id].size > 0 ||
+    medecins.length <= 2 || plSousContrat(m, etat.debutPeriode));
+  for (let iter = 0; iter < 80; iter++) {
+    const tri = actifs.slice().sort((a, b) => heures[b.id] - heures[a.id]);
+    let bouge = false;
+    for (let hi = 0; hi < tri.length && !bouge; hi++) {
+      for (let bi = tri.length - 1; bi > hi && !bouge; bi--) {
+        const haut = tri[hi], bas = tri[bi];
+        if (heures[haut.id] - heures[bas.id] <= seuil) break;
+        // Journées de station transférables du plus chargé (semaine, hors WE).
+        for (const s of sortie) {
+          if (s.doctor_id !== haut.id || s.shift_type !== "jour") continue;
+          // le donneur doit rester au-dessus de son minimum cumulé
+          if (etat.attenduMin && heures[haut.id] - PL_HEURES.jour < (etat.attenduMin[haut.id] || 0)) break;
+          if (!peutRecevoirJour(bas, s)) continue;
+          // Transfert de la journée.
+          occupe[haut.id].delete(s.date); occupe[bas.id].add(s.date);
+          const lk = plLundiDe(s.date);
+          if (s.poste) {
+            const uh = unitesSem[haut.id][lk]; if (uh) uh.delete(s.poste);
+            (unitesSem[bas.id][lk] = unitesSem[bas.id][lk] || new Set()).add(s.poste);
+          }
+          heures[haut.id] -= PL_HEURES.jour; heures[bas.id] += PL_HEURES.jour;
+          etat.heures[haut.id] -= PL_HEURES.jour; etat.heures[bas.id] += PL_HEURES.jour;
+          s.doctor_id = bas.id;
+          bouge = true; break;
+        }
+      }
+    }
+    if (!bouge) break;
+  }
+}
+
 /* Liste des dates ISO d'un mois (1-12). */
 function plDatesDuMois(annee, mois) {
   const nbJours = new Date(Date.UTC(annee, mois, 0)).getUTCDate();
@@ -1396,6 +1478,8 @@ function genererTrimestre(opts) {
     moisTrim.forEach((mois) => { datesTrim = datesTrim.concat(plDatesDuMois(annee, mois)); });
     plCompleterMinimumHeures(sortie, medecins, etat, datesTrim);
   }
+  // Correction finale avant brouillon : écart d'heures resserré au maximum.
+  plReequilibrerHeures(sortie, medecins, etat);
 
   const stats = medecins.map((m) => ({
     id: m.id,

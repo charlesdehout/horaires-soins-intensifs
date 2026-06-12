@@ -1041,6 +1041,20 @@ test("compensation 24h : personne sous 40 h/sem de moyenne sur le trimestre (éq
     "aucune garde 24h de semaine générée (promotion par déficit inactive ?)");
 });
 
+test("correction avant brouillon : écart d'heures cumulées ≤ 12 h sur le trimestre (pleine dispo)", () => {
+  // Révision 2026-06-13 : plReequilibrerHeures transfère des journées de
+  // station des plus chargés vers les moins chargés en fin de génération,
+  // jusqu'à un écart ≤ EQUITE.ecart_heures_max (12 h ≈ une journée).
+  const meds = equipe();
+  const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: meds, preferences: [] });
+  const H = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24, off: 10.5 };
+  const tot = {}; meds.forEach((m) => { tot[m.id] = 0; });
+  r.shifts.forEach((s) => { if (H[s.shift_type]) tot[s.doctor_id] += H[s.shift_type]; });
+  const v = Object.values(tot);
+  const ecart = Math.max(...v) - Math.min(...v);
+  assert(ecart <= 12.5, "écart d'heures trimestriel = " + ecart + " h (> 12 h)");
+});
+
 console.log("\n=== Équilibre des heures — crédit d'équité des congés ===");
 
 test("congé : un médecin en congé 2 semaines ne dépasse pas les heures de ses pairs", () => {
