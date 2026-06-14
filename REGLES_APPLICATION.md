@@ -122,7 +122,7 @@ testable sous Node (`test_planning.js`, ~59 cas).
   privilégie le médecin ayant gardé le plus récemment (regroupe les nuits sans coût
   d'équité). Tunable `EQUITE.concentration_*`.
 - **Plafond 60 h/semaine** souple, **plancher horaire** : avertissements non bloquants.
-- **Indépendance au FTE** : un mi-temps présent tous les jours fait autant de gardes.
+- **Quotité (FTE) — révision 2026-06-14** : la quotité ne réduit QUE les **journées de station**. Un mi-temps présent tous les jours fait **autant de gardes** qu'un plein temps (gardes réparties par présence, jamais par le FTE) ; son **quota de congés** est **proratisé à sa quotité** ; ses journées de **station sont plafonnées** à sa cible hebdo (`weekly_hours_target`, ≈ référence × FTE), **gardes comprises dans le budget** (une semaine où il garde → peu/pas de station). Plafond **strict** : on laisse plutôt une station en sous-effectif (signalée) que de surcharger un mi-temps. Plein temps (FTE ≥ 1) : aucun plafond.
 
 ---
 
@@ -130,7 +130,7 @@ testable sous Node (`test_planning.js`, ~59 cas).
 
 ### Types de congés à quota (année ACADÉMIQUE 1 oct → 30 sep)
 - **Congé annuel** (défaut 24 j ouvrés), **Extra-légaux** (5), **Scientifique** (12).
-- Comptés en **jours ouvrés** (lun–ven hors fériés belges), **proratisés au contrat**.
+- Comptés en **jours ouvrés** (lun–ven hors fériés belges), **proratisés au contrat ET à la quotité (FTE)**.
 - **Remise à zéro** automatique au 1er octobre ; le compteur suit le **mois affiché**
   (on peut demander ses congés à l'avance).
 
@@ -145,6 +145,12 @@ testable sous Node (`test_planning.js`, ~59 cas).
 - Une demande de travailleur est créée **en attente** ; **seul l'admin** valide
   (approuve / refuse).
 - La génération du planning est **bloquée** tant qu'il reste des demandes en attente.
+- **Onglet Demandes (admin), trois sections** (révision 2026-06-13) :
+  les demandes **à valider** (badge de comptage), les demandes **validées à
+  venir** (révocables d'un clic — repassent en refusé), et les **compteurs de
+  congés par médecin** : jours ouvrés approuvés (+ en attente) / quota
+  proratisé au contrat, par type, sur l'année académique en cours, avec total
+  restant et dépassements en rouge.
 
 ### Durcissement SERVEUR (Module 21, triggers SQL)
 - **Anti-auto-approbation** : un travailleur ne peut pas créer une demande déjà

@@ -1103,5 +1103,91 @@ test("congé : un médecin en congé 2 semaines ne dépasse pas les heures de se
     Math.round(moyenne) + " h) — le congé n'allège pas sa charge");
 });
 
+console.log("\n=== Mi-temps (quotité fte) — plafond des journées de station ===");
+
+/* Un médecin mi-temps (fte 0,5) qui reste DISPONIBLE tous les jours doit :
+   - faire NETTEMENT moins de JOURNÉES DE STATION qu'un plein temps (plafond) ;
+   - garder AUTANT de GARDES qu'un plein temps (les gardes ne sont jamais
+     plafonnées par le fte). */
+test("mi-temps : moitié moins de stations, mais autant de gardes qu'un plein temps", () => {
+  const meds = equipe();
+  meds[0].fte = 0.5; meds[0].weekly_hours_target = 26; // resident1 = mi-temps, dispo 7j/7
+  const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: meds, preferences: [] });
+  const stationJ = {}, gardes = {};
+  meds.forEach((m) => { stationJ[m.id] = 0; gardes[m.id] = 0; });
+  r.shifts.forEach((s) => {
+    if (s.shift_type === "jour") stationJ[s.doctor_id]++;
+    if (s.shift_type === "garde_24h" || s.shift_type === "garde_nuit") gardes[s.doctor_id]++;
+  });
+  const pleins = meds.filter((m) => m.fte >= 1);
+  const moyStation = pleins.reduce((a, m) => a + stationJ[m.id], 0) / pleins.length;
+  const moyGardes = pleins.reduce((a, m) => a + gardes[m.id], 0) / pleins.length;
+  // Plafond : le mi-temps fait beaucoup moins de stations (< 65 % du plein temps).
+  assert(stationJ["resident1"] < 0.65 * moyStation,
+    "mi-temps : " + stationJ["resident1"] + " j. station >= 65 % du plein temps (" +
+    moyStation.toFixed(1) + ") — le plafond ne mord pas");
+  // Gardes INCHANGÉES : pas RÉDUITES par le fte (au moins la moyenne − 1).
+  assert(gardes["resident1"] >= moyGardes - 1,
+    "mi-temps : " + gardes["resident1"] + " gardes < moyenne pleins temps - 1 (" +
+    moyGardes.toFixed(1) + ") — le fte ne doit pas réduire les gardes");
+});
+
+/* Un PLEIN TEMPS n'est jamais plafonné : il tient autant de stations que ses
+   pairs (le plafond mi-temps ne doit pas affecter fte = 1). */
+test("plein temps : aucun plafond de station (équipe homogène)", () => {
+  const meds = equipe();
+  const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: meds, preferences: [] });
+  const stationJ = {};
+  meds.forEach((m) => { stationJ[m.id] = 0; });
+  r.shifts.forEach((s) => { if (s.shift_type === "jour") stationJ[s.doctor_id]++; });
+  const vals = meds.map((m) => stationJ[m.id]);
+  const min = Math.min(...vals);
+  // Aucun plein temps n'est « bridé » : même le moins chargé tient BEAUCOUP plus
+  // de stations qu'un mi-temps (≈ 15) — le plafond mi-temps n'affecte pas fte = 1.
+  assert(min >= 22,
+    "plein temps : le moins chargé ne tient que " + min +
+    " journées de station — un plein temps semble plafonné à tort");
+});
+
+console.log("\n=== Fériés (M26) — travailler un férié + fériés éditables ===");
+const _regles = require("./regles.js");
+
+test("travailler un férié : demandeur placé en priorité + jour compensatoire bloqué", () => {
+  _regles.definirFeriesAdmin([], []); // état propre
+  const meds = equipe();
+  const prefs = [{ doctor_id: "resident1", pref_type: "travailler_ferie",
+    start_date: "2026-07-21", end_date: "2026-07-21",
+    date_compensation: "2026-07-28", status: "approuve" }];
+  const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: meds, preferences: prefs });
+  const duFerie = r.shifts.filter((s) => s.date === "2026-07-21" && s.doctor_id === "resident1");
+  assert(duFerie.some((s) => ["garde_24h", "twe", "garde_nuit"].includes(s.shift_type)),
+    "resident1 non placé (garde/tour) sur le férié 21/07 qu'il a demandé");
+  const compJour = r.shifts.filter((s) => s.date === "2026-07-28" && s.doctor_id === "resident1" &&
+    ["jour", "garde_24h", "garde_nuit", "twe", "off"].includes(s.shift_type));
+  assert(compJour.length === 0,
+    "resident1 travaille le 28/07 alors que c'est son congé férié (jour compensatoire)");
+});
+
+test("férié éditable : AJOUT d'un jour ouvré le fait couvrir comme un week-end", () => {
+  _regles.definirFeriesAdmin(["2026-09-16"], []); // mercredi 16/09 ajouté
+  const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: equipe(), preferences: [] });
+  const du = r.shifts.filter((s) => s.date === "2026-09-16");
+  const stations = du.filter((s) => s.shift_type === "jour").length;
+  const tour = du.some((s) => s.shift_type === "twe");
+  _regles.definirFeriesAdmin([], []);
+  assert(tour && stations === 0,
+    "le 16/09 ajouté n'est pas couvert en week-end (tour=" + tour + ", stations de jour=" + stations + ")");
+});
+
+test("férié éditable : RETRAIT d'un férié belge le rend ouvrable (stations de jour)", () => {
+  _regles.definirFeriesAdmin([], ["2026-07-21"]); // fête nationale (mardi) retirée
+  const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: equipe(), preferences: [] });
+  const du = r.shifts.filter((s) => s.date === "2026-07-21");
+  const stations = du.filter((s) => s.shift_type === "jour").length;
+  _regles.definirFeriesAdmin([], []);
+  assert(stations >= 5,
+    "le 21/07 retiré des fériés devrait être un jour ouvré (stations de jour=" + stations + ")");
+});
+
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");
 process.exit(reussis === total ? 0 : 1);

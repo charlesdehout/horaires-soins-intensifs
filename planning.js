@@ -28,6 +28,13 @@ const _PL_REGLES = (typeof require !== "undefined")
   ? (function () { try { return require("./regles.js"); } catch (e) { return null; } })()
   : null;
 function plFeries(annee) { return (_PL_REGLES ? _PL_REGLES.joursFeriesBE : joursFeriesBE)(annee); }
+/* M26 — applique les surcharges admin de fériés (ajouts/retraits) au moteur de
+   règles, sous Node comme en navigateur. */
+function plDefinirFeriesAdmin(ajouts, retraits) {
+  const fn = _PL_REGLES ? _PL_REGLES.definirFeriesAdmin
+    : (typeof definirFeriesAdmin !== "undefined" ? definirFeriesAdmin : null);
+  if (fn) fn(ajouts, retraits);
+}
 function plPostes()      { return _PL_REGLES ? _PL_REGLES.POSTES_JOUR     : POSTES_JOUR; }
 function plCouv()        { return _PL_REGLES ? _PL_REGLES.COUVERTURE       : COUVERTURE; }
 function plBloq()        { return _PL_REGLES ? _PL_REGLES.PREF_BLOQUANTES  : PREF_BLOQUANTES; }
@@ -61,7 +68,7 @@ function plSansContinuite(code) { return PL_STATIONS_SANS_CONTINUITE.indexOf(cod
 
 /* VERSION de l'algorithme — affichée dans le message de génération pour
    vérifier que le navigateur exécute bien le code déployé (cache !). */
-const PL_VERSION = "v2026.06.13-1";
+const PL_VERSION = "v2026.06.14-1";
 
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
@@ -186,6 +193,10 @@ function plNouvelEtat(medecins) {
     // → pendant un congrès, on sert d'abord ceux qui en ont le moins, pour que
     // tout le monde ait le même nombre de jours libres au congrès.
     joursCongres: {},
+    // PRIORITÉ FÉRIÉ (M26) : date "AAAA-MM-JJ" -> Set(doctor_id) ayant demandé à
+    // TRAVAILLER ce férié (demande 'travailler_ferie' approuvée). Ces médecins
+    // passent en PRIORITÉ à la couverture week-end du férié.
+    prioriteFerie: {},
     _congresJour: false, // vrai pendant la génération d'un jour de congrès (plAffecter)
   };
   medecins.forEach((m) => {
@@ -229,12 +240,18 @@ function plIndexerPreferences(preferences, etat) {
     const estSouhait = p.pref_type === "souhait";   // souhait (garde) : bias +
     const estIndispo = p.pref_type === "indispo";   // indispo (garde) : bias − (non bloquant)
     const estDispo = p.pref_type === "dispo"; // fenêtre déclarée (indépendants)
+    // TRAVAILLER UN FÉRIÉ (M26) : placement PRIORITAIRE sur le férié + jour
+    // compensatoire (date_compensation) BLOQUANT, HORS QUOTA (crédité en équité
+    // comme un congé, jamais décompté du quota de congés).
+    const estFerie = p.pref_type === "travailler_ferie";
+    if (estFerie && p.date_compensation) etat.indispo[p.doctor_id].add(p.date_compensation);
     let d = p.start_date;
     while (d <= p.end_date) {
       if (estBloquant) etat.indispo[p.doctor_id].add(d);
       if (estSouhait) etat.souhait[p.doctor_id].add(d);
       if (estIndispo) etat.eviterGarde[p.doctor_id].add(d);
       if (estDispo) etat.dispoDeclaree[p.doctor_id].add(d);
+      if (estFerie) (etat.prioriteFerie[d] = etat.prioriteFerie[d] || new Set()).add(p.doctor_id);
       d = plAdd(d, 1);
     }
   });
@@ -358,6 +375,38 @@ function plRatioHeures(m, etat) {
   return (etat.heures[m.id] + credit) / (m.weekly_hours_target || 52);
 }
 
+/* ----- PLAFOND MI-TEMPS sur les JOURNÉES DE STATION (révision 2026-06-14) -----
+   La quotité (fte) d'un médecin ne réduit QUE ses journées de station :
+     • GARDES : inchangées — un mi-temps fait autant de gardes qu'un plein temps
+       (les gardes sont réparties par PRÉSENCE, pas par fte, et n'entrent pas
+       dans le plafond ci-dessous).
+     • CONGÉS : quota proratisé au fte (géré côté app.js).
+     • STATION : plafonnée à `weekly_hours_target` heures par semaine (déjà =
+       référence × fte sur la fiche), à défaut référence × fte.
+   Plein temps (fte ≥ 1) → aucune borne (Infinity). */
+const PL_REF_HEBDO = 52; // référence plein temps (cohérent avec app.js HEURES_BASE)
+function plPlafondStation(m) {
+  const fte = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1;
+  if (fte >= 1) return Infinity;
+  return (typeof m.weekly_hours_target === "number" && m.weekly_hours_target > 0)
+    ? m.weekly_hours_target : PL_REF_HEBDO * fte;
+}
+/* Vrai si poser une journée de station de PLUS à ce médecin CETTE semaine
+   dépasserait son plafond mi-temps. La comparaison porte sur le TOTAL hebdo
+   (gardes COMPRISES) : les gardes « consomment » le budget d'heures, si bien
+   qu'un mi-temps qui a gardé fait peu/pas de station cette semaine — ses gardes
+   restent pleines (jamais bloquées), seules les STATIONS sont rabotées. Plafond
+   STRICT : on préfère laisser la station en sous-effectif (signalée par la
+   détection de conflits) plutôt que de surcharger un mi-temps. Sans effet sur
+   les pleins temps (cap = Infinity). */
+function plStationPlafonnee(m, date, etat) {
+  const cap = plPlafondStation(m);
+  if (cap === Infinity) return false;
+  const lk = plLundiDe(date);
+  const dejaH = (etat.heuresSemaine[m.id] && etat.heuresSemaine[m.id][lk]) || 0; // TOTAL semaine (gardes incl.)
+  return (dejaH + PL_HEURES.jour) > cap + PL_EPS;
+}
+
 /* Crédite, pour un JOUR OUVRÉ donné, les médecins en congé (préférence
    bloquante) d'un équivalent journée (PL_HEURES.jour) dans heuresEquite.
    Conditions : sous contrat, jour travaillable, jour ouvré (les week-ends ont
@@ -402,6 +451,14 @@ function plTrier(liste, critere, etat, date, favoriId) {
     if (congres) {
       const ca = etat.joursCongres[a.id] || 0, cb = etat.joursCongres[b.id] || 0;
       if (ca !== cb) return ca - cb;
+    }
+    // PRIORITÉ FÉRIÉ (M26) : qui a demandé à TRAVAILLER ce férié passe DEVANT à
+    // la couverture week-end (garde 24 h / tour) — l'algo couvre toujours, la
+    // demande ne fait que prioriser le demandeur parmi les éligibles.
+    if (critere === "weekend" && date && etat.prioriteFerie && etat.prioriteFerie[date]) {
+      const fa = etat.prioriteFerie[date].has(a.id) ? 1 : 0;
+      const fb = etat.prioriteFerie[date].has(b.id) ? 1 : 0;
+      if (fa !== fb) return fb - fa;
     }
     // Indépendant prioritaire sur ses jours déclarés (JOURNÉES de station).
     if (!estGarde && date) {
@@ -791,6 +848,7 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
   //     autres n'en travaillaient aucun (écart constaté : 4-5 jours).
   if (!congresJour) pool.forEach((m) => {
     if (Object.values(plan).includes(m.id)) return;
+    if (plStationPlafonnee(m, date, etat)) return; // mi-temps : plafond station atteint
     // Continuité de la semaine, sinon l'unité de référence (rotation, M20).
     const st = etat.station[m.id][cle] || m.unite_reference;
     // Station OUVERTE ce jour (M17) et AVEC continuité (le Labo n'ancre pas).
@@ -799,7 +857,8 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
   // 2b) On comble les stations encore vides avec le vivier de jour.
   postes.forEach((code) => {
     if (code in plan) return;
-    const cand = pool.find((m) => !Object.values(plan).includes(m.id));
+    const cand = pool.find((m) => !Object.values(plan).includes(m.id) &&
+      !plStationPlafonnee(m, date, etat)); // mi-temps : jamais au-delà du plafond (strict)
     if (cand) {
       plan[code] = cand.id;
       // Pas d'ancrage de continuité pour le Labo de choc (rotation libre),
@@ -1066,6 +1125,7 @@ function genererPlanning(opts) {
   const mois = opts.mois;
   const medecins = opts.medecins || [];
   const preferences = opts.preferences || [];
+  if (opts.feriesAdmin) plDefinirFeriesAdmin(opts.feriesAdmin.ajouts, opts.feriesAdmin.retraits); // M26
 
   const etat = plNouvelEtat(medecins);
   plIndexerPreferences(preferences, etat);
@@ -1302,6 +1362,7 @@ function plCompleterMinimumHeures(sortie, medecins, etat, dates) {
         if (h >= cible) break;
         if (aShift[m.id] && aShift[m.id].has(d)) continue;  // déjà occupé ce jour
         if (etat.bloque[m.id].has(d)) continue;             // repos de garde
+        if (plStationPlafonnee(m, d, etat)) continue;       // mi-temps : plafond station (strict)
         const pourvues = stationsDoublables(d);
         if (!pourvues.length) continue; // plus d'unité doublable ce jour
         const st = pourvues[parseInt(d.slice(8, 10), 10) % pourvues.length];
@@ -1332,13 +1393,15 @@ function plReequilibrerHeures(sortie, medecins, etat) {
   if (!seuil) return;
   const H = (t) => (t === "off" ? PL_HEURES_OFFCLINIC : (PL_HEURES[t] || 0));
   const heures = {}; const occupe = {}; const unitesSem = {}; // id -> { lundi -> Set(postes jour) }
-  medecins.forEach((m) => { heures[m.id] = 0; occupe[m.id] = new Set(); unitesSem[m.id] = {}; });
+  const hSem = {}; // id -> { lundi -> heures TOTALES de la semaine } (plafond mi-temps, local)
+  medecins.forEach((m) => { heures[m.id] = 0; occupe[m.id] = new Set(); unitesSem[m.id] = {}; hSem[m.id] = {}; });
   sortie.forEach((s) => {
     if (heures[s.doctor_id] === undefined) return;
     heures[s.doctor_id] += H(s.shift_type);
     occupe[s.doctor_id].add(s.date);
+    const lk = plLundiDe(s.date);
+    hSem[s.doctor_id][lk] = (hSem[s.doctor_id][lk] || 0) + H(s.shift_type); // total hebdo (gardes incl.)
     if (s.shift_type === "jour" && s.poste) {
-      const lk = plLundiDe(s.date);
       (unitesSem[s.doctor_id][lk] = unitesSem[s.doctor_id][lk] || new Set()).add(s.poste);
     }
   });
@@ -1357,6 +1420,13 @@ function plReequilibrerHeures(sortie, medecins, etat) {
     if (etat.indispo[m.id] && etat.indispo[m.id].has(d)) return false;
     if (!plDispoIndependant(m, d, etat.dispoDeclaree[m.id])) return false;
     if (plEstNouvelEngage(m, d, etat.debutPeriode)) return false;
+    // PLAFOND MI-TEMPS : le receveur ne dépasse pas son quota hebdo (total, gardes
+    // comprises). Sans effet sur les pleins temps (cap = Infinity).
+    const cap = plPlafondStation(m);
+    if (cap !== Infinity) {
+      const cur = (hSem[m.id][plLundiDe(d)] || 0);
+      if (cur + PL_HEURES.jour > cap + PL_EPS) return false;
+    }
     // Continuité clinique : pas une AUTRE unité cette semaine (Labo exempt).
     if (!plSansContinuite(s.poste)) {
       const u = unitesSem[m.id][plLundiDe(d)];
@@ -1382,6 +1452,8 @@ function plReequilibrerHeures(sortie, medecins, etat) {
           // Transfert de la journée.
           occupe[haut.id].delete(s.date); occupe[bas.id].add(s.date);
           const lk = plLundiDe(s.date);
+          hSem[haut.id][lk] = (hSem[haut.id][lk] || 0) - PL_HEURES.jour;
+          hSem[bas.id][lk] = (hSem[bas.id][lk] || 0) + PL_HEURES.jour;
           if (s.poste) {
             const uh = unitesSem[haut.id][lk]; if (uh) uh.delete(s.poste);
             (unitesSem[bas.id][lk] = unitesSem[bas.id][lk] || new Set()).add(s.poste);
@@ -1412,6 +1484,7 @@ function genererTrimestre(opts) {
   const trimestre = opts.trimestre;                 // 1-4
   const medecins = opts.medecins || [];
   const preferences = opts.preferences || [];
+  if (opts.feriesAdmin) plDefinirFeriesAdmin(opts.feriesAdmin.ajouts, opts.feriesAdmin.retraits); // M26
   const moisTrim = [0, 1, 2].map((k) => (trimestre - 1) * 3 + 1 + k); // ex. T2 -> [4,5,6]
 
   // État partagé sur les 3 mois pour les HEURES, la continuité de station, etc.

@@ -261,6 +261,19 @@
           <tbody id="demandes-validees-tbody"></tbody>
         </table>
         <p id="demandes-validees-empty" class="zone-info">Aucune demande validée à venir.</p>
+
+        <!-- Compteurs de congés par médecin (révision 2026-06-13) : vue admin
+             de la consommation des quotas sur l'année académique en cours. -->
+        <div class="zone-header"><h3 class="sous-titre" id="conges-admin-titre">Compteurs de congés</h3></div>
+        <p class="zone-info">Jours ouvrés <strong>approuvés</strong> (+ en attente) / quota proratisé au
+          contrat, sur l'année académique en cours (1 oct → 30 sep).</p>
+        <table id="conges-admin-table" class="data-table hidden">
+          <thead>
+            <tr><th>Médecin</th><th>Congé annuel</th><th>Extra-légaux</th><th>Scientifique</th><th>Total restant</th></tr>
+          </thead>
+          <tbody id="conges-admin-tbody"></tbody>
+        </table>
+        <p id="conges-admin-empty" class="zone-info hidden">Aucun médecin.</p>
         </div><!-- /panel-demandes -->
 
         <!-- Onglet CONGRÈS & FERMETURES (Module 17) — saisie ADMIN uniquement -->
@@ -329,6 +342,43 @@
           <tbody id="periodes-tbody"></tbody>
         </table>
         <p id="periodes-empty" class="zone-info">Aucun congrès ni fermeture d'unité saisie.</p>
+
+        <div class="zone-header" style="margin-top:1.75rem;">
+          <h3 class="sous-titre">Jours fériés (éditables)</h3>
+        </div>
+        <p class="zone-info">Les 10 fériés belges sont calculés automatiquement. Ici tu peux en
+          <strong>ajouter</strong> un (il sera couvert comme un week-end) ou en <strong>retirer</strong>
+          un (il redevient un jour ouvré). Pris en compte à la génération du planning.</p>
+        <form id="ferie-form" class="doctor-form">
+          <div class="form-grid">
+            <div>
+              <label for="fa-date">Date</label>
+              <input type="date" id="fa-date" required />
+            </div>
+            <div>
+              <label for="fa-actif">Action</label>
+              <select id="fa-actif">
+                <option value="true">Ajouter (nouveau férié)</option>
+                <option value="false">Retirer (un férié belge)</option>
+              </select>
+            </div>
+            <div>
+              <label for="fa-label">Libellé (optionnel)</label>
+              <input type="text" id="fa-label" maxlength="80" placeholder="ex. fermeture locale" />
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="submit" id="save-ferie-btn">Enregistrer</button>
+          </div>
+          <p id="ferie-form-msg" class="message"></p>
+        </form>
+        <table id="feries-table" class="data-table hidden">
+          <thead>
+            <tr><th>Date</th><th>Action</th><th>Libellé</th><th></th></tr>
+          </thead>
+          <tbody id="feries-tbody"></tbody>
+        </table>
+        <p id="feries-empty" class="zone-info">Aucune surcharge de férié enregistrée.</p>
         </div><!-- /panel-periodes -->
 
         <!-- Onglet MÉDECINS (Module 2) -->
@@ -479,7 +529,7 @@
                 <option value="indispo">Indisponibilité (garde) — souhait de NE PAS être de garde</option>
                 <option value="demande_weekend">Demande week-end/férié</option>
                 <option value="souhait">Souhait (garde) — souhait d'ÊTRE de garde</option>
-                <option value="recup_ferie">Récup férié (jour compensatoire, à poser sous 6 sem.)</option>
+                <option value="travailler_ferie">Travailler un jour férié (+ je choisis mon jour de récup)</option>
               </select>
               <!-- « Formation USI » et « Congé autre / maladie » sont désormais
                    posés par l'ADMIN uniquement (onglet Demandes → Forcer un congé). -->
@@ -495,6 +545,10 @@
             <div>
               <label for="p-note">Note (optionnel)</label>
               <input type="text" id="p-note" maxlength="200" placeholder="ex. mariage, congrès…" />
+            </div>
+            <div id="p-comp-wrap" class="hidden">
+              <label for="p-comp">Jour de récup (congé férié, à poser sous 6 sem.)</label>
+              <input type="date" id="p-comp" />
             </div>
           </div>
           <div class="form-actions">

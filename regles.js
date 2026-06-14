@@ -201,6 +201,19 @@ function ajouterJours(d, n) {
 
 /* Cache des fériés par année (évite de recalculer en boucle). */
 const _cacheFeries = {};
+/* FÉRIÉS ÉDITABLES PAR L'ADMIN (Module 26) : surcharge le calcul belge.
+   _feriesAjouts  : dates "AAAA-MM-JJ" à AJOUTER (agissent comme un week-end).
+   _feriesRetraits: fériés belges calculés à RETIRER (redeviennent ouvrables).
+   Alimentés par definirFeriesAdmin() — depuis Supabase (app.js) ou les tests. */
+let _feriesAjouts = new Set();
+let _feriesRetraits = new Set();
+/* Définit les surcharges admin et invalide le cache. ajouts/retraits = tableaux
+   (ou Sets) de dates ISO. Idempotent. */
+function definirFeriesAdmin(ajouts, retraits) {
+  _feriesAjouts = new Set(ajouts || []);
+  _feriesRetraits = new Set(retraits || []);
+  for (const k in _cacheFeries) delete _cacheFeries[k]; // recalcul à la prochaine lecture
+}
 
 /* Renvoie un Set des jours fériés belges (chaînes "AAAA-MM-JJ") d'une année. */
 function joursFeriesBE(annee) {
@@ -220,6 +233,10 @@ function joursFeriesBE(annee) {
     annee + "-12-25",                       // Noël
   ]);
 
+  // Surcharges admin (Module 26) : retraits puis ajouts de l'année demandée.
+  _feriesRetraits.forEach((d) => feries.delete(d));
+  _feriesAjouts.forEach((d) => { if (d.slice(0, 4) === String(annee)) feries.add(d); });
+
   _cacheFeries[annee] = feries;
   return feries;
 }
@@ -238,7 +255,7 @@ function estJourOuvre(dateISO) {
    --------------------------------------------------------------------- */
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    CONGE_TYPES, calculerPaques, joursFeriesBE, estJourOuvre,
+    CONGE_TYPES, calculerPaques, joursFeriesBE, definirFeriesAdmin, estJourOuvre,
     dateEnISO, ajouterJours,
     POSTES_JOUR, COUVERTURE, PREF_BLOQUANTES, EQUITE, OFFCLINIC, GARDES,
   };

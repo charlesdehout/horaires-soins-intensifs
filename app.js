@@ -89,6 +89,7 @@ const pType       = document.getElementById("p-type");
 const pStart      = document.getElementById("p-start");
 const pEnd        = document.getElementById("p-end");
 const pNote       = document.getElementById("p-note");
+const pComp       = document.getElementById("p-comp"); // jour de récup (travailler_ferie, M26)
 const prefFormMsg = document.getElementById("pref-form-msg");
 const prefsTbody  = document.getElementById("prefs-tbody");
 /* Popup « désidérata depuis le calendrier » (sélection de dates). */
@@ -150,7 +151,7 @@ function basculerVue(connecte) {
 async function chargerProfil(user) {
   const { data, error } = await sb
     .from("doctors")
-    .select("id, name, role, statut, contract_start, contract_end, quota_conge_annuel, quota_conge_extralegal, quota_conge_scientifique")
+    .select("id, name, role, statut, fte, contract_start, contract_end, quota_conge_annuel, quota_conge_extralegal, quota_conge_scientifique")
     .eq("email", user.email)
     .maybeSingle();
 
@@ -199,6 +200,10 @@ function afficherEspace(profil) {
   basculerOnglet("planning"); // toujours démarrer sur le planning
 
   basculerVue(true);
+
+  // M26 — fériés éditables : charge les surcharges et alimente le moteur de règles
+  // (avant toute génération / affichage du calendrier).
+  chargerFeriesAdmin();
 
   // Côté admin : liste des médecins. Côté médecin : ses préférences.
   if (estAdmin) chargerMedecins();
@@ -671,6 +676,8 @@ const PREF_LABELS = {
   autre: "Congé autre",
   demande_weekend: "Demande WE/férié",
   recup_ferie: "Récup férié",
+  travailler_ferie: "Travailler un férié",
+  conge_ferie: "Congé férié (récup)",
   dispo: "✅ Disponible (indépendant, prioritaire)",
 };
 
@@ -769,11 +776,20 @@ function fractionAnneeSousContrat(anneeAcad, med) {
   return jours / joursAnnee;
 }
 
-/* Quota effectif (défaut ou surcharge, proratisé au contrat) pour une année académique. */
+/* Quotité (fte) d'un médecin, bornée à ]0;1], défaut 1 (plein temps). Le quota
+   de congés d'un mi-temps est proratisé à sa quotité (révision 2026-06-14). */
+function fteDe(med) {
+  const f = med && typeof med.fte === "number" ? med.fte : parseFloat(med && med.fte);
+  return (!isNaN(f) && f > 0) ? Math.min(f, 1) : 1;
+}
+
+/* Quota effectif (défaut ou surcharge), proratisé au contrat ET à la quotité (fte),
+   pour une année académique. */
 function quotaEffectif(type, anneeAcad) {
   if (!medecinCourant) return 0;
   return Math.round(quotaBase(medecinCourant, type) *
-                    fractionAnneeSousContrat(anneeAcad, medecinCourant));
+                    fractionAnneeSousContrat(anneeAcad, medecinCourant) *
+                    fteDe(medecinCourant));
 }
 
 /* Jours ouvrés déjà encodés pour une catégorie et une année académique. */
@@ -939,7 +955,7 @@ function rendrePreferences(prefs) {
 /* Valide + insère une préférence pour le médecin connecté. Fonction PURE de DOM :
    renvoie { ok, message, level }. Réutilisée par le formulaire « Mes préférences »
    ET par le popup de désidérata depuis le calendrier. */
-async function soumettrePreference(type, debut, fin, note) {
+async function soumettrePreference(type, debut, fin, note, dateComp) {
   if (!medecinCourant) return { ok: false, message: "Profil médecin introuvable.", level: "error" };
   if (!debut || !fin) return { ok: false, message: "Dates manquantes.", level: "error" };
   if (fin < debut) return { ok: false, message: "La date de fin doit être postérieure ou égale à la date de début.", level: "error" };
@@ -977,17 +993,23 @@ async function soumettrePreference(type, debut, fin, note) {
     }
   }
 
-  // Récup férié : il faut avoir TRAVAILLÉ un férié ; la date doit tomber dans les
-  // 6 semaines qui suivent (alerte non bloquante hors fenêtre — l'admin tranche).
-  if (type === "recup_ferie") {
-    const fer = feriesTravailles();
-    if (!fer.length) {
-      return { ok: false, level: "error", message: "Aucun jour férié travaillé : pas de droit à récup férié pour l'instant." };
+  // Travailler un férié (M26) : la date demandée DOIT être un jour férié ; le jour
+  // de récup (date_compensation) est OBLIGATOIRE et idéalement sous 6 semaines
+  // (alerte non bloquante hors fenêtre — l'admin tranche).
+  if (type === "travailler_ferie") {
+    let estFerie = false;
+    try { estFerie = joursFeriesBE(parseInt(debut.slice(0, 4), 10)).has(debut); } catch (e) {}
+    if (!estFerie) {
+      return { ok: false, level: "error", message: "La date demandée n'est pas un jour férié. Choisis un férié (ou demande à l'admin de l'ajouter)." };
     }
-    if (recupFeriesPosees() >= fer.length) {
-      avert += " ⚠️ déjà " + recupFeriesPosees() + " récup férié pour " + fer.length + " férié(s) travaillé(s).";
-    } else if (!fer.some((f) => debut > f && debut <= echeanceRecup(f))) {
-      avert += " ⚠️ hors des 6 semaines suivant un férié travaillé.";
+    if (!dateComp) {
+      return { ok: false, level: "error", message: "Choisis ton jour de récup (congé férié) dans le même formulaire." };
+    }
+    if (dateComp <= debut) {
+      return { ok: false, level: "error", message: "Le jour de récup doit être postérieur au férié travaillé." };
+    }
+    if (dateComp > echeanceRecup(debut)) {
+      avert += " ⚠️ jour de récup au-delà des 6 semaines suivant le férié.";
     }
   }
 
@@ -999,6 +1021,7 @@ async function soumettrePreference(type, debut, fin, note) {
     note: (note || "").trim() || null,
     status: "en_attente", // soumise pour validation par l'admin (§8.3)
   };
+  if (type === "travailler_ferie") payload.date_compensation = dateComp; // M26 : jour de récup choisi
   const { error } = await sb.from("preferences").insert(payload);
   if (error) {
     console.error("Erreur ajout préférence :", error);
@@ -1010,11 +1033,22 @@ async function soumettrePreference(type, debut, fin, note) {
   return { ok: true, level: "info", message: "Préférence enregistrée." + avert };
 }
 
+/* M26 — affiche le champ « jour de récup » uniquement pour « Travailler un férié »,
+   et cale la date « Au » sur la date « Du » (un férié = une seule journée). */
+function majChampFerie() {
+  const wrap = document.getElementById("p-comp-wrap");
+  const estFerie = pType && pType.value === "travailler_ferie";
+  if (wrap) wrap.classList.toggle("hidden", !estFerie);
+  if (estFerie && pStart && pEnd && pStart.value) pEnd.value = pStart.value;
+}
+if (pType) pType.addEventListener("change", majChampFerie);
+if (pStart) pStart.addEventListener("change", () => { if (pType && pType.value === "travailler_ferie" && pEnd) pEnd.value = pStart.value; });
+
 /* Ajoute une préférence pour le médecin connecté (formulaire « Mes préférences »). */
 prefForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   messageFormPref("");
-  const r = await soumettrePreference(pType.value, pStart.value, pEnd.value, pNote.value);
+  const r = await soumettrePreference(pType.value, pStart.value, pEnd.value, pNote.value, pComp ? pComp.value : null);
   if (!r.ok) { messageFormPref(r.message, "error"); return; }
   prefForm.reset();
   messageFormPref(r.message, "info");
@@ -1168,6 +1202,7 @@ const SHIFT_CONFIG = {
   conge_annuel:       { label: "Congé annuel",        court: "Congé", couleur: "#1a7f37", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
   conge_scientifique: { label: "Congé scientifique",  court: "Sci.",  couleur: "#0b6b63", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
   conge_extralegal:   { label: "Congés extra-légaux", court: "E.L.",  couleur: "#0f5132", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
+  conge_ferie:        { label: "Congé férié (récup)", court: "Récup F.", couleur: "#0891b2", debut: "00:00", fin: "00:00", lendemain: false, heures: 0, absence: true },
 };
 
 /* Vrai si le type de shift est une absence / un repos (0 h, sans station). */
@@ -1189,6 +1224,8 @@ const PREF_BG = {
   autre:              "rgba(110,84,148,0.16)",   // mauve
   demande_weekend:    "rgba(31,111,235,0.12)",   // bleu clair
   recup_ferie:        "rgba(8,145,178,0.18)",     // cyan (cf. récup)
+  travailler_ferie:   "rgba(207,34,46,0.14)",     // rouge clair (jour de garde férié)
+  conge_ferie:        "rgba(8,145,178,0.18)",     // cyan (jour de récup)
 };
 
 /* Libellés complets des types de préférence (inclut off_clinic / recuperation). */
@@ -1205,6 +1242,8 @@ const PREF_LABELS_FULL = {
   autre: "Congé autre (hors quota)",
   demande_weekend: "Demande week-end/férié",
   recup_ferie: "Récup férié (jour compensatoire)",
+  travailler_ferie: "Travailler un férié (placement prioritaire)",
+  conge_ferie: "Congé férié (jour de récup)",
   dispo: "✅ Disponible — souhaite travailler ce jour (indépendant, prioritaire)",
 };
 
@@ -1358,6 +1397,7 @@ async function construireEvenements(debutISO, finISO) {
     const PREF_PASTILLE = {
       conge: "🏖", conge_annuel: "🏖", conge_extralegal: "🏖", conge_scientifique: "🔬",
       formation: "🎓", autre: "🏖", recuperation: "🛌", recup_ferie: "🛌",
+      conge_ferie: "🛌",
     };
     (prefs || []).forEach((p) => {
       const med = carteMedecins[p.doctor_id] || {};
@@ -1646,7 +1686,7 @@ async function genererPlanningPourMoisAffiche() {
   // 2) Préférences APPROUVÉES chevauchant le mois (les autres n'influencent pas).
   const { data: prefs, error: e2 } = await sb
     .from("preferences")
-    .select("doctor_id, start_date, end_date, pref_type")
+    .select("doctor_id, start_date, end_date, pref_type, date_compensation")
     .eq("status", "approuve")
     .lte("start_date", finMois)
     .gte("end_date", debutMois);
@@ -1662,7 +1702,7 @@ async function genererPlanningPourMoisAffiche() {
   const prePlaces = epingles || [];
 
   // 3) Génération (algorithme pur, planning.js).
-  const res = genererPlanning({ annee, mois, medecins: medecins || [], preferences: prefs || [], periodes, prePlaces });
+  const res = genererPlanning({ annee, mois, medecins: medecins || [], preferences: prefs || [], periodes, prePlaces, feriesAdmin: feriesAdminPourGeneration() });
 
   // 4) Remplace le brouillon du mois : on efface shifts du mois + schedules du mois.
   await sb.from("shifts").delete().gte("date", debutMois).lte("date", finMois);
@@ -1800,7 +1840,7 @@ async function genererTrimestrePourMoisAffiche() {
   }
   const { data: prefs, error: e2 } = await sb
     .from("preferences")
-    .select("doctor_id, start_date, end_date, pref_type")
+    .select("doctor_id, start_date, end_date, pref_type, date_compensation")
     .eq("status", "approuve")
     .lte("start_date", finTrim)
     .gte("end_date", debutTrim);
@@ -1817,7 +1857,7 @@ async function genererTrimestrePourMoisAffiche() {
   const cleEp = new Set(prePlaces.map((s) => s.date + "|" + s.doctor_id + "|" + s.shift_type + "|" + (s.poste || "")));
 
   // 5) Génération (algorithme pur, planning.js).
-  const res = genererTrimestre({ annee, trimestre, medecins: medecins || [], preferences: prefs || [], periodes, prePlaces });
+  const res = genererTrimestre({ annee, trimestre, medecins: medecins || [], preferences: prefs || [], periodes, prePlaces, feriesAdmin: feriesAdminPourGeneration() });
 
   // 6) Écriture mois par mois : on remplace chaque brouillon (shifts + schedule),
   //    puis on insère les shifts du mois rattachés à son schedule_id.
@@ -2173,7 +2213,7 @@ async function donneesMoisExport(b) {
   const { data: shifts } = await sb.from("shifts")
     .select("date, shift_type, doctor_id, poste").gte("date", b.debut).lte("date", b.fin);
   const { data: prefs } = await sb.from("preferences")
-    .select("doctor_id, start_date, end_date, pref_type").eq("status", "approuve")
+    .select("doctor_id, start_date, end_date, pref_type, date_compensation").eq("status", "approuve")
     .lte("start_date", b.fin).gte("end_date", b.debut);
   const periodes = await periodesSur(b.debut, b.fin); // congrès / fermetures
   if (!Object.keys(carteMedecins).length) await chargerCarteMedecins();
@@ -2518,7 +2558,7 @@ async function rafraichirPanneauAdmin() {
   // Préférences APPROUVÉES du mois (les demandes en attente/refusées
   // n'influencent pas la validation du planning).
   const { data: prefs } = await sb.from("preferences")
-    .select("doctor_id, start_date, end_date, pref_type")
+    .select("doctor_id, start_date, end_date, pref_type, date_compensation")
     .eq("status", "approuve")
     .lte("start_date", b.fin).gte("end_date", b.debut);
   planningMois.preferences = prefs || [];
@@ -2552,7 +2592,7 @@ async function chargerDemandes() {
   if (!Object.keys(carteMedecins).length) await chargerCarteMedecins();
 
   const { data, error } = await sb.from("preferences")
-    .select("id, doctor_id, start_date, end_date, pref_type, note, status")
+    .select("id, doctor_id, start_date, end_date, pref_type, note, status, date_compensation")
     .eq("status", "en_attente")
     .order("start_date", { ascending: true });
 
@@ -2563,12 +2603,78 @@ async function chargerDemandes() {
   // Demandes déjà VALIDÉES, période non terminée → révocables (révision).
   const ajd = new Date().toISOString().slice(0, 10);
   const { data: validees } = await sb.from("preferences")
-    .select("id, doctor_id, start_date, end_date, pref_type, note, status")
+    .select("id, doctor_id, start_date, end_date, pref_type, note, status, date_compensation")
     .eq("status", "approuve")
     .gte("end_date", ajd)
     .order("start_date", { ascending: true })
     .limit(200);
   rendreDemandesValidees(validees || []);
+
+  // Compteurs de congés par médecin (vue admin).
+  chargerCompteursConges();
+}
+
+/* COMPTEURS DE CONGÉS — vue ADMIN (révision 2026-06-13) : consommation des
+   quotas par médecin sur l'année académique EN COURS. Jours OUVRÉS approuvés
+   (+ en attente, à titre indicatif) / quota proratisé au contrat — mêmes
+   règles de calcul que le compteur personnel du médecin. */
+async function chargerCompteursConges() {
+  const tbody = document.getElementById("conges-admin-tbody");
+  if (!tbody) return;
+  const table = document.getElementById("conges-admin-table");
+  const empty = document.getElementById("conges-admin-empty");
+  const titre = document.getElementById("conges-admin-titre");
+  const acad = anneeAcademique(new Date());
+  if (titre) titre.textContent = "Compteurs de congés — année académique " + acad + "–" + (acad + 1);
+  const debA = acad + "-10-01", finA = (acad + 1) + "-09-30";
+
+  const { data: docs, error: e1 } = await sb.from("doctors")
+    .select("id, name, role, fte, contract_start, contract_end, quota_conge_annuel, quota_conge_extralegal, quota_conge_scientifique")
+    .neq("role", "admin")
+    .order("name", { ascending: true });
+  if (e1) { console.error("Compteurs congés admin :", e1); return; }
+  const { data: prefs, error: e2 } = await sb.from("preferences")
+    .select("doctor_id, start_date, end_date, pref_type, status")
+    .neq("status", "refuse")
+    .lte("start_date", finA).gte("end_date", debA);
+  if (e2) { console.error("Compteurs congés admin :", e2); return; }
+
+  const TYPES = ["conge_annuel", "conge_extralegal", "conge_scientifique"];
+  const conso = {}; // id -> { type -> { ok, att } }
+  (prefs || []).forEach((p) => {
+    const cat = categorieConge(p.pref_type);
+    if (!cat) return;
+    const jours = joursOuvresDansAnnee(p.start_date, p.end_date, acad);
+    if (!jours) return;
+    const c = (conso[p.doctor_id] = conso[p.doctor_id] || {});
+    const t = (c[cat] = c[cat] || { ok: 0, att: 0 });
+    if (p.status === "approuve") t.ok += jours; else t.att += jours;
+  });
+
+  tbody.innerHTML = "";
+  const liste = docs || [];
+  if (table) table.classList.toggle("hidden", liste.length === 0);
+  if (empty) empty.classList.toggle("hidden", liste.length > 0);
+  liste.forEach((d) => {
+    const tr = document.createElement("tr");
+    const tdN = document.createElement("td"); tdN.textContent = d.name || "?"; tr.appendChild(tdN);
+    let restantTotal = 0;
+    TYPES.forEach((type) => {
+      const quota = Math.round(quotaBase(d, type) * fractionAnneeSousContrat(acad, d) * fteDe(d));
+      const c = (conso[d.id] && conso[d.id][type]) || { ok: 0, att: 0 };
+      restantTotal += Math.max(0, quota - c.ok);
+      const td = document.createElement("td");
+      td.textContent = c.ok + (c.att ? " (+" + c.att + ")" : "") + " / " + quota;
+      if (c.ok > quota) { td.className = "depasse"; td.title = "Quota dépassé"; }
+      else if (c.att && c.ok + c.att > quota) { td.title = "Dépasserait le quota si les demandes en attente sont approuvées"; }
+      tr.appendChild(td);
+    });
+    const tdR = document.createElement("td");
+    tdR.textContent = restantTotal + " j";
+    tdR.style.fontWeight = "600";
+    tr.appendChild(tdR);
+    tbody.appendChild(tr);
+  });
 }
 
 /* Tableau des demandes APPROUVÉES à venir, avec bouton « Révoquer ». */
@@ -2584,8 +2690,11 @@ function rendreDemandesValidees(demandes) {
   demandes.forEach((d) => {
     const tr = document.createElement("tr");
     const med = carteMedecins[d.doctor_id] || {};
+    const noteAff = (d.pref_type === "travailler_ferie" && d.date_compensation)
+      ? ("récup : " + d.date_compensation + (d.note ? " · " + d.note : ""))
+      : (d.note || "—");
     [med.name || "?", PREF_LABELS_FULL[d.pref_type] || d.pref_type,
-     d.start_date, d.end_date, d.note || "—"].forEach((v) => {
+     d.start_date, d.end_date, noteAff].forEach((v) => {
       const td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
     });
     const tdA = document.createElement("td");
@@ -2954,7 +3063,7 @@ async function chargerCompteursTrimestre() {
     .select("date, shift_type, poste, doctor_id")
     .gte("date", debut).lte("date", fin);
   const { data: prefs } = await sb.from("preferences")
-    .select("doctor_id, start_date, end_date, pref_type")
+    .select("doctor_id, start_date, end_date, pref_type, date_compensation")
     .eq("status", "approuve").lte("start_date", fin).gte("end_date", debut);
   compteursTrimCache = { cle, shifts: sh || [], preferences: prefs || [], debut, fin };
   return compteursTrimCache;
@@ -3900,6 +4009,91 @@ if (rotationEnregistrerBtn) rotationEnregistrerBtn.addEventListener("click", enr
 /* Au chargement de la page : restaure la session si elle existe déjà    */
 /* (évite de redemander le login à chaque rafraîchissement).             */
 /* --------------------------------------------------------------------- */
+
+/* ===================================================================== */
+/* MODULE 26 — Jours fériés éditables par l'admin (table feries_admin)    */
+/* --------------------------------------------------------------------- */
+/* actif=true  -> AJOUTE une date (couverte comme un week-end) ;          */
+/* actif=false -> RETIRE un férié belge calculé (redevient ouvré).        */
+/* Au chargement, on alimente le moteur de règles via definirFeriesAdmin. */
+/* ===================================================================== */
+let feriesAdminRows = []; // cache local pour la génération côté admin
+
+/* Charge les surcharges et les applique au moteur (regles.js, global). */
+async function chargerFeriesAdmin() {
+  const { data, error } = await sb.from("feries_admin")
+    .select("date, actif, libelle").order("date", { ascending: true });
+  if (error) { console.error("Fériés admin :", error); feriesAdminRows = []; }
+  else feriesAdminRows = data || [];
+  const ajouts = feriesAdminRows.filter((f) => f.actif).map((f) => f.date);
+  const retraits = feriesAdminRows.filter((f) => !f.actif).map((f) => f.date);
+  if (typeof definirFeriesAdmin === "function") definirFeriesAdmin(ajouts, retraits);
+  rendreFeriesAdmin();
+}
+
+/* Objet { ajouts:[...], retraits:[...] } à passer aux générateurs (opts.feriesAdmin). */
+function feriesAdminPourGeneration() {
+  return {
+    ajouts: feriesAdminRows.filter((f) => f.actif).map((f) => f.date),
+    retraits: feriesAdminRows.filter((f) => !f.actif).map((f) => f.date),
+  };
+}
+
+/* Rendu du tableau des surcharges (onglet Congrès & fermetures). */
+function rendreFeriesAdmin() {
+  const tbody = document.getElementById("feries-tbody");
+  const table = document.getElementById("feries-table");
+  const empty = document.getElementById("feries-empty");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  const vide = feriesAdminRows.length === 0;
+  if (table) table.classList.toggle("hidden", vide);
+  if (empty) empty.classList.toggle("hidden", !vide);
+  feriesAdminRows.forEach((f) => {
+    const tr = document.createElement("tr");
+    const action = f.actif ? "➕ Ajouté (férié)" : "➖ Retiré (jour ouvré)";
+    [f.date, action, f.libelle || "—"].forEach((v) => {
+      const td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
+    });
+    const tdA = document.createElement("td"); tdA.className = "actions-cell";
+    const btn = document.createElement("button");
+    btn.textContent = "Supprimer"; btn.className = "mini danger";
+    btn.addEventListener("click", () => supprimerFerieAdmin(f.date));
+    tdA.appendChild(btn); tr.appendChild(tdA);
+    tbody.appendChild(tr);
+  });
+}
+
+/* Enregistre (upsert) une surcharge de férié. */
+async function enregistrerFerieAdmin(e) {
+  if (e) e.preventDefault();
+  const msg = document.getElementById("ferie-form-msg");
+  const date = (document.getElementById("fa-date") || {}).value;
+  const actif = (document.getElementById("fa-actif") || {}).value === "true";
+  const libelle = ((document.getElementById("fa-label") || {}).value || "").trim() || null;
+  if (msg) { msg.textContent = ""; msg.className = "message"; }
+  if (!date) { if (msg) { msg.textContent = "Date manquante."; msg.className = "message error"; } return; }
+  const { error } = await sb.from("feries_admin").upsert({ date, actif, libelle }, { onConflict: "date" });
+  if (error) {
+    console.error("Enregistrement férié :", error);
+    if (msg) { msg.textContent = "Échec de l'enregistrement (droits admin ?)."; msg.className = "message error"; }
+    return;
+  }
+  const f = document.getElementById("ferie-form"); if (f) f.reset();
+  if (msg) { msg.textContent = "Férié enregistré. Régénère le trimestre pour l'appliquer."; msg.className = "message info"; }
+  await chargerFeriesAdmin();
+}
+
+/* Supprime une surcharge (le jour reprend son statut belge calculé). */
+async function supprimerFerieAdmin(date) {
+  const { error } = await sb.from("feries_admin").delete().eq("date", date);
+  if (error) { console.error("Suppression férié :", error); return; }
+  await chargerFeriesAdmin();
+}
+
+const _ferieForm = document.getElementById("ferie-form");
+if (_ferieForm) _ferieForm.addEventListener("submit", enregistrerFerieAdmin);
+
 (async function init() {
   // Arrivée via un lien d'invitation / de réinitialisation reçu par email
   // (#...type=invite ou type=recovery) : on affiche la page « définir le mot de
