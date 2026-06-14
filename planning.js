@@ -1737,16 +1737,24 @@ function genererOffClinic(opts) {
     (a.idx - b.idx));
 
   const out = [];
-  elig.forEach(({ m, droit }) => {
-    let poses = 0;
+  const posesDe = {};     // id -> nb d'off posés CE MOIS
+  const joursPris = {};   // id -> Set(dates déjà prises ce mois)
+  const cumulTrim = {};   // id -> off déjà cumulés sur le TRIMESTRE (mois précédents)
+  elig.forEach((e) => { posesDe[e.m.id] = 0; joursPris[e.m.id] = new Set(); cumulTrim[e.m.id] = e.nbOffsCum; });
+
+  // Tente de poser UN off à `m` : premier jour ouvrable libre respectant TOUTES
+  // les contraintes (week-end/férié, contrat, jours travaillés, pas de shift,
+  // pas de congé, pas le jour/veille/lendemain d'une garde, plafond d'absents,
+  // minimum de résidents). Renvoie true si posé. Mute out / absentParDate / joursPris.
+  const poserUnOff = (m) => {
     for (const d of dates) {
-      if (poses >= droit) break;
       const j = plJourSemaine(d);
       if (j === 6 || j === 7) continue;            // pas le week-end
       if (plEstWeekendOuFerie(d)) continue;        // pas un férié (règles week-end)
       if (!plSousContrat(m, d)) continue;
       const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
       if (!jt.includes(j)) continue;
+      if (joursPris[m.id].has(d)) continue;        // déjà un off posé ce jour (ce mois)
       if (shiftsDe(m.id, d).length > 0) continue;  // déjà un shift / une absence
       if (estBloque(m.id, d)) continue;            // congé / indispo
       if (aGarde(m.id, d)) continue;               // jamais le jour d'une garde
@@ -1766,9 +1774,29 @@ function genererOffClinic(opts) {
 
       out.push({ date: d, shift_type: "off", poste: null, doctor_id: m.id });
       if (absentParDate[d]) absentParDate[d].add(m.id);
-      poses++;
+      joursPris[m.id].add(d);
+      return true;
     }
-  });
+    return false;
+  };
+
+  // ÉQUITÉ TRIMESTRIELLE EN ROUND-ROBIN (révision 2026-06-15) : à CHAQUE pose, on
+  // sert le résident qui a le MOINS d'off cumulés sur le trimestre (départage :
+  // le moins de congés, puis d'absences, puis ordre de fiche), tant qu'il lui
+  // reste du droit (règle des absences conservée : 0-4→2, 5-9→1, 10+→0) ET un
+  // jour plaçable. Conséquence : tout le monde reçoit 1 off avant que quiconque
+  // ait le 2e, et les retards des mois précédents sont rattrapés en priorité →
+  // les TOTAUX trimestriels sont aussi proches que possible (selon la place dispo).
+  let progres = true;
+  while (progres) {
+    progres = false;
+    const candidats = elig.filter((e) => posesDe[e.m.id] < e.droit).sort((a, b) =>
+      ((cumulTrim[a.m.id] + posesDe[a.m.id]) - (cumulTrim[b.m.id] + posesDe[b.m.id])) ||
+      (a.nbConges - b.nbConges) || (a.nbAbs - b.nbAbs) || (a.idx - b.idx));
+    for (const e of candidats) {
+      if (poserUnOff(e.m)) { posesDe[e.m.id]++; progres = true; break; } // re-trier après chaque pose
+    }
+  }
 
   return out;
 }
