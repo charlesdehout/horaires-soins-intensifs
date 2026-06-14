@@ -352,11 +352,15 @@ function quotaBase(med, type) {
   return valeur != null ? valeur : CONGE_TYPES[type].defaut;
 }
 
-/* Résumé compact « annuel/extra/scientifique » pour le tableau admin. */
+/* Résumé compact « annuel/extra/scientifique » pour le tableau admin.
+   Affiche le quota EFFECTIF (proratisé au contrat ET à la quotité fte), identique
+   aux « Compteurs de congés » de l'équipe (révision 2026-06-14). Année académique
+   en cours (1 oct → 30 sep). */
 function quotasResume(med) {
-  return quotaBase(med, "conge_annuel") + "/" +
-         quotaBase(med, "conge_extralegal") + "/" +
-         quotaBase(med, "conge_scientifique");
+  const acad = anneeAcademique(new Date());
+  const f = fractionAnneeSousContrat(acad, med) * fteDe(med);
+  const q = (type) => Math.round(quotaBase(med, type) * f);
+  return q("conge_annuel") + "/" + q("conge_extralegal") + "/" + q("conge_scientifique");
 }
 
 /* Affiche un message dans le formulaire médecin */
