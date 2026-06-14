@@ -34,6 +34,17 @@ alter table public.preferences
     'travailler_ferie', 'conge_ferie'    -- Module 26
   )) not valid;
 
+-- 1b) Le jour de récup est MATÉRIALISÉ en shift 'conge_ferie' (0 h, absence) :
+--     on étend la contrainte shift_type des SHIFTS (sinon la génération échoue
+--     avec « shifts_shift_type_check »). Reprend la liste de module15 + conge_ferie.
+alter table public.shifts drop constraint if exists shifts_shift_type_check;
+alter table public.shifts add constraint shifts_shift_type_check
+  check (shift_type in (
+    'jour','twe','garde_nuit','garde_24h',
+    'recup','repos_garde','off','conge_annuel','conge_scientifique','conge_extralegal',
+    'conge_ferie'                          -- Module 26 : jour de récup férié
+  ));
+
 -- 2) Jour compensatoire porté par la demande « travailler un férié » --------
 alter table public.preferences
   add column if not exists date_compensation date;
