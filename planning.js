@@ -1948,11 +1948,9 @@ function validerPlanning(opts) {
         conflits.push({ date, message: `Jour : ${pourvues.length}/${postesJour.length} stations pourvues` +
           (toleres ? ` (congrès : minimum ${postesJour.length - toleres})` : "") + `.` });
       }
-      postesJour.forEach((c) => {
-        if (occupants[c] && occupants[c].length > 1) {
-          conflits.push({ date, message: `Jour : station ${c} affectée à ${occupants[c].length} médecins.` });
-        }
-      });
+      // (Une station tenue par 2 médecins est une DOUBLURE permise — max 2 par
+      //  unité ; le seul vrai dépassement, ≥3 sur une unité ou ≥2 au Labo de choc,
+      //  est signalé plus bas à l'étape « occupation des unités ».)
       // Affectation sur une unité FERMÉE (retouche manuelle) : signalée.
       if (idxP.fermees[date]) {
         idxP.fermees[date].forEach((c) => {
@@ -2098,11 +2096,19 @@ function validerPlanning(opts) {
   // Avertissement NON bloquant : le plafond est compensable la semaine suivante.
   const eqV = plEquite();
   const heuresParSemaine = {}; // id -> { lundiISO -> h }
+  const gardesSemH = {};       // id -> { lundiISO -> { tot, we } } : explication de la charge
   shifts.forEach((s) => {
+    const lk = plLundiDe(s.date);
+    if (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h") {
+      const g = (gardesSemH[s.doctor_id] = gardesSemH[s.doctor_id] || {});
+      const e = (g[lk] = g[lk] || { tot: 0, we: 0 });
+      e.tot++;
+      const jr = plJourSemaine(s.date);
+      if (jr === 6 || jr === 7 || jr === 5) e.we++; // sam/dim + vendredi soir (entame le WE)
+    }
     let h = PL_HEURES[s.shift_type] || 0;
     if (s.shift_type === "off") h = PL_HEURES_OFFCLINIC; // off-clinic = heures de travail
     if (h <= 0) return;                                  // absences / repos = 0 h
-    const lk = plLundiDe(s.date);
     const m = (heuresParSemaine[s.doctor_id] = heuresParSemaine[s.doctor_id] || {});
     m[lk] = (m[lk] || 0) + h;
   });
@@ -2110,7 +2116,10 @@ function validerPlanning(opts) {
     Object.keys(heuresParSemaine[id]).forEach((lk) => {
       const h = Math.round(heuresParSemaine[id][lk] * 10) / 10;
       if (h > eqV.plafond_hebdo) {
-        conflits.push({ date: lk, message: `${nom(id)} : ${h} h la semaine du ${lk} (> ${eqV.plafond_hebdo} h — N2 indicatif, compensable la semaine suivante).` });
+        const g = (gardesSemH[id] && gardesSemH[id][lk]) || { tot: 0, we: 0 };
+        const expl = `${g.tot} garde${g.tot > 1 ? "s" : ""} cette semaine` +
+          (g.we > 0 ? ` dont ${g.we} de week-end` : "");
+        conflits.push({ date: lk, message: `${nom(id)} : ${h} h la semaine du ${lk} (> ${eqV.plafond_hebdo} h — ${expl} ; N2 indicatif, compensable la semaine suivante).` });
       }
     });
   });
@@ -2289,11 +2298,13 @@ function alertesAbsences(opts) {
     const date = annee + "-" + ms + "-" + String(j).padStart(2, "0");
     const absent = new Set();
     prefs.forEach((p) => {
+      if (p.pref_type === "off_clinic") return; // off-clinic : contournable → ne compte pas
       if (bloquantes.indexOf(p.pref_type) !== -1 && p.start_date <= date && p.end_date >= date)
         absent.add(p.doctor_id);
     });
     shifts.forEach((s) => {
-      if (s.date === date && plEstAbsence(s.shift_type) && s.shift_type !== "repos_garde")
+      if (s.date === date && plEstAbsence(s.shift_type) &&
+          s.shift_type !== "repos_garde" && s.shift_type !== "off") // off-clinic exclu (contournable)
         absent.add(s.doctor_id);
     });
     const n = absent.size;
