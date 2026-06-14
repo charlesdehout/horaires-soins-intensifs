@@ -121,8 +121,8 @@ testable sous Node (`test_planning.js`, ~59 cas).
 - **Concentration des gardes de nuit** (M12c, souple) : à déficit strictement égal, on
   privilégie le médecin ayant gardé le plus récemment (regroupe les nuits sans coût
   d'équité). Tunable `EQUITE.concentration_*`.
-- **Plafond 60 h/semaine** souple, **plancher horaire** : avertissements non bloquants.
-- **Quotité (FTE) — révision 2026-06-14** : la quotité ne réduit QUE les **journées de station**. Un mi-temps présent tous les jours fait **autant de gardes** qu'un plein temps (gardes réparties par présence, jamais par le FTE) ; son **quota de congés** est **proratisé à sa quotité** ; ses journées de **station sont plafonnées** à sa cible hebdo (`weekly_hours_target`, ≈ référence × FTE), **gardes comprises dans le budget** (une semaine où il garde → peu/pas de station). Plafond **strict** : on laisse plutôt une station en sous-effectif (signalée) que de surcharger un mi-temps. Plein temps (FTE ≥ 1) : aucun plafond.
+- **Plafond 60 h/semaine** souple, **plancher horaire (≥ 90 % de la cible de chacun)** : avertissements non bloquants.
+- **Quotité (FTE) — révision 2026-06-14 (v2)** : équité **normalisée par la quotité** (`heures ÷ fte`). Les **journées de station**, les **gardes de semaine** ET les **week-ends** sont **proratisés au fte** (poids garde/week-end × fte ; plafond station hebdo) → un mi-temps vise un total ≈ `fte × plein temps`. Le **rééquilibrage final** transfère des journées sur la base des heures normalisées (seuil `EQUITE.ecart_heures_max` en heures normalisées) → les temps pleins restent resserrés et le mi-temps est ramené à sa part. **Quota de congés** proratisé au fte. *Limite connue* : un mi-temps résident reste parfois sollicité en garde de semaine au-delà de sa part quand la couverture nuit (≥1 résident) l'exige (effet « bouche-trou »).
 
 ---
 

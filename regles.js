@@ -69,7 +69,7 @@ const COUVERTURE = {
    --------------------------------------------------------------------- */
 const EQUITE = {
   plafond_hebdo:  60,
-  plancher_ratio: 0.85,
+  plancher_ratio: 0.90,
   // Module 12c — CONCENTRATION des gardes de nuit en semaine (préférence N3,
   // souple). « Tendance légère à enchaîner » : à déficit de gardes quasi égal,
   // on privilégie le médecin qui a déjà gardé récemment, pour regrouper un peu

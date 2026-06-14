@@ -40,7 +40,7 @@ function plCouv()        { return _PL_REGLES ? _PL_REGLES.COUVERTURE       : COU
 function plBloq()        { return _PL_REGLES ? _PL_REGLES.PREF_BLOQUANTES  : PREF_BLOQUANTES; }
 /* Paramètres d'équité (Module 12). Repli sur des valeurs par défaut si la
    config n'expose pas EQUITE (compatibilité ascendante). */
-const PL_EQUITE_DEFAUT = { plafond_hebdo: 60, plancher_ratio: 0.85 };
+const PL_EQUITE_DEFAUT = { plafond_hebdo: 60, plancher_ratio: 0.90 };
 function plEquite() {
   const e = _PL_REGLES ? _PL_REGLES.EQUITE : (typeof EQUITE !== "undefined" ? EQUITE : null);
   return e || PL_EQUITE_DEFAUT;
@@ -68,7 +68,7 @@ function plSansContinuite(code) { return PL_STATIONS_SANS_CONTINUITE.indexOf(cod
 
 /* VERSION de l'algorithme — affichée dans le message de génération pour
    vérifier que le navigateur exécute bien le code déployé (cache !). */
-const PL_VERSION = "v2026.06.14-1";
+const PL_VERSION = "v2026.06.14-2";
 
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
@@ -82,7 +82,7 @@ const PL_HEURES_OFFCLINIC = 10.5;
    - 'repos_garde' : repos OBLIGATOIRE post-garde, matérialisé automatiquement,
      affiché dans le planning mais NON comptabilisé dans les totaux.
    - 'recup'       : repos / récupération posé manuellement, COMPTABILISÉ. */
-const PL_ABSENCES = ["recup", "repos_garde", "off", "conge_annuel", "conge_scientifique", "conge_extralegal"];
+const PL_ABSENCES = ["recup", "repos_garde", "off", "conge_annuel", "conge_scientifique", "conge_extralegal", "conge_ferie"];
 function plEstAbsence(type) { return PL_ABSENCES.indexOf(type) !== -1; }
 
 
@@ -197,6 +197,8 @@ function plNouvelEtat(medecins) {
     // TRAVAILLER ce férié (demande 'travailler_ferie' approuvée). Ces médecins
     // passent en PRIORITÉ à la couverture week-end du férié.
     prioriteFerie: {},
+    // M26 — jours de récup (congé férié) à matérialiser en shift visible.
+    congesFerie: [],
     _congresJour: false, // vrai pendant la génération d'un jour de congrès (plAffecter)
   };
   medecins.forEach((m) => {
@@ -244,7 +246,10 @@ function plIndexerPreferences(preferences, etat) {
     // compensatoire (date_compensation) BLOQUANT, HORS QUOTA (crédité en équité
     // comme un congé, jamais décompté du quota de congés).
     const estFerie = p.pref_type === "travailler_ferie";
-    if (estFerie && p.date_compensation) etat.indispo[p.doctor_id].add(p.date_compensation);
+    if (estFerie && p.date_compensation) {
+      etat.indispo[p.doctor_id].add(p.date_compensation);
+      etat.congesFerie.push({ doctor_id: p.doctor_id, date: p.date_compensation });
+    }
     let d = p.start_date;
     while (d <= p.end_date) {
       if (estBloquant) etat.indispo[p.doctor_id].add(d);
@@ -1120,6 +1125,22 @@ function plIndexerPrePlaces(prePlaces) {
             periodes:[...] (Module 17 : congrès / fermetures, optionnel),
             prePlaces:[...] (Module 19 : shifts épinglés, optionnel) }
    Renvoie { shifts, conflits, stats }. */
+/* M26 — matérialise les jours de RÉCUP (congé férié) en shift visible
+   ('conge_ferie', 0 h) sur la date choisie, s'il tombe dans la période générée
+   et que le médecin n'y a pas déjà un shift. Rend le jour « pris en compte »
+   visible au calendrier et aux compteurs. */
+function plEmettreCongesFerie(sortie, etat, dates) {
+  if (!etat.congesFerie || !etat.congesFerie.length) return;
+  const within = dates ? new Set(dates) : null;
+  const dejaPose = new Set(sortie.map((s) => s.date + "|" + s.doctor_id));
+  etat.congesFerie.forEach((c) => {
+    if (within && !within.has(c.date)) return;             // hors période générée
+    if (dejaPose.has(c.date + "|" + c.doctor_id)) return;  // déjà un shift ce jour
+    sortie.push({ date: c.date, shift_type: "conge_ferie", poste: null, doctor_id: c.doctor_id });
+    dejaPose.add(c.date + "|" + c.doctor_id);
+  });
+}
+
 function genererPlanning(opts) {
   const annee = opts.annee;
   const mois = opts.mois;
@@ -1161,6 +1182,8 @@ function genererPlanning(opts) {
   plCompleterMinimumHeures(sortie, medecins, etat, plDatesDuMois(annee, mois));
   // Correction finale avant brouillon : écart d'heures resserré au maximum.
   plReequilibrerHeures(sortie, medecins, etat);
+
+  plEmettreCongesFerie(sortie, etat, plDatesDuMois(annee, mois)); // M26 — jours de récup visibles
 
   const stats = medecins.map((m) => ({
     id: m.id,
@@ -1395,6 +1418,12 @@ function plReequilibrerHeures(sortie, medecins, etat) {
   const heures = {}; const occupe = {}; const unitesSem = {}; // id -> { lundi -> Set(postes jour) }
   const hSem = {}; // id -> { lundi -> heures TOTALES de la semaine } (plafond mi-temps, local)
   medecins.forEach((m) => { heures[m.id] = 0; occupe[m.id] = new Set(); unitesSem[m.id] = {}; hSem[m.id] = {}; });
+  // ÉQUITÉ NORMALISÉE PAR LA QUOTITÉ (révision 2026-06-14) : on compare les
+  // heures RAPPORTÉES AU FTE (heures ÷ fte). Le seuil reste exprimé en heures
+  // normalisées → les temps pleins restent resserrés (≤ seuil) ET un mi-temps
+  // est ramené à ~fte × (heures d'un plein temps), réglant son sur-travail.
+  const fteR = {}; medecins.forEach((m) => { fteR[m.id] = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1; });
+  const hNorm = (id) => heures[id] / fteR[id];
   sortie.forEach((s) => {
     if (heures[s.doctor_id] === undefined) return;
     heures[s.doctor_id] += H(s.shift_type);
@@ -1437,12 +1466,12 @@ function plReequilibrerHeures(sortie, medecins, etat) {
   const actifs = medecins.filter((m) => heures[m.id] > 0 || occupe[m.id].size > 0 ||
     medecins.length <= 2 || plSousContrat(m, etat.debutPeriode));
   for (let iter = 0; iter < 80; iter++) {
-    const tri = actifs.slice().sort((a, b) => heures[b.id] - heures[a.id]);
+    const tri = actifs.slice().sort((a, b) => hNorm(b.id) - hNorm(a.id));
     let bouge = false;
     for (let hi = 0; hi < tri.length && !bouge; hi++) {
       for (let bi = tri.length - 1; bi > hi && !bouge; bi--) {
         const haut = tri[hi], bas = tri[bi];
-        if (heures[haut.id] - heures[bas.id] <= seuil) break;
+        if (hNorm(haut.id) - hNorm(bas.id) <= seuil) break;
         // Journées de station transférables du plus chargé (semaine, hors WE).
         for (const s of sortie) {
           if (s.doctor_id !== haut.id || s.shift_type !== "jour") continue;
@@ -1522,7 +1551,8 @@ function genererTrimestre(opts) {
         if (jr === 6 || jr === 7) dispoWeekend++;
       });
     });
-    etat.poidsWeekend[m.id] = dispoWeekend; // (plus de pondération par le fte)
+    const fteW = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1;
+    etat.poidsWeekend[m.id] = dispoWeekend * fteW; // WE proratisés au fte (mi-temps : moins de WE)
   });
   moisTrim.forEach((mois) => {
     // Reset MENSUEL des compteurs de GARDES + poids garde = présence du mois.
@@ -1537,7 +1567,8 @@ function genererTrimestre(opts) {
         if (!plDispoStatique(m, date, indispoSet, dispoSet)) return;
         dispo++;
       });
-      etat.poidsGarde[m.id] = dispo;          // gardes égales à présence égale
+      const fteG = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1;
+      etat.poidsGarde[m.id] = dispo * fteG;   // gardes de semaine proratisées au fte
     });
     plDatesDuMois(annee, mois).forEach((date) => {
       const pp = ppParDate[date] || [];
@@ -1573,6 +1604,9 @@ function genererTrimestre(opts) {
   }
   // Correction finale avant brouillon : écart d'heures resserré au maximum.
   plReequilibrerHeures(sortie, medecins, etat);
+
+  // M26 — jours de récup (congé férié) visibles sur tout le trimestre.
+  plEmettreCongesFerie(sortie, etat, moisTrim.reduce((a, mo) => a.concat(plDatesDuMois(annee, mo)), []));
 
   const stats = medecins.map((m) => ({
     id: m.id,
@@ -2155,13 +2189,16 @@ function validerEquite(shifts, medecins, preferences) {
     const cible = (medById[id] && medById[id].weekly_hours_target) ? medById[id].weekly_hours_target : 52;
     return { id, charge: (heuresTotales[id] + (creditConge[id] || 0)) / cible, heures: heuresTotales[id] };
   });
-  if (charges.length >= 2) {
-    const moyenne = charges.reduce((a, c) => a + c.charge, 0) / charges.length;
-    const seuil = eq.plancher_ratio * moyenne;
+  // PLANCHER 90 % (révision 2026-06-14) : chacun doit atteindre AU MOINS
+  // `plancher_ratio` (défaut 90 %) de SA cible contractuelle (heures ÷ cible,
+  // congés crédités) — équité normalisée par la quotité (un mi-temps est jugé
+  // sur SA cible). En-dessous = signalé (rééquilibrage agressif déjà tenté).
+  if (charges.length >= 1) {
+    const seuil = (typeof eq.plancher_ratio === "number" && eq.plancher_ratio > 0) ? eq.plancher_ratio : 0.90;
     charges.forEach((c) => {
-      if (moyenne > 0 && c.charge < seuil) {
-        const pct = Math.round((c.charge / moyenne) * 100);
-        conflits.push({ date: dateAncre, message: `${nom(c.id)} : sous le plancher d'équilibre du trimestre (${Math.round(c.heures * 10) / 10} h, ~${pct} % de la charge moyenne).` });
+      if (c.charge < seuil - 1e-9) {
+        const pct = Math.round(c.charge * 100);
+        conflits.push({ date: dateAncre, message: `${nom(c.id)} : sous le plancher d'équilibre (${Math.round(c.heures * 10) / 10} h, ~${pct} % de sa cible ; minimum ${Math.round(seuil * 100)} %).` });
       }
     });
   }

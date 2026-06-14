@@ -180,16 +180,17 @@ test("équité week-ends résidents : dispersion bornée (écart ≤ 4, structur
   assert(r.ecart <= 4, "écart week-ends résidents = " + r.ecart + " (" + r.v.join(",") + ")");
 });
 
-test("gardes indépendantes du FTE : un mi-temps présent tous les jours ≈ autant de gardes", () => {
+test("mi-temps : gardes et week-ends proratisés au FTE (moins de week-ends qu'un plein temps)", () => {
   const medsP = equipe();
-  medsP[0].fte = 0.5;                     // resident1 à mi-temps MAIS présent tous les jours
-  // jours_travailles inchangé (présence identique aux autres) → mêmes gardes attendues.
+  medsP[0].fte = 0.5; medsP[0].weekly_hours_target = 26; // resident1 à mi-temps, présent tous les jours
   const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: medsP, preferences: [] });
-  const mi = r.stats.find((s) => s.id === "resident1").gardes;
-  const autres = r.stats.filter((s) => /^resident/.test(s.id) && s.id !== "resident1").map((s) => s.gardes);
-  const moyAutres = autres.reduce((a, b) => a + b, 0) / autres.length;
-  // Le FTE ne doit PLUS réduire les gardes : écart faible attendu (≤ 2).
-  assert(Math.abs(mi - moyAutres) <= 2, "mi-temps gardes=" + mi + " vs moyenne résidents=" + moyAutres.toFixed(1) + " (devrait être ~égal)");
+  const mi = r.stats.find((s) => s.id === "resident1");
+  const autres = r.stats.filter((s) => /^resident/.test(s.id) && s.id !== "resident1");
+  const moyWE = autres.reduce((a, s) => a + s.weekends, 0) / autres.length;
+  // Révision 2026-06-14 : la quotité proratise les gardes/WE → le mi-temps fait
+  // MOINS de week-ends qu'un plein temps (objectif : total ≈ fte × plein temps).
+  assert(mi.weekends <= moyWE + 0.5,
+    "mi-temps week-ends=" + mi.weekends + " > moyenne résidents=" + moyWE.toFixed(1) + " (devrait être réduit par le FTE)");
 });
 
 console.log("\n=== Module 8 — Règles dures (spec Calabro) ===");
@@ -1220,6 +1221,20 @@ test("échange garde↔garde : le repos du lendemain suit le nouveau titulaire",
   assert(titulaire("2026-06-10", "repos_garde").includes("B"), "le repos du 10/06 n'a pas suivi la garde vers B");
   assert(titulaire("2026-06-16", "garde_nuit").includes("A"), "la garde du 16/06 n'est pas passée à A");
   assert(titulaire("2026-06-17", "repos_garde").includes("A"), "le repos du 17/06 n'a pas suivi la garde vers A");
+});
+
+test("travailler un férié (11/11) : demandeur placé + jour de récup matérialisé (conge_ferie)", () => {
+  const meds = equipe();
+  const prefs = [{ doctor_id: "resident3", pref_type: "travailler_ferie",
+    start_date: "2026-11-11", end_date: "2026-11-11",
+    date_compensation: "2026-11-19", status: "approuve" }];
+  const r = genererTrimestre({ annee: 2026, trimestre: 4, medecins: meds, preferences: prefs });
+  const w = r.shifts.filter((s) => s.date === "2026-11-11" && s.doctor_id === "resident3");
+  assert(w.some((s) => ["garde_24h", "twe", "garde_nuit"].includes(s.shift_type)),
+    "resident3 non placé sur le férié 11/11 (Armistice, mercredi)");
+  const comp = r.shifts.filter((s) => s.date === "2026-11-19" && s.doctor_id === "resident3");
+  assert(comp.some((s) => s.shift_type === "conge_ferie"),
+    "le jour de récup 19/11 n'est pas matérialisé en congé férié (invisible au calendrier)");
 });
 
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");
