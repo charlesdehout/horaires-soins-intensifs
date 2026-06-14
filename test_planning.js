@@ -1189,5 +1189,38 @@ test("férié éditable : RETRAIT d'un férié belge le rend ouvrable (stations 
     "le 21/07 retiré des fériés devrait être un jour ouvré (stations de jour=" + stations + ")");
 });
 
+console.log("\n=== Échanges — le repos post-garde suit la garde ===");
+
+test("échange garde↔garde : le repos du lendemain suit le nouveau titulaire", () => {
+  const eq = [
+    { id: "A", name: "A", grade: "resident" },
+    { id: "B", name: "B", grade: "resident" },
+    { id: "D", name: "D", grade: "assistant_specialiste" },
+  ];
+  const shifts = [
+    { id: "gA", date: "2026-06-09", shift_type: "garde_nuit", doctor_id: "A" },
+    { id: "gA2", date: "2026-06-09", shift_type: "garde_nuit", doctor_id: "D" },
+    { id: "rA", date: "2026-06-10", shift_type: "repos_garde", doctor_id: "A" },
+    { id: "gB", date: "2026-06-16", shift_type: "garde_nuit", doctor_id: "B" },
+    { id: "gB2", date: "2026-06-16", shift_type: "garde_nuit", doctor_id: "D" },
+    { id: "rB", date: "2026-06-17", shift_type: "repos_garde", doctor_id: "B" },
+  ];
+  const res = validerEchange(shifts, "gA", "gB", eq);
+  assert(res.ok, "échange refusé à tort : " + res.message);
+  // Application des changes pour vérifier l'état final.
+  const map = {}; shifts.forEach((s) => (map[s.id] = { ...s }));
+  (res.changes || []).forEach((c) => {
+    if (c.supprimer) delete map[c.id];
+    else if (c.creer) map["new" + c.creer.date] = c.creer;
+    else if (c.id && c.doctor_id && map[c.id]) map[c.id].doctor_id = c.doctor_id;
+  });
+  const titulaire = (date, type) => Object.values(map)
+    .filter((s) => s.date === date && s.shift_type === type).map((s) => s.doctor_id);
+  assert(titulaire("2026-06-09", "garde_nuit").includes("B"), "la garde du 09/06 n'est pas passée à B");
+  assert(titulaire("2026-06-10", "repos_garde").includes("B"), "le repos du 10/06 n'a pas suivi la garde vers B");
+  assert(titulaire("2026-06-16", "garde_nuit").includes("A"), "la garde du 16/06 n'est pas passée à A");
+  assert(titulaire("2026-06-17", "repos_garde").includes("A"), "le repos du 17/06 n'a pas suivi la garde vers A");
+});
+
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");
 process.exit(reussis === total ? 0 : 1);

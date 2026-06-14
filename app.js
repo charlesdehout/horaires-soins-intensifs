@@ -3009,6 +3009,8 @@ const COMPTEURS_COLS = [
   { key: "gardes",   label: "Gardes",       num: true },
   { key: "weekends", label: "Week-ends",    num: true },
   { key: "tours",    label: "Tours",        num: true },
+  // Diagnostic mi-temps : journées de STATION en semaine (hors gardes).
+  { key: "joursSemaine", label: "Jours sem.", num: true },
   { key: "offs",     label: "Off",          num: true },
   // Compteurs INFORMATIFS (non limitants) :
   { key: "reposGarde",   label: "Repos g.",  num: true },
@@ -3159,7 +3161,7 @@ async function majCompteurs() {
 
   // 1) Données par médecin (toutes les colonnes, prêtes au tri).
   const lignes = meds.map((m) => {
-    const st = stats[m.id] || { heures: 0, gardes: 0, weekends: 0, tours: 0, offs: 0, repos: 0, reposGarde: 0 };
+    const st = stats[m.id] || { heures: 0, gardes: 0, weekends: 0, tours: 0, offs: 0, repos: 0, reposGarde: 0, joursSemaine: 0 };
     const cibleHebdo = m.weekly_hours_target || 52;
     const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
     // Jours de congé tombant sur un jour travaillable du médecin.
@@ -3179,7 +3181,7 @@ async function majCompteurs() {
       gradeCode: m.grade, // pour la pastille colorée
       heures: st.heures, cible: Math.max(0, Math.round(cibleBrute - reduction)), moyHebdo,
       cibleBrute: Math.round(cibleBrute), reductionConge: Math.round(reduction), joursConge,
-      gardes: st.gardes, weekends: st.weekends, tours: st.tours, offs: st.offs, repos: st.repos,
+      gardes: st.gardes, weekends: st.weekends, tours: st.tours, joursSemaine: st.joursSemaine || 0, offs: st.offs, repos: st.repos,
       reposGarde: st.reposGarde || 0, nonPlanifies: compterNonPlanifies(m),
     };
   });
@@ -3225,7 +3227,7 @@ async function majCompteurs() {
     tdMoy.textContent = lg.moyHebdo ? lg.moyHebdo + " h" : "—";
     tdMoy.title = "Heures réelles ÷ semaines de présence (congés acceptés déduits).";
     tr.appendChild(tdMoy);
-    [lg.gardes, lg.weekends, lg.tours, lg.offs, lg.reposGarde, lg.nonPlanifies].forEach((v) => {
+    [lg.gardes, lg.weekends, lg.tours, lg.joursSemaine, lg.offs, lg.reposGarde, lg.nonPlanifies].forEach((v) => {
       const td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
     });
     compteursTbody.appendChild(tr);

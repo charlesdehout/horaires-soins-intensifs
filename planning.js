@@ -2195,13 +2195,16 @@ function compterParMedecin(shifts) {
   const stats = {}; // doctorId -> { heures, gardes, weekends, tours, offs }
   (shifts || []).forEach((s) => {
     const st = stats[s.doctor_id] ||
-      (stats[s.doctor_id] = { heures: 0, gardes: 0, weekends: 0, tours: 0, offs: 0, repos: 0, reposGarde: 0 });
+      (stats[s.doctor_id] = { heures: 0, gardes: 0, weekends: 0, tours: 0, offs: 0, repos: 0, reposGarde: 0, joursSemaine: 0 });
     st.heures += PL_HEURES[s.shift_type] || 0;
     // Off-clinic crédité comme heures de travail (§9).
     if (s.shift_type === "off") { st.heures += PL_HEURES_OFFCLINIC; st.offs++; }
     if (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h") st.gardes++;
     // Tour de week-end (TWE) : on en compte le total.
     if (s.shift_type === "twe") st.tours++;
+    // Jours POSTÉS EN SEMAINE : une des 7 stations un jour ouvré (hors gardes).
+    // Diagnostic mi-temps : isole la charge de station de la charge de gardes.
+    if (s.shift_type === "jour") st.joursSemaine++;
     // Repos / récupération posé manuellement (comptabilisé). Le repos de garde
     // automatique ('repos_garde') est volontairement EXCLU des totaux : il est
     // seulement affiché dans le planning.
