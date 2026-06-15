@@ -4170,7 +4170,7 @@ function construireSemainesSheet(shifts, prefs) {
   const weeks = [];
   Object.keys(semaines).sort().forEach((lundi) => {
     const jours = [0, 1, 2, 3, 4, 5, 6].map((k) => addJ(lundi, k));
-    const rows = [[""].concat(jours.map((iso, i) => JOURS[i] + " " + fmtJJMM(iso)))];
+    const rows = [["Poste"].concat(jours.map((iso, i) => JOURS[i] + " " + fmtJJMM(iso)))];
     stations.forEach(([lib, code]) => {
       rows.push([lib].concat(jours.map((iso) => cell(iso, (s) => s.poste === code && (s.shift_type === "jour" || s.shift_type === "garde_24h")))));
     });
