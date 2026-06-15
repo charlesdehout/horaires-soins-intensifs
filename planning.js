@@ -68,7 +68,7 @@ function plSansContinuite(code) { return PL_STATIONS_SANS_CONTINUITE.indexOf(cod
 
 /* VERSION de l'algorithme — affichée dans le message de génération pour
    vérifier que le navigateur exécute bien le code déployé (cache !). */
-const PL_VERSION = "v2026.06.15-4";
+const PL_VERSION = "v2026.06.15-2";
 
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
@@ -1260,13 +1260,6 @@ function plReequilibrerGardes(sortie, medecins, etat) {
     parDoc[s.doctor_id].add(s.date);
     if (estG(s.shift_type)) { gardesDates[s.doctor_id].add(s.date); compte[s.doctor_id]++; }
   });
-  // ÉQUITÉ DES GARDES NORMALISÉE PAR LE FTE (révision 2026-06-15) : on compare
-  // le compte de gardes RAPPORTÉ AU FTE. Un mi-temps (fte 0,5) vise donc ~la
-  // moitié des gardes d'un plein temps (et non autant) ; les pleins temps
-  // restent égaux entre eux, indépendamment des congés (la cible ne dépend que
-  // de la quotité, pas de la présence).
-  const fteG = {}; medecins.forEach((m) => { fteG[m.id] = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1; });
-  const norm = (id) => compte[id] / fteG[id];
   const peutRecevoir = (m, d) => {
     if (!plSousContrat(m, d)) return false;
     const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
@@ -1288,14 +1281,14 @@ function plReequilibrerGardes(sortie, medecins, etat) {
     for (const grade of grades) {
       const pool = medecins.filter((m) => m.grade === grade);
       if (pool.length < 2) continue;
-      const tri = pool.slice().sort((a, b) => norm(b.id) - norm(a.id));
+      const tri = pool.slice().sort((a, b) => compte[b.id] - compte[a.id]);
       // Recherche PERSÉVÉRANTE : tous les couples (excédentaire, déficitaire)
       // avec écart > 2, et toutes les gardes de début de semaine transférables
       // de l'excédentaire — pas seulement le premier couple/candidat.
       let haut = null, bas = null, cand = null;
       for (let hi = 0; hi < tri.length && !cand; hi++) {
         for (let bi = tri.length - 1; bi > hi && !cand; bi--) {
-          if (norm(tri[hi].id) - norm(tri[bi].id) <= 2) break; // écart normalisé (heures/fte) trop faible → couple suivant
+          if (compte[tri[hi].id] - compte[tri[bi].id] <= 2) break; // bas trop proche → couple suivant
           // Lundi→mercredi d'abord (jamais de combo), puis jeudi/vendredi en
           // dernier recours (le combo suivra le nouveau titulaire).
           const cands = sortie.filter((s) => s.doctor_id === tri[hi].id &&
@@ -2407,25 +2400,20 @@ function validerEquite(shifts, medecins, preferences) {
     });
   }
 
-  // --- Équité des gardes ±1, ATTENDU ∝ FTE (révision 2026-06-15) : les gardes
-  //     sont proratisées au temps de travail (un mi-temps en fait ~la moitié).
-  //     L'attendu de chacun = part de fte × total des gardes. Effet double :
-  //     (a) un mi-temps qui fait moins de gardes n'est PLUS signalé à tort ;
-  //     (b) un PLEIN TEMPS qui en fait trop peu (p. ex. parti en vacances) est
-  //     signalé en DÉFICIT — sa cible de gardes ne dépend que de sa quotité, pas
-  //     de sa présence. ---
+  // --- Équité des gardes ±1 : nombre de gardes ÉGAL pour tous (le FTE ne réduit
+  //     plus les gardes ; seul le quota d'heures s'y adapte). L'attendu est donc
+  //     la moyenne simple, sans pondération. ---
   const actifsG = Object.keys(gardes);
   if (actifsG.length >= 2) {
-    const fteDe = (id) => { const m = medById[id]; return (m && typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1; };
-    let totalG = 0, totalFte = 0;
-    actifsG.forEach((id) => { totalG += gardes[id]; totalFte += fteDe(id); });
+    let totalG = 0;
+    actifsG.forEach((id) => { totalG += gardes[id]; });
+    const attendu = totalG / actifsG.length;
     actifsG.forEach((id) => {
-      const attendu = totalFte > 0 ? totalG * (fteDe(id) / totalFte) : totalG / actifsG.length;
       const ecart = gardes[id] - attendu;
       if (ecart > 1) {
-        conflits.push({ date: dateAncre, message: `${nom(id)} : ${gardes[id]} gardes (≈${Math.round(attendu * 10) / 10} attendues au prorata du temps de travail, écart > 1 — N2 indicatif).` });
+        conflits.push({ date: dateAncre, message: `${nom(id)} : ${gardes[id]} gardes (≈${Math.round(attendu * 10) / 10} attendues, écart > 1 — N2 indicatif).` });
       } else if (ecart < -1) {
-        conflits.push({ date: dateAncre, message: `${nom(id)} : ${gardes[id]} gardes (≈${Math.round(attendu * 10) / 10} attendues au prorata du temps de travail, déficit > 1 — N2 indicatif).` });
+        conflits.push({ date: dateAncre, message: `${nom(id)} : ${gardes[id]} gardes (≈${Math.round(attendu * 10) / 10} attendues, déficit > 1 — N2 indicatif).` });
       }
     });
   }
