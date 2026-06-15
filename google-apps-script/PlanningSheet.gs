@@ -48,11 +48,19 @@ function doPost(e) {
           return copy;
         });
         sh.getRange(1, 1, grid.length, nbCols).setValues(grid);
-        // Mise en forme légère : en-tête en gras, 1re colonne en gras, figées.
+        // En-tête + 1re colonne en gras, volets figés.
         sh.getRange(1, 1, 1, nbCols).setFontWeight("bold");
         sh.getRange(1, 1, grid.length, 1).setFontWeight("bold");
         sh.setFrozenRows(1);
         sh.setFrozenColumns(1);
+        // Rendu type export Excel : noms EMPILÉS (retour à la ligne), alignés en
+        // haut, hauteur de lignes UNIFORME, colonnes assez larges pour un nom.
+        var plage = sh.getRange(1, 1, grid.length, nbCols);
+        plage.setWrap(true);
+        plage.setVerticalAlignment("top");
+        sh.setColumnWidth(1, 150);                       // colonne des libellés
+        if (nbCols > 1) sh.setColumnWidths(2, nbCols - 1, 150); // colonnes des jours
+        sh.setRowHeights(1, grid.length, 40);            // même dimension pour toutes les lignes
       }
       ecrits.push(w.name);
     });

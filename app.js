@@ -4155,13 +4155,14 @@ function construireSemainesSheet(shifts, prefs) {
   const fmtJJMM = (iso) => iso.slice(8, 10) + "/" + iso.slice(5, 7);
   const fmtTab = (iso) => iso.slice(8, 10) + "-" + iso.slice(5, 7) + "-" + iso.slice(0, 4);
   const JOURS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
-  const nom = (id) => (carteMedecins[id] && carteMedecins[id].name) || id;
-  const cell = (date, filtre) => shifts.filter((s) => s.date === date && filtre(s)).map((s) => nom(s.doctor_id)).sort().join(", ");
+  const noms = (typeof construireNomsCourts === "function") ? construireNomsCourts(carteMedecins) : {};
+  const nom = (id) => noms[id] || (carteMedecins[id] && carteMedecins[id].name) || id;
+  const cell = (date, filtre) => shifts.filter((s) => s.date === date && filtre(s)).map((s) => nom(s.doctor_id)).sort().join("\n");
   const cellConge = (date, types) => {
     const set = new Set();
     shifts.forEach((s) => { if (s.date === date && types.includes(s.shift_type)) set.add(nom(s.doctor_id)); });
     prefs.forEach((p) => { if (types.includes(p.pref_type) && p.start_date <= date && p.end_date >= date) set.add(nom(p.doctor_id)); });
-    return [...set].sort().join(", ");
+    return [...set].sort().join("\n");
   };
   const stations = [["USI 1", "usi1"], ["USI 2", "usi2"], ["USI 3", "usi3"], ["USI 4", "usi4"], ["USI 5", "usi5"], ["USI Bordet", "bordet"], ["Labo de choc", "labo_choc"]];
   const semaines = {};
@@ -4192,7 +4193,9 @@ function construireSemainesSheet(shifts, prefs) {
 async function pousserVersSheet(raison) {
   const cfg = await chargerReglagesSheetValeurs();
   if (!cfg.url) return { skip: true };
-  const { data: scheds } = await sb.from("schedules").select("year, month, status").eq("status", "published");
+  // Tous les mois GÉNÉRÉS (publiés ou brouillons) → le trimestre entier apparaît,
+  // pas seulement le mois publié (sinon novembre/décembre manquaient).
+  const { data: scheds } = await sb.from("schedules").select("year, month, status");
   if (!scheds || !scheds.length) return { vide: true };
   let allShifts = [], allPrefs = [];
   for (const s of scheds) {
