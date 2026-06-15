@@ -109,6 +109,22 @@ testable sous Node (`test_planning.js`, ~59 cas).
 
 ---
 
+### Gardes proratisées au temps de travail (fte) — révision 2026-06-15
+- **Les gardes sont désormais proratisées au fte** : un mi-temps (0,5) vise ~la
+  moitié des gardes d'un plein temps, un 0,8 environ 80 % (`plReequilibrerGardes`
+  compare le compte de gardes RAPPORTÉ AU FTE). Corrige l'effet « bouche-trou »
+  qui faisait faire à un mi-temps presque autant de gardes qu'un plein temps.
+- **Cible de gardes indépendante de la présence** : pour un même grade/fte, la
+  cible ne dépend que de la **quotité**, pas du nombre de jours de congé — un
+  temps plein parti en vacances vise le **même nombre de gardes** (rattrapées sur
+  ses semaines présentes). Limite : la contrainte « ≥1 résident/nuit » et la
+  faisabilité (peu de nuits libres après de longues vacances) peuvent laisser un
+  résidu d'écart, désormais **signalé** par l'alerte ci-dessous.
+- **Alerte d'équité des gardes ∝ fte** (`validerEquite`) : l'attendu de chacun =
+  part de fte × total des gardes. Un mi-temps qui fait moins de gardes n'est plus
+  signalé à tort ; un plein temps en déficit (vacances) ou un mi-temps en excès
+  (bouche-trou) est mis en évidence.
+
 ## 5. Équité
 
 - Mesurée **INTRA-grade** : résidents entre eux, A/S entre eux (l'écart inter-grade est

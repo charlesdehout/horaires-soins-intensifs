@@ -1129,7 +1129,9 @@ console.log("\n=== Mi-temps (quotité fte) — plafond des journées de station 
    - faire NETTEMENT moins de JOURNÉES DE STATION qu'un plein temps (plafond) ;
    - garder AUTANT de GARDES qu'un plein temps (les gardes ne sont jamais
      plafonnées par le fte). */
-test("mi-temps : moitié moins de stations, mais autant de gardes qu'un plein temps", () => {
+test("mi-temps : stations ET gardes proratisées au fte (~moitié à 0,5)", () => {
+  // Révision 2026-06-15 : les gardes sont désormais proratisées au fte (un
+  // mi-temps fait ~la moitié des gardes d'un plein temps), comme les stations.
   const meds = equipe();
   meds[0].fte = 0.5; meds[0].weekly_hours_target = 26; // resident1 = mi-temps, dispo 7j/7
   const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: meds, preferences: [] });
@@ -1146,10 +1148,17 @@ test("mi-temps : moitié moins de stations, mais autant de gardes qu'un plein te
   assert(stationJ["resident1"] < 0.65 * moyStation,
     "mi-temps : " + stationJ["resident1"] + " j. station >= 65 % du plein temps (" +
     moyStation.toFixed(1) + ") — le plafond ne mord pas");
-  // Gardes INCHANGÉES : pas RÉDUITES par le fte (au moins la moyenne − 1).
-  assert(gardes["resident1"] >= moyGardes - 1,
-    "mi-temps : " + gardes["resident1"] + " gardes < moyenne pleins temps - 1 (" +
-    moyGardes.toFixed(1) + ") — le fte ne doit pas réduire les gardes");
+  // Gardes PRORATISÉES : nettement MOINS qu'un plein temps (réduction réelle).
+  // NB : la contrainte « ≥1 résident/nuit » peut empêcher d'atteindre pile la
+  // moitié quand le vivier de résidents est restreint (effet bouche-trou) — la
+  // garantie robuste est donc « strictement réduit », pas « exactement la moitié ».
+  assert(gardes["resident1"] < moyGardes - 1,
+    "mi-temps : " + gardes["resident1"] + " gardes pas réduites vs pleins temps (" +
+    moyGardes.toFixed(1) + ")");
+  // Jamais SOUS-servi en normalisé (le fte ne doit pas le pénaliser en dessous).
+  assert(gardes["resident1"] / 0.5 >= moyGardes - 2,
+    "mi-temps : gardes/fte=" + (gardes["resident1"] / 0.5).toFixed(1) + " sous la moyenne pleins temps (" +
+    moyGardes.toFixed(1) + ")");
 });
 
 /* Un PLEIN TEMPS n'est jamais plafonné : il tient autant de stations que ses
