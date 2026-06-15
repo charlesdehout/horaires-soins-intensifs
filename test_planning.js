@@ -789,15 +789,34 @@ test("échange refusé : le receveur a déjà un shift le même jour", () => {
   assert(!r.ok, "échange accepté alors que R2 a déjà un shift le 10/6");
 });
 
-test("échange refusé : le receveur travaille le lendemain de la garde gagnée", () => {
+test("échange de garde : la journée du lendemain du receveur passe au cédant (résolu)", () => {
+  // Révision 2026-06-15 : si le NOUVEAU titulaire a une journée le lendemain de
+  // la garde gagnée, elle est confiée au CÉDANT (libéré ce jour-là) au lieu de
+  // refuser l'échange.
+  const meds = [{ id: "R1", grade: "resident", name: "R1" }, { id: "R2", grade: "resident", name: "R2" }];
+  const shifts = [
+    { id: "g1", date: "2026-06-10", shift_type: "garde_nuit", doctor_id: "R1", poste: null },
+    { id: "g2", date: "2026-06-17", shift_type: "garde_nuit", doctor_id: "R2", poste: null },
+    { id: "j1", date: "2026-06-11", shift_type: "jour", doctor_id: "R2", poste: "usi1" }, // R2 posté le 11 (lendemain de g1)
+  ];
+  const r = validerEchange(shifts, "g1", "g2", meds);
+  assert(r.ok, "échange refusé à tort : " + r.message);
+  assert(r.changes.some((c) => c.id === "j1" && c.doctor_id === "R1"),
+    "la journée du 11/6 n'a pas été transférée au cédant R1");
+});
+
+test("échange de garde refusé si le cédant n'est PAS libre pour reprendre la journée", () => {
+  // Le receveur travaille le lendemain, mais le cédant est déjà occupé ce
+  // jour-là → transfert impossible → refus (repos impossible).
   const meds = [{ id: "R1", grade: "resident", name: "R1" }, { id: "R2", grade: "resident", name: "R2" }];
   const shifts = [
     { id: "g1", date: "2026-06-10", shift_type: "garde_nuit", doctor_id: "R1", poste: null },
     { id: "g2", date: "2026-06-17", shift_type: "garde_nuit", doctor_id: "R2", poste: null },
     { id: "j1", date: "2026-06-11", shift_type: "jour", doctor_id: "R2", poste: "usi1" }, // R2 posté le 11
+    { id: "j0", date: "2026-06-11", shift_type: "jour", doctor_id: "R1", poste: "usi2" }, // R1 déjà posté le 11
   ];
   const r = validerEchange(shifts, "g1", "g2", meds);
-  assert(!r.ok, "échange accepté alors que R2 travaille le lendemain de la garde du 10/6");
+  assert(!r.ok, "échange accepté alors que ni R2 (repos) ni R1 (occupé) ne peuvent tenir le 11/6");
 });
 
 test("combos MAXIMISÉS : la majorité des 24h de week-end sont couplées (jeudi/sam, ven/dim)", () => {

@@ -4414,6 +4414,7 @@ function echResumeChanges(changes, ctx) {
     } else {
       const s = byId[String(c.id)];
       if (s && s.shift_type === "repos_garde") lignes.push("↪ Le repos de garde du " + fmt(s.date) + " passe à " + nom(c.doctor_id) + ".");
+      else if (s && s.shift_type === "jour") lignes.push("↪ La journée du " + fmt(s.date) + " passe à " + nom(c.doctor_id) + " (le receveur de la garde est en repos ce jour-là).");
     }
   });
   return lignes;
@@ -4531,8 +4532,10 @@ async function echAccepter(swap) {
       .update({ status: "accepte", decided_at: new Date().toISOString() })
       .eq("id", swap.id);
     if (e3) throw e3;
-    echMessage("Échange appliqué. ✅", "info");
-    await pousserVersSheetAuto("échange"); // M27 — miroir Google Sheets
+    const _sync = await pousserVersSheetAuto("échange"); // M27 — miroir Google Sheets
+    if (_sync && _sync.ok) echMessage("Échange appliqué et publié dans le Google Sheet. ✅", "info");
+    else if (_sync && _sync.skip) echMessage("Échange appliqué. ⚠️ Miroir Google Sheet non configuré : la mise à jour du Sheet n'a pas été envoyée.", "info");
+    else echMessage("Échange appliqué. ⚠️ Synchro Google Sheet non confirmée (vérifiez l'onglet _synchro du Sheet).", "info");
     if (calendrier) calendrier.refetchEvents();
     chargerEchanges();
     echChargerMesShifts();

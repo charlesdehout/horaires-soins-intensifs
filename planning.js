@@ -2526,6 +2526,29 @@ function validerEchange(shifts, idA, idB, medecins) {
       }
     });
 
+    // 2bis) NOUVEAU (2026-06-15) — le repos du lendemain « pousse » la JOURNÉE :
+    //    si le NOUVEAU titulaire d'une garde a une journée (« jour ») le
+    //    lendemain de cette garde, elle ne peut subsister (il passe en repos de
+    //    garde). On la confie à l'ANCIEN titulaire, libéré ce jour-là puisqu'il
+    //    a cédé la garde. Évite le refus « travaille le lendemain » quand un
+    //    simple transfert de journée suffit. Si l'ancien titulaire n'est PAS
+    //    libre ce lendemain, on ne transfère pas → l'étape 4 refusera proprement.
+    if (gA === "garde") {
+      sens.forEach(([g, ancien, nouveau]) => {
+        const lend = plAdd(g.date, 1);
+        const j = (shifts || []).find((s) => !suppr.has(s.id) && s.shift_type === "jour" &&
+          s.date === lend && docDe(s) === nouveau);
+        if (!j) return;
+        // L'ancien titulaire est-il libre ce lendemain pour reprendre la journée ?
+        const ancienOccupe = (shifts || []).some((s) => !suppr.has(s.id) && s.id !== j.id &&
+          s.date === lend && docDe(s) === ancien);
+        const ancienGardeVeille = aGardeApres(ancien, g.date); // garde la veille du lendemain
+        if (ancienOccupe || ancienGardeVeille) return; // non résoluble → refus en étape 4
+        changes.push({ id: j.id, doctor_id: ancien });
+        reaff[j.id] = ancien;
+      });
+    }
+
     // 3) Règles de composition de garde APRÈS échange (≥1 résident, jamais 2 A/S).
     const byId = {}; (medecins || []).forEach((m) => { byId[m.id] = m; });
     for (const date of [sA.date, sB.date]) {
