@@ -1621,6 +1621,7 @@ async function initCalendrier() {
       datesSet: () => {
         if (medecinCourant && medecinCourant.role === "admin") {
           rafraichirPanneauAdmin(); // rafraîchit aussi la grille si elle est visible
+          if (typeof chargerCompteursConges === "function") chargerCompteursConges(); // compteur congés admin suit le mois affiché
         } else if (vueActive === "grille") {
           construireGrille();
         }
@@ -2631,7 +2632,10 @@ async function chargerCompteursConges() {
   const table = document.getElementById("conges-admin-table");
   const empty = document.getElementById("conges-admin-empty");
   const titre = document.getElementById("conges-admin-titre");
-  const acad = anneeAcademique(new Date());
+  // Suit l'année académique du MOIS AFFICHÉ (comme le compteur médecin), sinon
+  // un congé validé pour un trimestre d'une AUTRE année académique que celle du
+  // jour n'était ni récupéré ni compté (révision 2026-06-15).
+  const acad = (typeof anneeAcademiqueAffichee === "function") ? anneeAcademiqueAffichee() : anneeAcademique(new Date());
   if (titre) titre.textContent = "Compteurs de congés — année académique " + acad + "–" + (acad + 1);
   const debA = acad + "-10-01", finA = (acad + 1) + "-09-30";
 
@@ -3499,8 +3503,9 @@ if (publierBtn) publierBtn.addEventListener("click", async () => {
   if (error) { messageGeneration("Erreur de publication : " + error.message, "error"); return; }
   // Snapshot du mois publié → restaurable plus tard (Module 22).
   await sauvegarderHoraireMois("publication", planningMois.annee, planningMois.mois);
-  pousserVersSheetAuto("publication"); // M27 — miroir Google Sheets (best-effort)
-  messageGeneration("Planning " + planningMois.mois + "/" + planningMois.annee + " publié. ✅", "info");
+  const _sync = await pousserVersSheetAuto("publication"); // M27 — miroir Google Sheets
+  const _okSync = (_sync && _sync.ok) ? " · miroir Sheet synchronisé ✅" : (_sync && _sync.skip ? "" : " · ⚠️ miroir Sheet non synchronisé");
+  messageGeneration("Planning " + planningMois.mois + "/" + planningMois.annee + " publié. ✅" + _okSync, "info");
   rafraichirPanneauAdmin();
 });
 
@@ -3561,7 +3566,7 @@ if (restaurerTrimBtn) restaurerTrimBtn.addEventListener("click", async () => {
   }
   messageGeneration("Restauration (brouillon) : " + mois_ok + " mois restauré(s)" +
     (mois_sans ? ", " + mois_sans + " sans sauvegarde publiée." : "."), "info");
-  pousserVersSheetAuto("restauration"); // M27 — miroir Google Sheets (best-effort)
+  await pousserVersSheetAuto("restauration"); // M27 — miroir Google Sheets
   rafraichirPanneauAdmin();
 });
 
@@ -4217,8 +4222,11 @@ async function pousserVersSheet(raison) {
 
 /* Best-effort : appelé sur les événements (publication / échange / restauration).
    N'interrompt JAMAIS l'action principale (erreurs avalées). */
-function pousserVersSheetAuto(raison) {
-  try { pousserVersSheet(raison).catch(function () {}); } catch (e) { /* no-op */ }
+async function pousserVersSheetAuto(raison) {
+  // ATTENDU (await) : un fetch no-cors NON attendu peut être interrompu quand la
+  // page se rafraîchit juste après (publication / échange) → la synchro ne
+  // partait pas. On attend donc l'envoi avant de poursuivre. Best-effort.
+  try { return await pousserVersSheet(raison); } catch (e) { return { erreur: true }; }
 }
 
 /* Bouton « Resynchroniser maintenant » (retour utilisateur best-effort). */
@@ -4524,7 +4532,7 @@ async function echAccepter(swap) {
       .eq("id", swap.id);
     if (e3) throw e3;
     echMessage("Échange appliqué. ✅", "info");
-    pousserVersSheetAuto("échange"); // M27 — miroir Google Sheets (best-effort)
+    await pousserVersSheetAuto("échange"); // M27 — miroir Google Sheets
     if (calendrier) calendrier.refetchEvents();
     chargerEchanges();
     echChargerMesShifts();
