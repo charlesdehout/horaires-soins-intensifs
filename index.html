@@ -79,6 +79,7 @@
           <span id="tab-badge-demandes" class="tab-badge hidden"></span></button>
         <button type="button" class="tab tab-admin hidden" data-tab="periodes">Congrès &amp; fermetures</button>
         <button type="button" class="tab tab-admin hidden" data-tab="medecins">Médecins</button>
+        <button type="button" class="tab tab-admin hidden" data-tab="echanges-admin">Échanges</button>
         <button type="button" class="tab tab-doctor hidden" data-tab="prefs">Mes préférences</button>
         <button type="button" class="tab tab-doctor hidden" data-tab="echanges">Échanges
           <span id="tab-badge-echanges" class="tab-badge hidden"></span></button>
@@ -526,6 +527,25 @@
         </table>
         <p id="doctors-empty" class="zone-info hidden">Aucun médecin enregistré pour l'instant.</p>
         </div><!-- /panel-medecins -->
+        <!-- ====== Historique des échanges (lecture seule, admin) ====== -->
+        <div id="panel-echanges-admin" class="tab-panel hidden">
+          <div class="zone-header">
+            <h2>Historique des échanges</h2>
+            <button type="button" id="ech-admin-refresh" class="mini">Rafraîchir</button>
+          </div>
+          <p class="zone-info">
+            Vue en lecture seule de tous les échanges entre médecins (les échanges
+            ne passent pas par une validation admin : ils s'appliquent dès qu'un
+            collègue accepte, si les règles de garde restent respectées).
+          </p>
+          <table id="ech-admin-table" class="data-table">
+            <thead>
+              <tr><th>Date</th><th>Demandeur</th><th>Propose</th><th>Collègue</th><th>Contre</th><th>Note</th><th>Statut</th><th>Décidé le</th></tr>
+            </thead>
+            <tbody id="ech-admin-tbody"></tbody>
+          </table>
+          <p id="ech-admin-empty" class="zone-info hidden">Aucun échange enregistré.</p>
+        </div><!-- /panel-echanges-admin -->
       </div><!-- /admin-zone -->
 
       <!-- ===== Onglet MES PRÉFÉRENCES (Module 3) — médecins ===== -->
@@ -604,23 +624,30 @@
             <h2>Échanges de shifts</h2>
           </div>
           <p class="zone-info">
-            Propose à un collègue d'échanger un de tes shifts <strong>publiés</strong>
-            (à venir) contre l'un des siens, à valeur égale : garde ↔ garde,
-            journée ↔ journée, tour ↔ tour. L'échange n'est appliqué que si le
-            collègue accepte et que les règles de garde restent respectées
-            (un échange de garde transfère aussi le repos de garde).
+            Choisis d'abord le <strong>collègue</strong>, puis vos shifts compatibles
+            (à valeur égale : garde ↔ garde, journée ↔ journée, tour ↔ tour). Un
+            collègue est <strong>grisé</strong> si aucun échange valide n'est possible
+            avec lui (p. ex. il créerait 2 A/S de garde). L'échange n'est appliqué que
+            si le collègue accepte ; un échange de garde transfère aussi le repos de
+            garde, et la journée du lendemain repasse au cédant si besoin.
           </p>
 
           <form id="ech-form" class="doctor-form">
             <div class="form-grid">
               <div>
-                <label for="ech-mien">Mon shift (publié, à venir)</label>
-                <select id="ech-mien" required>
-                  <option value="">— choisir —</option>
+                <label for="ech-medecin">Collègue</label>
+                <select id="ech-medecin" required>
+                  <option value="">— choisir un médecin —</option>
                 </select>
               </div>
               <div>
-                <label for="ech-cible">Contre le shift d'un collègue (même nature)</label>
+                <label for="ech-mien">Mon shift (publié, à venir)</label>
+                <select id="ech-mien" required disabled>
+                  <option value="">— choisir d'abord un médecin —</option>
+                </select>
+              </div>
+              <div>
+                <label for="ech-cible">Contre le shift du collègue (même nature)</label>
                 <select id="ech-cible" required disabled>
                   <option value="">— choisir d'abord mon shift —</option>
                 </select>
@@ -768,34 +795,4 @@
           </div>
           <div>
             <label for="fc-fin">Au</label>
-            <input type="date" id="fc-fin" required />
-          </div>
-          <div>
-            <label for="fc-note">Note (optionnel)</label>
-            <input type="text" id="fc-note" maxlength="200" placeholder="ex. imposé, maladie…" />
-          </div>
-        </div>
-        <p id="fc-msg" class="message"></p>
-        <div class="form-actions">
-          <button type="button" id="fc-ok">Forcer (approuvé)</button>
-          <button type="button" id="fc-annuler" class="secondary">Annuler</button>
-        </div>
-      </div>
-    </div>
-
-  </main>
-
-  <!-- Client Supabase officiel (CDN) -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- Règles métier (config : quotas de congés, jours fériés, postes…) -->
-  <script src="regles.js"></script>
-  <!-- Algorithme de génération du planning (Module 5) -->
-  <script src="planning.js"></script>
-  <!-- FullCalendar (Module 4) — bundle global (vues mois + liste) -->
-  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
-  <!-- ExcelJS (Module 14) — génération de classeurs .xlsx stylés côté navigateur -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
-  <!-- Notre logique applicative -->
-  <script src="app.js"></script>
-</body>
-</html>
+            <input type="date" id="fc-fin" 
