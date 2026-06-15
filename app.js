@@ -4193,18 +4193,17 @@ function construireSemainesSheet(shifts, prefs) {
 async function pousserVersSheet(raison) {
   const cfg = await chargerReglagesSheetValeurs();
   if (!cfg.url) return { skip: true };
-  // Tous les mois GÉNÉRÉS (publiés ou brouillons) → le trimestre entier apparaît,
-  // pas seulement le mois publié (sinon novembre/décembre manquaient).
-  const { data: scheds } = await sb.from("schedules").select("year, month, status");
-  if (!scheds || !scheds.length) return { vide: true };
-  let allShifts = [], allPrefs = [];
-  for (const s of scheds) {
-    const b = bornesMois(s.year, s.month);
-    const d = await donneesMoisExport(b);
-    allShifts = allShifts.concat(d.shifts);
-    allPrefs = allPrefs.concat(d.prefs);
-  }
-  const weeks = construireSemainesSheet(allShifts, allPrefs);
+  if (!Object.keys(carteMedecins).length) await chargerCarteMedecins();
+  // Lecture DIRECTE de tous les shifts générés (indépendant des lignes schedules) :
+  // tout le planning présent en base part vers le Sheet (octobre + novembre + …).
+  const { data: shifts } = await sb.from("shifts").select("date, shift_type, doctor_id, poste");
+  if (!shifts || !shifts.length) return { vide: true };
+  let dmin = shifts[0].date, dmax = shifts[0].date;
+  shifts.forEach((s) => { if (s.date < dmin) dmin = s.date; if (s.date > dmax) dmax = s.date; });
+  const { data: prefs } = await sb.from("preferences")
+    .select("doctor_id, start_date, end_date, pref_type").eq("status", "approuve")
+    .lte("start_date", dmax).gte("end_date", dmin);
+  const weeks = construireSemainesSheet(shifts, prefs || []);
   if (!weeks.length) return { vide: true };
   // POST « no-cors » : la requête part mais la réponse n'est pas lisible (limite
   // Apps Script / CORS). On considère donc l'envoi comme « tire-et-oublie ».

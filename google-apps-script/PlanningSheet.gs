@@ -67,10 +67,17 @@ function doPost(e) {
     // Onglet d'horodatage (pratique pour vérifier la dernière synchro).
     var meta = ss.getSheetByName("_synchro") || ss.insertSheet("_synchro");
     meta.clear();
-    meta.getRange(1, 1, 2, 2).setValues([
-      ["Dernière synchronisation", new Date()],
-      ["Onglets mis à jour", ecrits.join(", ")],
+    var tz = Session.getScriptTimeZone();
+    var horo = Utilities.formatDate(new Date(), tz, "dd/MM/yyyy HH:mm:ss");
+    meta.getRange(1, 1, 4, 2).setValues([
+      ["Dernière synchronisation", horo],
+      ["Raison", String(data.raison || "")],
+      ["Nb d'onglets reçus", ecrits.length],
+      ["Onglets", ecrits.join(", ")],
     ]);
+    meta.getRange(1, 1, 4, 1).setFontWeight("bold");
+    meta.setColumnWidth(1, 190);
+    meta.setColumnWidth(2, 520);
     return _json({ ok: true, weeks: ecrits });
   } catch (err) {
     return _json({ ok: false, error: String(err) });
