@@ -68,7 +68,7 @@ function plSansContinuite(code) { return PL_STATIONS_SANS_CONTINUITE.indexOf(cod
 
 /* VERSION de l'algorithme — affichée dans le message de génération pour
    vérifier que le navigateur exécute bien le code déployé (cache !). */
-const PL_VERSION = "v2026.06.14-2";
+const PL_VERSION = "v2026.06.15-1";
 
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };

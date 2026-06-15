@@ -205,6 +205,9 @@ function afficherEspace(profil) {
   // (avant toute génération / affichage du calendrier).
   chargerFeriesAdmin();
 
+  // M27 — miroir Google Sheets : charge les réglages admin (URL + jeton).
+  if (estAdmin) chargerReglagesSheet();
+
   // Côté admin : liste des médecins. Côté médecin : ses préférences.
   if (estAdmin) chargerMedecins();
   else { chargerPreferences(); initEchanges(); }
@@ -3496,6 +3499,7 @@ if (publierBtn) publierBtn.addEventListener("click", async () => {
   if (error) { messageGeneration("Erreur de publication : " + error.message, "error"); return; }
   // Snapshot du mois publié → restaurable plus tard (Module 22).
   await sauvegarderHoraireMois("publication", planningMois.annee, planningMois.mois);
+  pousserVersSheetAuto("publication"); // M27 — miroir Google Sheets (best-effort)
   messageGeneration("Planning " + planningMois.mois + "/" + planningMois.annee + " publié. ✅", "info");
   rafraichirPanneauAdmin();
 });
@@ -3557,6 +3561,7 @@ if (restaurerTrimBtn) restaurerTrimBtn.addEventListener("click", async () => {
   }
   messageGeneration("Restauration (brouillon) : " + mois_ok + " mois restauré(s)" +
     (mois_sans ? ", " + mois_sans + " sans sauvegarde publiée." : "."), "info");
+  pousserVersSheetAuto("restauration"); // M27 — miroir Google Sheets (best-effort)
   rafraichirPanneauAdmin();
 });
 
@@ -4100,6 +4105,141 @@ async function supprimerFerieAdmin(date) {
 const _ferieForm = document.getElementById("ferie-form");
 if (_ferieForm) _ferieForm.addEventListener("submit", enregistrerFerieAdmin);
 
+/* ===================================================================== */
+/* MODULE 27 — Miroir Google Sheets (push lecture seule du planning publié) */
+/* --------------------------------------------------------------------- */
+/* Réglages admin (URL Web App Apps Script + jeton) stockés dans          */
+/* app_settings. À chaque publication / échange accepté / modif-restau    */
+/* admin, et via le bouton « Resynchroniser », on POSTe la grille hebdo   */
+/* (mêmes lignes que l'export Excel) vers le Web App, qui écrit le Sheet.  */
+/* POST « no-cors » (tire-et-oublie : on n'a pas d'accusé direct).         */
+/* ===================================================================== */
+
+/* Lit les réglages (URL + jeton) depuis la base. */
+async function chargerReglagesSheetValeurs() {
+  const { data } = await sb.from("app_settings").select("key, value").in("key", ["gsheet_url", "gsheet_token"]);
+  const m = {}; (data || []).forEach((r) => { m[r.key] = r.value; });
+  return { url: (m.gsheet_url || "").trim(), token: (m.gsheet_token || "").trim() };
+}
+
+/* Remplit le formulaire de réglages (admin). */
+async function chargerReglagesSheet() {
+  const u = document.getElementById("gs-url"), t = document.getElementById("gs-token");
+  if (!u && !t) return;
+  const v = await chargerReglagesSheetValeurs();
+  if (u) u.value = v.url;
+  if (t) t.value = v.token || "erasme2026";
+}
+
+/* Enregistre les réglages (upsert clé/valeur). */
+async function enregistrerReglagesSheet(e) {
+  if (e) e.preventDefault();
+  const msg = document.getElementById("gs-msg");
+  const url = ((document.getElementById("gs-url") || {}).value || "").trim();
+  const token = ((document.getElementById("gs-token") || {}).value || "").trim();
+  const { error } = await sb.from("app_settings").upsert([
+    { key: "gsheet_url", value: url },
+    { key: "gsheet_token", value: token },
+  ], { onConflict: "key" });
+  if (msg) {
+    msg.textContent = error ? "Échec de l'enregistrement (droits admin ?)." : "Réglages enregistrés.";
+    msg.className = "message " + (error ? "error" : "info");
+  }
+}
+
+/* Construit les onglets hebdo (grille type export Excel) à partir des shifts.
+   Renvoie [{ name (onglet = JJ-MM-AAAA du lundi), rows (2D) }]. */
+function construireSemainesSheet(shifts, prefs) {
+  const lundiDe = (iso) => { const d = new Date(iso + "T00:00:00Z"); const j = d.getUTCDay() || 7; d.setUTCDate(d.getUTCDate() - (j - 1)); return d.toISOString().slice(0, 10); };
+  const addJ = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  const fmtJJMM = (iso) => iso.slice(8, 10) + "/" + iso.slice(5, 7);
+  const fmtTab = (iso) => iso.slice(8, 10) + "-" + iso.slice(5, 7) + "-" + iso.slice(0, 4);
+  const JOURS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
+  const nom = (id) => (carteMedecins[id] && carteMedecins[id].name) || id;
+  const cell = (date, filtre) => shifts.filter((s) => s.date === date && filtre(s)).map((s) => nom(s.doctor_id)).sort().join(", ");
+  const cellConge = (date, types) => {
+    const set = new Set();
+    shifts.forEach((s) => { if (s.date === date && types.includes(s.shift_type)) set.add(nom(s.doctor_id)); });
+    prefs.forEach((p) => { if (types.includes(p.pref_type) && p.start_date <= date && p.end_date >= date) set.add(nom(p.doctor_id)); });
+    return [...set].sort().join(", ");
+  };
+  const stations = [["USI 1", "usi1"], ["USI 2", "usi2"], ["USI 3", "usi3"], ["USI 4", "usi4"], ["USI 5", "usi5"], ["USI Bordet", "bordet"], ["Labo de choc", "labo_choc"]];
+  const semaines = {};
+  shifts.forEach((s) => { semaines[lundiDe(s.date)] = true; });
+  const weeks = [];
+  Object.keys(semaines).sort().forEach((lundi) => {
+    const jours = [0, 1, 2, 3, 4, 5, 6].map((k) => addJ(lundi, k));
+    const rows = [[""].concat(jours.map((iso, i) => JOURS[i] + " " + fmtJJMM(iso)))];
+    stations.forEach(([lib, code]) => {
+      rows.push([lib].concat(jours.map((iso) => cell(iso, (s) => s.poste === code && (s.shift_type === "jour" || s.shift_type === "garde_24h")))));
+    });
+    rows.push(["Garde de nuit (17h-9h)"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "garde_nuit"))));
+    rows.push(["Garde 24h"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "garde_24h"))));
+    rows.push(["Tour (TWE)"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "twe"))));
+    rows.push(["Off-clinic"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "off"))));
+    rows.push(["Recuperation"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "recup"))));
+    rows.push(["Repos de garde"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "repos_garde"))));
+    rows.push(["Conge ferie (recup)"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "conge_ferie"))));
+    rows.push(["Conge annuel"].concat(jours.map((iso) => cellConge(iso, ["conge_annuel", "conge_extralegal"]))));
+    rows.push(["Conge scientifique"].concat(jours.map((iso) => cellConge(iso, ["conge_scientifique"]))));
+    weeks.push({ name: fmtTab(lundi), rows });
+  });
+  return weeks;
+}
+
+/* Pousse tout le planning PUBLIÉ vers le Google Sheet. Renvoie un statut.
+   Silencieux (skip) si non configuré → utilisable en best-effort sur les hooks. */
+async function pousserVersSheet(raison) {
+  const cfg = await chargerReglagesSheetValeurs();
+  if (!cfg.url) return { skip: true };
+  const { data: scheds } = await sb.from("schedules").select("year, month, status").eq("status", "published");
+  if (!scheds || !scheds.length) return { vide: true };
+  let allShifts = [], allPrefs = [];
+  for (const s of scheds) {
+    const b = bornesMois(s.year, s.month);
+    const d = await donneesMoisExport(b);
+    allShifts = allShifts.concat(d.shifts);
+    allPrefs = allPrefs.concat(d.prefs);
+  }
+  const weeks = construireSemainesSheet(allShifts, allPrefs);
+  if (!weeks.length) return { vide: true };
+  // POST « no-cors » : la requête part mais la réponse n'est pas lisible (limite
+  // Apps Script / CORS). On considère donc l'envoi comme « tire-et-oublie ».
+  await fetch(cfg.url, {
+    method: "POST", mode: "no-cors",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ token: cfg.token, weeks, raison: raison || "" }),
+  });
+  return { ok: true, weeks: weeks.length };
+}
+
+/* Best-effort : appelé sur les événements (publication / échange / restauration).
+   N'interrompt JAMAIS l'action principale (erreurs avalées). */
+function pousserVersSheetAuto(raison) {
+  try { pousserVersSheet(raison).catch(function () {}); } catch (e) { /* no-op */ }
+}
+
+/* Bouton « Resynchroniser maintenant » (retour utilisateur best-effort). */
+async function resyncSheet() {
+  const msg = document.getElementById("gs-msg");
+  if (msg) { msg.textContent = "Synchronisation en cours…"; msg.className = "message info"; }
+  try {
+    const r = await pousserVersSheet("manuel");
+    if (msg) {
+      if (r.skip) { msg.textContent = "Renseigne d'abord l'URL du Web App, puis Enregistre."; msg.className = "message error"; }
+      else if (r.vide) { msg.textContent = "Aucun planning publié à synchroniser."; msg.className = "message error"; }
+      else { msg.textContent = "Envoyé (" + r.weeks + " semaine(s)). Vérifie le Google Sheet (onglet _synchro = horodatage)."; msg.className = "message info"; }
+    }
+  } catch (err) {
+    if (msg) { msg.textContent = "Erreur de synchro : " + (err.message || err); msg.className = "message error"; }
+  }
+}
+
+const _gsForm = document.getElementById("gs-form");
+if (_gsForm) _gsForm.addEventListener("submit", enregistrerReglagesSheet);
+const _gsResync = document.getElementById("gs-resync-btn");
+if (_gsResync) _gsResync.addEventListener("click", resyncSheet);
+
 (async function init() {
   // Arrivée via un lien d'invitation / de réinitialisation reçu par email
   // (#...type=invite ou type=recovery) : on affiche la page « définir le mot de
@@ -4382,6 +4522,7 @@ async function echAccepter(swap) {
       .eq("id", swap.id);
     if (e3) throw e3;
     echMessage("Échange appliqué. ✅", "info");
+    pousserVersSheetAuto("échange"); // M27 — miroir Google Sheets (best-effort)
     if (calendrier) calendrier.refetchEvents();
     chargerEchanges();
     echChargerMesShifts();

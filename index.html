@@ -379,6 +379,31 @@
           <tbody id="feries-tbody"></tbody>
         </table>
         <p id="feries-empty" class="zone-info">Aucune surcharge de férié enregistrée.</p>
+
+        <div class="zone-header" style="margin-top:1.75rem;">
+          <h3 class="sous-titre">Miroir Google Sheets</h3>
+        </div>
+        <p class="zone-info">Recopie le planning <strong>publié</strong> (lecture seule) vers un Google Sheet,
+          via un script Apps Script déployé en « application web ». Colle l'URL du Web App (.../exec) et le
+          mot de passe (identique au jeton du script). La synchro se fait à chaque publication / échange / modif,
+          et via le bouton ci-dessous.</p>
+        <form id="gs-form" class="doctor-form">
+          <div class="form-grid">
+            <div>
+              <label for="gs-url">URL du Web App (.../exec)</label>
+              <input type="url" id="gs-url" placeholder="https://script.google.com/macros/s/.../exec" />
+            </div>
+            <div>
+              <label for="gs-token">Mot de passe (jeton)</label>
+              <input type="text" id="gs-token" placeholder="erasme2026" />
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="submit" id="gs-save-btn">Enregistrer</button>
+            <button type="button" id="gs-resync-btn" class="secondary">Resynchroniser maintenant</button>
+          </div>
+          <p id="gs-msg" class="message"></p>
+        </form>
         </div><!-- /panel-periodes -->
 
         <!-- Onglet MÉDECINS (Module 2) -->
