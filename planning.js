@@ -68,7 +68,7 @@ function plSansContinuite(code) { return PL_STATIONS_SANS_CONTINUITE.indexOf(cod
 
 /* VERSION de l'algorithme — affichée dans le message de génération pour
    vérifier que le navigateur exécute bien le code déployé (cache !). */
-const PL_VERSION = "v2026.06.15-4";
+const PL_VERSION = "v2026.06.16-1";
 
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
@@ -1436,12 +1436,16 @@ function plReequilibrerHeures(sortie, medecins, etat) {
   const heures = {}; const occupe = {}; const unitesSem = {}; // id -> { lundi -> Set(postes jour) }
   const hSem = {}; // id -> { lundi -> heures TOTALES de la semaine } (plafond mi-temps, local)
   medecins.forEach((m) => { heures[m.id] = 0; occupe[m.id] = new Set(); unitesSem[m.id] = {}; hSem[m.id] = {}; });
-  // ÉQUITÉ NORMALISÉE PAR LA QUOTITÉ (révision 2026-06-14) : on compare les
-  // heures RAPPORTÉES AU FTE (heures ÷ fte). Le seuil reste exprimé en heures
-  // normalisées → les temps pleins restent resserrés (≤ seuil) ET un mi-temps
-  // est ramené à ~fte × (heures d'un plein temps), réglant son sur-travail.
+  // ÉQUITÉ NORMALISÉE PAR LA QUOTITÉ + CRÉDIT DES CONGÉS (révision 2026-06-16) :
+  // on compare les heures RAPPORTÉES AU FTE, EN CRÉDITANT les jours de congé
+  // (etat.heuresEquite) — sinon le rééquilibrage ramène tout le monde au même
+  // total BRUT, ce qui SURCHARGE ceux qui ont pris des congés (ils « rattrapent »
+  // sur leurs semaines présentes → 54 h/sem au lieu de 47). Avec le crédit, un
+  // médecin parti en congé est jugé sur sa charge RELATIVE et travaille MOINS en
+  // heures brutes (équité réelle), pas autant que ses pairs sans congé.
   const fteR = {}; medecins.forEach((m) => { fteR[m.id] = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1; });
-  const hNorm = (id) => heures[id] / fteR[id];
+  const credit = (id) => (etat.heuresEquite && etat.heuresEquite[id]) || 0;
+  const hNorm = (id) => (heures[id] + credit(id)) / fteR[id];
   sortie.forEach((s) => {
     if (heures[s.doctor_id] === undefined) return;
     heures[s.doctor_id] += H(s.shift_type);

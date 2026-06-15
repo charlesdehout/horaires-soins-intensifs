@@ -125,6 +125,15 @@ testable sous Node (`test_planning.js`, ~59 cas).
   signalé à tort ; un plein temps en déficit (vacances) ou un mi-temps en excès
   (bouche-trou) est mis en évidence.
 
+### Rééquilibrage horaire — congés crédités (révision 2026-06-16)
+- **Le rééquilibrage final des heures crédite désormais les congés.** Avant, il
+  visait l'égalité des heures BRUTES → un médecin parti en congé était ramené au
+  même total que les autres, donc travaillait PLUS par semaine présente (p. ex.
+  54 h/sem au lieu de 47) pour « rattraper ». Désormais il compare la charge
+  CRÉDITÉE (heures + crédit congé) ÷ fte : un médecin en congé fait MOINS
+  d'heures brutes (logique) mais au MÊME rythme hebdomadaire que ses pairs.
+  Mesuré : écart d'heures/semaine entre temps pleins ramené à ~1–2 h.
+
 ## 5. Équité
 
 - Mesurée **INTRA-grade** : résidents entre eux, A/S entre eux (l'écart inter-grade est
