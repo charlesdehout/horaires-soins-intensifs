@@ -5,7 +5,7 @@
    ===================================================================== */
 
 const assert = require("assert");
-const { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, compterParMedecin, plTrier, alertesAbsences, validerEchange, plConflits24hSlack } = require("./planning.js");
+const { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, compterParMedecin, plTrier, alertesAbsences, validerEchange, plConflits24hSlack, plResorberOff24h } = require("./planning.js");
 
 let reussis = 0, total = 0;
 function test(nom, fn) {
@@ -1334,6 +1334,65 @@ console.log("\n=== Règle slack → 24 h de semaine (off-clinic / non posté) ==
     });
   });
 }
+
+console.log("\n=== Algo 24 h — équité (moins chargé) + résorption off-clinic ===");
+
+test("plResorberOff24h : l'off reprend la station, la 24 h redescend en 17h-9h", () => {
+  const meds = [
+    { id: "X", grade: "assistant_specialiste", name: "X", weekly_hours_target: 646 },
+    { id: "Z", grade: "resident", name: "Z", weekly_hours_target: 683 },
+  ];
+  const LUNDI = "2026-06-15";
+  const sortie = [
+    { date: LUNDI, shift_type: "garde_24h", doctor_id: "X", poste: "usi1" },
+    { date: LUNDI, shift_type: "garde_nuit", doctor_id: "Y", poste: null },
+    { date: LUNDI, shift_type: "off", doctor_id: "Z", poste: null },
+  ];
+  const etat = { heures: { X: 700, Z: 520 }, attenduMin: { X: 600, Z: 0 }, periodes: { congres: new Set(), fermees: {} } };
+  plResorberOff24h(sortie, meds, etat);
+  const z = sortie.find((s) => s.doctor_id === "Z");
+  assert(z.shift_type === "jour" && z.poste === "usi1", "Z n'a pas repris la station");
+  const x = sortie.find((s) => s.doctor_id === "X");
+  assert(x.shift_type === "garde_nuit" && !x.poste, "X n'est pas redescendu en garde de nuit");
+  assert(etat.heures.X === 691, "X devrait perdre 9 h (700→691), obtenu " + etat.heures.X);
+});
+
+test("plResorberOff24h : garde-fou — pas de descente si X repasserait sous son minimum", () => {
+  const meds = [
+    { id: "X", grade: "assistant_specialiste", name: "X", weekly_hours_target: 646 },
+    { id: "Z", grade: "resident", name: "Z", weekly_hours_target: 683 },
+  ];
+  const LUNDI = "2026-06-15";
+  const sortie = [
+    { date: LUNDI, shift_type: "garde_24h", doctor_id: "X", poste: "usi1" },
+    { date: LUNDI, shift_type: "off", doctor_id: "Z", poste: null },
+  ];
+  const etat = { heures: { X: 700, Z: 520 }, attenduMin: { X: 695, Z: 0 }, periodes: { congres: new Set(), fermees: {} } };
+  plResorberOff24h(sortie, meds, etat);
+  const x = sortie.find((s) => s.doctor_id === "X");
+  assert(x.shift_type === "garde_24h", "X aurait dû rester en 24 h (descente le mettrait sous son minimum)");
+});
+
+test("invariant : aucune 24 h de semaine ne coexiste avec un off-clinic après génération", () => {
+  // Équipe hétérogène (A/S à cible basse) : le cas le plus à risque.
+  const meds = [];
+  const add = (id, g, t, fte) => meds.push({ id, name: id, grade: g, weekly_hours_target: t, fte: fte || 1, jours_travailles: [1,2,3,4,5,6,7] });
+  ["AS_Camille","AS_Antoine"].forEach((n) => add(n, "assistant_specialiste", 646));
+  ["AS_Matteo","AS_Laureline"].forEach((n) => add(n, "assistant_specialiste", 683));
+  ["R_Gilles","R_Larsen","R_Mouna","R_Michael","R_Chahnez","R_Mottale","R_Pierre"].forEach((n) => add(n, "resident", 683));
+  add("R_Come", "resident", 525, 0.8);
+  const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: meds, preferences: [] });
+  const parDate = {}; r.shifts.forEach((s) => { (parDate[s.date] = parDate[s.date] || []).push(s); });
+  const dow = (d) => { const j = new Date(d + "T00:00:00Z").getUTCDay(); return j === 0 ? 7 : j; };
+  let coincid = 0;
+  Object.keys(parDate).forEach((d) => {
+    if (dow(d) > 5) return;
+    const has24 = parDate[d].some((s) => s.shift_type === "garde_24h");
+    const hasOff = parDate[d].some((s) => s.shift_type === "off");
+    if (has24 && hasOff) coincid++;
+  });
+  assert.strictEqual(coincid, 0, "des 24 h de semaine coexistent encore avec un off-clinic : " + coincid);
+});
 
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");
 process.exit(reussis === total ? 0 : 1);

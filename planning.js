@@ -68,7 +68,7 @@ function plSansContinuite(code) { return PL_STATIONS_SANS_CONTINUITE.indexOf(cod
 
 /* VERSION de l'algorithme — affichée dans le message de génération pour
    vérifier que le navigateur exécute bien le code déployé (cache !). */
-const PL_VERSION = "v2026.06.15-2";
+const PL_VERSION = "v2026.06.15-3";
 
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
@@ -874,15 +874,18 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
 
   // 2c) NOUVEAU (N3) — si le vivier de jour ne suffit pas à pourvoir toutes les
   //     stations, on PROMEUT une garde de nuit en garde 24 h pour combler (elle
-  //     tient alors une station). Préférence : A/S d'abord (les résidents
-  //     restent en 17h–9h), puis le médecin le MOINS chargé en gardes de la
-  //     semaine (évite d'amener quelqu'un à 3 gardes via une 24 h). La 24 h
-  //     n'est donc utilisée QU'EN CAS DE BESOIN (sinon 2 gardes 17h–9h).
+  //     tient alors une station). PRIORITÉ (révision 2026-06-15) : le médecin le
+  //     MOINS chargé par rapport à SA cible (heures ÷ cible) d'abord — évite de
+  //     surcharger en 24 h quelqu'un déjà en surplus (typiquement un A/S à cible
+  //     basse). La préférence A/S et le « moins de gardes cette semaine » ne
+  //     servent plus qu'à DÉPARTAGER à charge égale. La 24 h reste utilisée
+  //     QU'EN CAS DE BESOIN (sinon 2 gardes 17h–9h).
   if (!cfgG.garde24h_obligatoire) {
     const candidats = gardesNuit.filter((m) => !mode24[m.id]);
     candidats.sort((a, b) =>
-      (cfgG.pref_as_24h ? (plEstAS(b) - plEstAS(a)) : 0) ||                      // A/S d'abord
-      (cfgG.eviter_24h_a_3_gardes                                               // moins chargé d'abord
+      (plRatioHeures(a, etat) - plRatioHeures(b, etat)) ||                       // le MOINS chargé / sa cible d'abord
+      (cfgG.pref_as_24h ? (plEstAS(b) - plEstAS(a)) : 0) ||                      // puis A/S (départage)
+      (cfgG.eviter_24h_a_3_gardes                                               // puis moins de gardes cette semaine
         ? (plGardesSemaine(a.id, date, etat) - plGardesSemaine(b.id, date, etat)) : 0) ||
       0);
     for (const m of candidats) {
@@ -1177,6 +1180,10 @@ function genererPlanning(opts) {
   // Placement automatique des off-clinic (§9), une fois le planning posé.
   const offs = genererOffClinic({ annee, mois, medecins, shifts: sortie, preferences });
   offs.forEach((o) => { sortie.push(o); etat.heures[o.doctor_id] += PL_HEURES_OFFCLINIC; });
+
+  // Résorption off-clinic ↔ 24 h de semaine : l'off reprend la station, la 24 h
+  // redescend en 17h–9h (évite une 24 h alors qu'un off pourrait être en clinique).
+  plResorberOff24h(sortie, medecins, etat);
 
   // Minimum d'heures hebdomadaire (doublures d'unités si nécessaire).
   plCompleterMinimumHeures(sortie, medecins, etat, plDatesDuMois(annee, mois));
@@ -1503,6 +1510,58 @@ function plReequilibrerHeures(sortie, medecins, etat) {
   }
 }
 
+/* ===================================================================== */
+/* RÉSORPTION OFF-CLINIC ↔ 24 h de SEMAINE (révision 2026-06-15)          */
+/* --------------------------------------------------------------------- */
+/* L'off-clinic compte comme du temps de travail et est CONTOURNABLE :    */
+/* plutôt que de laisser une garde 24 h de semaine coexister avec un      */
+/* off-clinic le même jour, on « pioche » dans l'off — le médecin en off  */
+/* REPREND la station tenue par la 24 h, et la 24 h redescend en garde de */
+/* nuit 17h–9h. Net : station couverte à l'identique, l'off repasse en    */
+/* clinique (mêmes heures), le titulaire de 24 h perd 9 h (réduit son     */
+/* éventuel surplus). EXCLUS : week-ends/fériés, jours de congrès, mode    */
+/* garde24h_obligatoire. GARDE-FOU : on ne descend la 24 h que si son      */
+/* titulaire reste AU-DESSUS de son minimum cumulé (attenduMin) et que     */
+/* l'off est réellement libre de tenir la station. Mute `sortie` + `etat`. */
+/* ===================================================================== */
+function plResorberOff24h(sortie, medecins, etat) {
+  if (plGardes().garde24h_obligatoire) return;
+  const byId = {}; (medecins || []).forEach((m) => { byId[m.id] = m; });
+  const gain24 = PL_HEURES.garde_24h - PL_HEURES.garde_nuit; // 9 h
+  const parDate = {};
+  (sortie || []).forEach((s) => { (parDate[s.date] = parDate[s.date] || []).push(s); });
+  Object.keys(parDate).forEach((date) => {
+    if (plEstWeekendOuFerie(date)) return;
+    if (etat.periodes && plEstCongres(date, etat.periodes)) return;
+    const duJour = parDate[date];
+    const g24s = duJour.filter((s) => s.shift_type === "garde_24h" && s.poste);
+    let offs = duJour.filter((s) => s.shift_type === "off");
+    if (!g24s.length || !offs.length) return;
+    g24s.forEach((g24) => {
+      if (!offs.length) return;
+      // Garde-fou : le titulaire 24 h doit rester ≥ son minimum cumulé après −9 h.
+      const min = (etat.attenduMin && etat.attenduMin[g24.doctor_id]) || 0;
+      if (etat.heures[g24.doctor_id] - gain24 < min) return;
+      // Un off capable de tenir la station : pas le titulaire lui-même, et sans
+      // autre shift de travail ce jour (par nature, l'off n'a que l'off).
+      const idx = offs.findIndex((o) => {
+        if (o.doctor_id === g24.doctor_id) return false;
+        if (!byId[o.doctor_id]) return false;
+        return !duJour.some((s) => s !== o && s.doctor_id === o.doctor_id && !plEstAbsence(s.shift_type));
+      });
+      if (idx === -1) return;
+      const off = offs[idx];
+      offs = offs.filter((_, i) => i !== idx);
+      // 1) L'off prend la station libérée par la 24 h.
+      off.shift_type = "jour"; off.poste = g24.poste;
+      etat.heures[off.doctor_id] += (PL_HEURES.jour - PL_HEURES_OFFCLINIC); // ≈ 0
+      // 2) La 24 h redescend en garde de nuit 17h–9h (perd la station + 9 h).
+      g24.shift_type = "garde_nuit"; g24.poste = null;
+      etat.heures[g24.doctor_id] -= gain24;
+    });
+  });
+}
+
 /* Liste des dates ISO d'un mois (1-12). */
 function plDatesDuMois(annee, mois) {
   const nbJours = new Date(Date.UTC(annee, mois, 0)).getUTCDate();
@@ -1600,6 +1659,10 @@ function genererTrimestre(opts) {
     const offs = genererOffClinic({ annee, mois, medecins, shifts: sortie, preferences });
     offs.forEach((o) => { sortie.push(o); etat.heures[o.doctor_id] += PL_HEURES_OFFCLINIC; });
   });
+
+  // Résorption off-clinic ↔ 24 h de semaine : l'off reprend la station, la 24 h
+  // redescend en 17h–9h (évite une 24 h alors qu'un off pourrait être en clinique).
+  plResorberOff24h(sortie, medecins, etat);
 
   // Minimum d'heures hebdomadaire sur tout le trimestre (doublures d'unités).
   {
@@ -2588,5 +2651,5 @@ function validerEchange(shifts, idA, idB, medecins) {
 
 /* ------------- Export pour Node (tests). Sans effet en navigateur. ------ */
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, validerEquite, compterParMedecin, plTrier, plRangDesiderata, alertesAbsences, validerEchange, plConflits24hSlack };
+  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, validerEquite, compterParMedecin, plTrier, plRangDesiderata, alertesAbsences, validerEchange, plConflits24hSlack, plResorberOff24h };
 }

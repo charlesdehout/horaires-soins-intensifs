@@ -73,11 +73,24 @@ testable sous Node (`test_planning.js`, ~59 cas).
   (**garde de nuit 17h–9h**).
 - Une **garde 24 h** (qui tient une station + la nuit) n'est introduite **que si
   nécessaire** pour pourvoir une station (le vivier de jour manque d'un médecin).
-- Quand une 24 h est nécessaire : **A/S préféré** (les résidents restent en 17h–9h, ne
-  prenant une 24 h qu'à défaut d'A/S) ; on **évite** de donner une 24 h à qui
-  atteindrait 3 gardes dans la semaine.
+- Quand une 24 h est nécessaire : on **évite** de donner une 24 h à qui atteindrait
+  3 gardes dans la semaine. La préférence A/S historique est conservée mais
+  **subordonnée à l'équité horaire** (voir « au moins chargé d'abord » ci-dessous).
 - Paramétrable dans `regles.js` (`GARDES`) : `garde24h_obligatoire` (revenir au
   comportement historique), `pref_as_24h`, `eviter_24h_a_3_gardes`.
+- **Choix du titulaire de 24 h — au moins chargé d'abord** (révision 2026-06-15) :
+  quand une 24 h de semaine est nécessaire, on PROMEUT le médecin de garde le
+  **moins chargé par rapport à SA cible** (`plRatioHeures` = heures ÷ cible,
+  congés crédités) ; la préférence A/S et le « moins de gardes cette semaine » ne
+  servent plus qu'à départager à charge égale. Évite de charger en 24 h un A/S
+  déjà en surplus (cible basse).
+- **Résorption off-clinic ↔ 24 h** (`plResorberOff24h`, révision 2026-06-15) : en
+  fin de génération, si une 24 h de semaine coexiste avec un off-clinic le même
+  jour, le médecin en off **reprend la station** tenue par la 24 h et la 24 h
+  **redescend en garde de nuit 17h–9h**. L'off compte comme du travail (mêmes
+  heures) → il repasse en clinique sans perte ; le titulaire de 24 h perd 9 h
+  (réduit son surplus). Garde-fou : pas de descente si le titulaire repasserait
+  sous son minimum cumulé. WE/congrès/`garde24h_obligatoire` exclus.
 - **« Slack » bloque la 24 h de semaine** (révision 2026-06-15) : une 24 h de
   semaine ne devrait JAMAIS coexister, le même jour, avec du « slack » —
   quelqu'un en **off-clinic**, OU un médecin **disponible NON POSTÉ** (sous
@@ -362,24 +375,4 @@ testable sous Node (`test_planning.js`, ~59 cas).
 
 - `CONGE_TYPES` (quotas), `POSTES_JOUR` (unités), `COUVERTURE` (min nuit, TWE, gardes
   week-end, `congres_postes_vides`), `EQUITE` (plafond/plancher, concentration),
-  `GARDES` (24 h obligatoire ?, préférence A/S, éviter 3 gardes), `OFFCLINIC`
-  (plafond absences, min résidents), `PREF_BLOQUANTES`, `PL_STATIONS_SANS_CONTINUITE`.
-
----
-
-## 18. En chantier / à venir
-
-1. **Fériés (lot 2)** : demande « travailler un férié » → placement par l'algo + congé
-   férié sous 6 sem. ; suppression de `recup_ferie` ; fériés éditables par l'admin.
-2. Raffinements N3/N4 résiduels (cf. `CONFORMITE.md`).
-
----
-
-## Annexe — fichiers SQL à exécuter (Supabase, dans l'ordre)
-
-`module2_quota_conges`, `module4_rls`, `module5_planning`, `module6_planning_admin`,
-`module6_absences`, `module9_personnel`, `module10_workflow`, `module15_repos_garde`,
-`module16_supprimer_grade_specialiste`, `module17_periodes_speciales`,
-`module18_recup_ferie`, `module19_preplacement`, `module20_rotation_unites`,
-**`module21_durcissement`**, **`module22_sauvegarde_horaire`**, **`module23_echanges`**.
-Tous idempotents.
+  `GARDES` (24 h obligatoire ?, préférence A/S, éviter 3 ga
