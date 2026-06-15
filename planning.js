@@ -68,7 +68,7 @@ function plSansContinuite(code) { return PL_STATIONS_SANS_CONTINUITE.indexOf(cod
 
 /* VERSION de l'algorithme — affichée dans le message de génération pour
    vérifier que le navigateur exécute bien le code déployé (cache !). */
-const PL_VERSION = "v2026.06.15-1";
+const PL_VERSION = "v2026.06.15-2";
 
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
@@ -1185,6 +1185,11 @@ function genererPlanning(opts) {
 
   plEmettreCongesFerie(sortie, etat, plDatesDuMois(annee, mois)); // M26 — jours de récup visibles
 
+  // RÈGLE « slack bloque la 24 h de semaine » : alerte si une 24 h coexiste
+  // avec de l'off-clinic ou un médecin disponible non posté le même jour.
+  plConflits24hSlack({ shifts: sortie, medecins, preferences, periodes: opts.periodes })
+    .forEach((c) => conflits.push(c));
+
   const stats = medecins.map((m) => ({
     id: m.id,
     heures: Math.round(etat.heures[m.id] * 10) / 10,
@@ -1608,6 +1613,11 @@ function genererTrimestre(opts) {
   // M26 — jours de récup (congé férié) visibles sur tout le trimestre.
   plEmettreCongesFerie(sortie, etat, moisTrim.reduce((a, mo) => a.concat(plDatesDuMois(annee, mo)), []));
 
+  // RÈGLE « slack bloque la 24 h de semaine » : alerte si une 24 h coexiste
+  // avec de l'off-clinic ou un médecin disponible non posté le même jour.
+  plConflits24hSlack({ shifts: sortie, medecins, preferences, periodes: opts.periodes })
+    .forEach((c) => conflits.push(c));
+
   const stats = medecins.map((m) => ({
     id: m.id,
     heures: Math.round(etat.heures[m.id] * 10) / 10,
@@ -1872,6 +1882,87 @@ function plBornesMois(annee, mois) {
   return { debut: annee + "-" + ms + "-01", fin: annee + "-" + ms + "-" + String(fin).padStart(2, "0") };
 }
 
+
+/* ===================================================================== */
+/* RÈGLE « slack bloque la 24 h de semaine » (demandée 2026-06-15)        */
+/* --------------------------------------------------------------------- */
+/* Une garde 24 h de SEMAINE ne devrait exister que par NÉCESSITÉ de      */
+/* couverture. Si, le MÊME JOUR, il reste du « slack » — quelqu'un en     */
+/* OFF-CLINIC, OU un médecin DISPONIBLE NON POSTÉ (sous contrat, jour     */
+/* travaillable, dispo déclarée si indépendant, pas en congé/indispo/off/ */
+/* récup, et SANS aucune affectation ce jour) — alors la 24 h résulte     */
+/* d'un déficit/équilibrage et doit être SIGNALÉE comme conflit.          */
+/* EXCLUS : les WEEK-ENDS/fériés (2×24 h structurelles), les jours de     */
+/* CONGRÈS (équipe minimale forcée en 24 h), et le mode config            */
+/* `GARDES.garde24h_obligatoire` (la 24 h est alors voulue partout).      */
+/* Fonction PURE : ne lit que le tableau final de shifts + métadonnées.   */
+/* opts = { shifts, medecins, preferences? , periodes? }.                 */
+/* Renvoie [{ date, message }].                                           */
+/* ===================================================================== */
+function plConflits24hSlack(opts) {
+  const conflits = [];
+  if (plGardes().garde24h_obligatoire) return conflits; // 24 h voulue par config → pas d'alerte
+  const shifts = opts.shifts || [];
+  const medecins = opts.medecins || [];
+  const idxP = plIndexerPeriodes(opts.periodes);
+
+  // Préférences bloquantes (congé/indispo/off/récup) + fenêtres « dispo » (indépendants).
+  const bloquantes = plBloq();
+  const indispo = {}, dispo = {};
+  (opts.preferences || []).forEach((p) => {
+    if (p.pref_type === "dispo") {
+      (dispo[p.doctor_id] = dispo[p.doctor_id] || new Set());
+      let d = p.start_date; while (d <= p.end_date) { dispo[p.doctor_id].add(d); d = plAdd(d, 1); }
+      return;
+    }
+    if (!bloquantes.includes(p.pref_type)) return;
+    (indispo[p.doctor_id] = indispo[p.doctor_id] || new Set());
+    let d = p.start_date; while (d <= p.end_date) { indispo[p.doctor_id].add(d); d = plAdd(d, 1); }
+  });
+
+  const medById = {}; medecins.forEach((m) => { medById[m.id] = m; });
+  const nom = (id) => (medById[id] && medById[id].name) ? medById[id].name : (id || "?");
+  // Seuls les médecins PLANIFIABLES comptent comme « non posté » potentiel.
+  const planifiable = (m) => m && (m.grade === "resident" || m.grade === "assistant_specialiste");
+
+  // Index par date + présence (médecins ayant AU MOINS une entrée ce jour).
+  const parDate = {}, presence = {};
+  shifts.forEach((s) => {
+    (parDate[s.date] = parDate[s.date] || []).push(s);
+    (presence[s.date] = presence[s.date] || new Set()).add(s.doctor_id);
+  });
+
+  Object.keys(parDate).sort().forEach((date) => {
+    if (plEstWeekendOuFerie(date)) return;     // 24 h de week-end = structurelles (exclu)
+    if (plEstCongres(date, idxP)) return;      // congrès = équipe minimale forcée (exclu)
+    const duJour = parDate[date];
+    const g24 = duJour.filter((s) => s.shift_type === "garde_24h");
+    if (g24.length === 0) return;              // pas de 24 h ce jour → rien à signaler
+
+    // SLACK 1 — off-clinic posé ce jour.
+    const offs = duJour.filter((s) => s.shift_type === "off").map((s) => s.doctor_id);
+    // SLACK 2 — médecin planifiable, disponible, mais NON POSTÉ (aucune entrée).
+    const nonPostes = medecins.filter((m) =>
+      planifiable(m) &&
+      plSousContrat(m, date) &&
+      ((m.jours_travailles && m.jours_travailles.length ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7]).includes(plJourSemaine(date))) &&
+      (m.statut !== "independant" || (dispo[m.id] && dispo[m.id].has(date))) &&
+      !(indispo[m.id] && indispo[m.id].has(date)) &&
+      !(presence[date] && presence[date].has(m.id))
+    ).map((m) => m.id);
+
+    if (offs.length === 0 && nonPostes.length === 0) return; // pas de slack → 24 h justifiée
+
+    const raisons = [];
+    if (offs.length) raisons.push("off-clinic : " + offs.map(nom).join(", "));
+    if (nonPostes.length) raisons.push("non posté(s) : " + nonPostes.map(nom).join(", "));
+    conflits.push({ date, message:
+      "Garde 24 h de semaine (" + g24.map((s) => nom(s.doctor_id)).join(", ") +
+      ") avec du monde disponible le même jour [" + raisons.join(" ; ") +
+      "] — à éviter ; ne se justifie que par déficit/équilibrage." });
+  });
+  return conflits;
+}
 
 /* ===================================================================== */
 /* MODULE 6 — Vérification d'un planning (fonction PURE)                  */
@@ -2155,6 +2246,12 @@ function validerPlanning(opts) {
   // NB : l'équité fine (plancher horaire + ±1 garde) s'évalue sur l'ENSEMBLE
   // du trimestre, pas au mois → voir validerEquite(), appelée par l'app sur le
   // planning trimestriel complet.
+
+  // RÈGLE « slack bloque la 24 h de semaine » (2026-06-15) : signale chaque
+  // garde 24 h de semaine coexistant avec de l'off-clinic ou un médecin
+  // disponible non posté (WE / congrès / config obligatoire exclus).
+  plConflits24hSlack({ shifts, medecins, preferences: opts.preferences, periodes: opts.periodes })
+    .forEach((c) => conflits.push(c));
 
   // Tri par date pour un affichage lisible.
   conflits.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
@@ -2468,5 +2565,5 @@ function validerEchange(shifts, idA, idB, medecins) {
 
 /* ------------- Export pour Node (tests). Sans effet en navigateur. ------ */
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, validerEquite, compterParMedecin, plTrier, plRangDesiderata, alertesAbsences, validerEchange };
+  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, validerEquite, compterParMedecin, plTrier, plRangDesiderata, alertesAbsences, validerEchange, plConflits24hSlack };
 }

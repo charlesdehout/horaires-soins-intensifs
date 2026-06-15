@@ -5,7 +5,7 @@
    ===================================================================== */
 
 const assert = require("assert");
-const { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, compterParMedecin, plTrier, alertesAbsences, validerEchange } = require("./planning.js");
+const { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, compterParMedecin, plTrier, alertesAbsences, validerEchange, plConflits24hSlack } = require("./planning.js");
 
 let reussis = 0, total = 0;
 function test(nom, fn) {
@@ -1236,6 +1236,85 @@ test("travailler un férié (11/11) : demandeur placé + jour de récup matéria
   assert(comp.some((s) => s.shift_type === "conge_ferie"),
     "le jour de récup 19/11 n'est pas matérialisé en congé férié (invisible au calendrier)");
 });
+
+/* ===================================================================== */
+/* RÈGLE « slack bloque la 24 h de semaine » (2026-06-15)                 */
+/* Une 24 h de semaine ne devrait coexister ni avec un off-clinic, ni     */
+/* avec un médecin disponible NON POSTÉ ; sinon → alerte de conflit.      */
+/* WE / fériés / congrès / config obligatoire exclus.                     */
+/* ===================================================================== */
+console.log("\n=== Règle slack → 24 h de semaine (off-clinic / non posté) ===");
+{
+  const trio = () => [
+    { id: "r1", name: "Alpha", grade: "resident", fte: 1, weekly_hours_target: 52, jours_travailles: [1,2,3,4,5,6,7] },
+    { id: "r2", name: "Bravo", grade: "resident", fte: 1, weekly_hours_target: 52, jours_travailles: [1,2,3,4,5,6,7] },
+    { id: "a1", name: "Charlie", grade: "assistant_specialiste", fte: 1, weekly_hours_target: 52, jours_travailles: [1,2,3,4,5,6,7] },
+  ];
+  const LUNDI = "2026-06-15";   // jour de semaine
+  const SAMEDI = "2026-06-13";  // week-end
+
+  test("24 h de semaine + médecin NON POSTÉ (dispo, pas en congé) → alerte", () => {
+    const shifts = [
+      { date: LUNDI, shift_type: "garde_24h", doctor_id: "r1", poste: "usi1" },
+      { date: LUNDI, shift_type: "garde_nuit", doctor_id: "r2", poste: null },
+    ]; // a1 reste disponible, non posté
+    const c = plConflits24hSlack({ shifts, medecins: trio() });
+    assert(c.some((x) => x.date === LUNDI && /non posté/.test(x.message)), "alerte non posté non levée");
+  });
+
+  test("24 h de semaine + OFF-CLINIC le même jour → alerte", () => {
+    const shifts = [
+      { date: LUNDI, shift_type: "garde_24h", doctor_id: "r1", poste: "usi1" },
+      { date: LUNDI, shift_type: "garde_nuit", doctor_id: "r2", poste: null },
+      { date: LUNDI, shift_type: "off", doctor_id: "a1", poste: null },
+    ];
+    const c = plConflits24hSlack({ shifts, medecins: trio() });
+    assert(c.some((x) => x.date === LUNDI && /off-clinic/.test(x.message)), "alerte off-clinic non levée");
+  });
+
+  test("24 h de semaine mais TOUT LE MONDE posté → aucune alerte (24 h justifiée)", () => {
+    const shifts = [
+      { date: LUNDI, shift_type: "garde_24h", doctor_id: "r1", poste: "usi1" },
+      { date: LUNDI, shift_type: "garde_nuit", doctor_id: "r2", poste: null },
+      { date: LUNDI, shift_type: "jour", doctor_id: "a1", poste: "usi2" },
+    ];
+    assert.strictEqual(plConflits24hSlack({ shifts, medecins: trio() }).length, 0, "alerte indue alors que tous postés");
+  });
+
+  test("règle 24 h/slack : WEEK-END exclu (2×24 h structurelles)", () => {
+    const shifts = [{ date: SAMEDI, shift_type: "garde_24h", doctor_id: "r1", poste: null }];
+    assert.strictEqual(plConflits24hSlack({ shifts, medecins: trio() }).length, 0, "alerte indue le week-end");
+  });
+
+  test("règle 24 h/slack : jour de CONGRÈS exclu (équipe minimale forcée)", () => {
+    const MARDI = "2026-06-16";
+    const shifts = [
+      { date: MARDI, shift_type: "garde_24h", doctor_id: "r1", poste: "usi1" },
+      { date: MARDI, shift_type: "garde_nuit", doctor_id: "r2", poste: null },
+    ];
+    const periodes = [{ type: "congres", start_date: MARDI, end_date: MARDI }];
+    assert.strictEqual(plConflits24hSlack({ shifts, medecins: trio(), periodes }).length, 0, "alerte indue un jour de congrès");
+  });
+
+  test("règle 24 h/slack : un médecin EN CONGÉ ne compte pas comme non posté", () => {
+    const prefs = [{ doctor_id: "a1", pref_type: "conge_annuel", start_date: LUNDI, end_date: LUNDI }];
+    const shifts = [
+      { date: LUNDI, shift_type: "garde_24h", doctor_id: "r1", poste: "usi1" },
+      { date: LUNDI, shift_type: "garde_nuit", doctor_id: "r2", poste: null },
+    ];
+    assert.strictEqual(plConflits24hSlack({ shifts, medecins: trio(), preferences: prefs }).length, 0, "congé compté à tort comme slack");
+  });
+
+  test("règle 24 h/slack : génération trimestre → conflits bien remontés", () => {
+    const meds = equipe();
+    const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: meds, preferences: [] });
+    const attendus = plConflits24hSlack({ shifts: r.shifts, medecins: meds, preferences: [] });
+    attendus.forEach((c) => {
+      assert(r.conflits.some((x) => x.date === c.date && x.message === c.message),
+        "conflit 24 h/slack non remonté par la génération (" + c.date + ")");
+    });
+  });
+}
 
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");
 process.exit(reussis === total ? 0 : 1);

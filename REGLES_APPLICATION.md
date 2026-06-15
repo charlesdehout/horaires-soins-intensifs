@@ -78,6 +78,17 @@ testable sous Node (`test_planning.js`, ~59 cas).
   atteindrait 3 gardes dans la semaine.
 - Paramétrable dans `regles.js` (`GARDES`) : `garde24h_obligatoire` (revenir au
   comportement historique), `pref_as_24h`, `eviter_24h_a_3_gardes`.
+- **« Slack » bloque la 24 h de semaine** (révision 2026-06-15) : une 24 h de
+  semaine ne devrait JAMAIS coexister, le même jour, avec du « slack » —
+  quelqu'un en **off-clinic**, OU un médecin **disponible NON POSTÉ** (sous
+  contrat, jour travaillable, dispo déclarée si indépendant, pas en
+  congé/indispo/off/récup, et sans aucune affectation ce jour). Cette personne
+  devrait tenir la station plutôt que de promouvoir une garde en 24 h. Si, par
+  **déficit de couverture** ou **équilibrage d'heures** (compensation 24 h, §11
+  bis), une telle 24 h est tout de même posée, elle est **SIGNALÉE comme conflit**
+  (`plConflits24hSlack`, remontée dans le panneau Conflits et le message de
+  génération). **Exclus** : week-ends/fériés (2×24 h structurelles), jours de
+  **congrès** (équipe minimale forcée en 24 h) et le mode `garde24h_obligatoire`.
 
 ### Week-end / férié
 - Pas de stations de jour : **3 médecins au tour (TWE)**, dont **2 en garde 24 h**
