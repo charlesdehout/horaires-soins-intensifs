@@ -68,7 +68,7 @@ function plSansContinuite(code) { return PL_STATIONS_SANS_CONTINUITE.indexOf(cod
 
 /* VERSION de l'algorithme — affichée dans le message de génération pour
    vérifier que le navigateur exécute bien le code déployé (cache !). */
-const PL_VERSION = "v2026.06.16-2";
+const PL_VERSION = "v2026.06.16-3";
 
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
@@ -2604,26 +2604,29 @@ function validerEchange(shifts, idA, idB, medecins) {
       }
     });
 
-    // 2bis) NOUVEAU (2026-06-15) — le repos du lendemain « pousse » la JOURNÉE :
-    //    si le NOUVEAU titulaire d'une garde a une journée (« jour ») le
-    //    lendemain de cette garde, elle ne peut subsister (il passe en repos de
-    //    garde). On la confie à l'ANCIEN titulaire, libéré ce jour-là puisqu'il
-    //    a cédé la garde. Évite le refus « travaille le lendemain » quand un
-    //    simple transfert de journée suffit. Si l'ancien titulaire n'est PAS
-    //    libre ce lendemain, on ne transfère pas → l'étape 4 refusera proprement.
+    // 2bis) NOUVEAU (2026-06-15, étendu 2026-06-16) — les JOURNÉES qui empêchent
+    //    le receveur de prendre la garde sont REDONNÉES au cédant au lieu de
+    //    bloquer l'échange. Deux jours concernés pour chaque garde gagnée :
+    //      • le JOUR de la garde (le receveur ne peut pas tenir une station ET la
+    //        garde le même jour) ;
+    //      • le LENDEMAIN (il est en repos de garde).
+    //    Chaque journée du NOUVEAU titulaire ces jours-là est confiée à l'ANCIEN
+    //    titulaire, libéré (il a cédé la garde) — s'il est lui-même libre ce
+    //    jour-là. Sinon on ne transfère pas → l'étape 4 refusera proprement.
     if (gA === "garde") {
       sens.forEach(([g, ancien, nouveau]) => {
-        const lend = plAdd(g.date, 1);
-        const j = (shifts || []).find((s) => !suppr.has(s.id) && s.shift_type === "jour" &&
-          s.date === lend && docDe(s) === nouveau);
-        if (!j) return;
-        // L'ancien titulaire est-il libre ce lendemain pour reprendre la journée ?
-        const ancienOccupe = (shifts || []).some((s) => !suppr.has(s.id) && s.id !== j.id &&
-          s.date === lend && docDe(s) === ancien);
-        const ancienGardeVeille = aGardeApres(ancien, g.date); // garde la veille du lendemain
-        if (ancienOccupe || ancienGardeVeille) return; // non résoluble → refus en étape 4
-        changes.push({ id: j.id, doctor_id: ancien });
-        reaff[j.id] = ancien;
+        [g.date, plAdd(g.date, 1)].forEach((jourCible) => {
+          const j = (shifts || []).find((s) => !suppr.has(s.id) && s.shift_type === "jour" &&
+            s.date === jourCible && docDe(s) === nouveau);
+          if (!j) return;
+          // L'ancien titulaire est-il libre ce jour-là pour reprendre la journée ?
+          const ancienOccupe = (shifts || []).some((s) => !suppr.has(s.id) && s.id !== j.id &&
+            s.date === jourCible && docDe(s) === ancien);
+          const ancienGardeVeille = aGardeApres(ancien, plAdd(jourCible, -1)); // garde la veille
+          if (ancienOccupe || ancienGardeVeille) return; // non résoluble → refus en étape 4
+          changes.push({ id: j.id, doctor_id: ancien });
+          reaff[j.id] = ancien;
+        });
       });
     }
 

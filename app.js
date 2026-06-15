@@ -208,6 +208,7 @@ function afficherEspace(profil) {
   // M27 — miroir Google Sheets : charge les réglages admin (URL + jeton).
   if (estAdmin) chargerReglagesSheet();
   if (estAdmin) chargerEchangesAdmin();
+  if (estAdmin && typeof echAdminCharger === "function") echAdminCharger();
 
   // Côté admin : liste des médecins. Côté médecin : ses préférences.
   if (estAdmin) chargerMedecins();
@@ -1135,7 +1136,10 @@ async function ouvrirPopupForceConge() {
     "<option value='conge_scientifique'>Congé scientifique</option>" +
     "<option value='formation'>Formation USI</option>" +
     "<option value='autre'>Congé autre — maladie / mariage (hors quota)</option>" +
-    "<option value='demande_weekend'>Demande week-end / férié</option>";
+    "<option value='demande_weekend'>Demande week-end / férié</option>" +
+    "<option value='dispo'>✅ Disponible (désidérata indépendant)</option>" +
+    "<option value='indispo'>Indisponibilité (garde)</option>" +
+    "<option value='souhait'>Souhait (préférence non bloquante)</option>";
   fcType.value = "conge_annuel";
   fcNote.value = "";
   fcDebut.value = ""; fcFin.value = "";
@@ -3893,7 +3897,7 @@ function basculerOnglet(nom) {
   // Le calendrier, rendu dans un panneau parfois masqué, doit recalculer
   // sa taille quand on revient sur l'onglet Planning.
   if (nom === "planning" && calendrier) calendrier.updateSize();
-  if (nom === "echanges-admin" && typeof chargerEchangesAdmin === "function") chargerEchangesAdmin();
+  if (nom === "echanges-admin" && typeof chargerEchangesAdmin === "function") { chargerEchangesAdmin(); if (typeof echAdminCharger === "function") echAdminCharger(); }
 }
 
 document.querySelectorAll("#tabs-nav .tab").forEach((b) =>
@@ -4706,3 +4710,78 @@ async function chargerEchangesAdmin() {
 }
 const echAdminRefreshBtn = document.getElementById("ech-admin-refresh");
 if (echAdminRefreshBtn) echAdminRefreshBtn.addEventListener("click", chargerEchangesAdmin);
+
+/* ÉCHANGE ADMIN (création directe, appliqué immédiatement). Réutilise le moteur
+   validerEchange + l'application des changes (échAppliquerChanges). */
+let echAdminShifts = [];
+async function echAdminCharger() {
+  const aMed = document.getElementById("echadm-a-med");
+  if (!aMed) return;
+  if (!Object.keys(echDocteurs).length) { try { await echChargerDocteurs(); } catch (e) {} }
+  const pubIds = await echSchedulesPublies();
+  echAdminShifts = [];
+  if (pubIds.length) {
+    const { data } = await sb.from("shifts")
+      .select("id, date, shift_type, poste, doctor_id, schedule_id").in("schedule_id", pubIds);
+    echAdminShifts = data || [];
+  }
+  const opts = "<option value=''>— choisir —</option>" + Object.keys(echDocteurs)
+    .sort((a, b) => (echDocteurs[a].name || "").localeCompare(echDocteurs[b].name || ""))
+    .map((id) => "<option value='" + id + "'>" + ((echDocteurs[id].name) || id) + "</option>").join("");
+  ["echadm-a-med", "echadm-b-med"].forEach((id) => { const el = document.getElementById(id); if (el) el.innerHTML = opts; });
+  ["echadm-a-shift", "echadm-b-shift"].forEach((id) => { const el = document.getElementById(id); if (el) { el.innerHTML = "<option value=''>—</option>"; el.disabled = true; } });
+  const msg = document.getElementById("echadm-msg"); if (msg) msg.textContent = "";
+}
+function echAdminShiftsDe(docId) {
+  return echAdminShifts.filter((s) => s.doctor_id === docId && s.date >= echAujourdhui() && ECH_GROUPES[s.shift_type]);
+}
+function echAdminRemplirShifts(medSelId, shiftSelId, nature) {
+  const med = document.getElementById(medSelId).value;
+  const sel = document.getElementById(shiftSelId);
+  sel.innerHTML = "<option value=''>—</option>"; sel.disabled = !med;
+  if (!med) return;
+  echAdminShiftsDe(med).forEach((s) => {
+    if (nature && ECH_GROUPES[s.shift_type] !== nature) return;
+    const o = document.createElement("option"); o.value = s.id; o.textContent = echLibelleShift(s, false); sel.appendChild(o);
+  });
+}
+const _echadmAMed = document.getElementById("echadm-a-med");
+const _echadmAShift = document.getElementById("echadm-a-shift");
+const _echadmBMed = document.getElementById("echadm-b-med");
+const _echadmBShift = document.getElementById("echadm-b-shift");
+const _echadmApply = document.getElementById("echadm-apply");
+if (_echadmAMed) _echadmAMed.addEventListener("change", () => { echAdminRemplirShifts("echadm-a-med", "echadm-a-shift"); if (_echadmBShift) { _echadmBShift.innerHTML = "<option value=''>—</option>"; _echadmBShift.disabled = true; } });
+if (_echadmAShift) _echadmAShift.addEventListener("change", () => {
+  const s = echAdminShifts.find((x) => String(x.id) === String(_echadmAShift.value));
+  const nature = s ? ECH_GROUPES[s.shift_type] : null;
+  if (_echadmBMed && _echadmBMed.value) echAdminRemplirShifts("echadm-b-med", "echadm-b-shift", nature);
+});
+if (_echadmBMed) _echadmBMed.addEventListener("change", () => {
+  const s = echAdminShifts.find((x) => String(x.id) === String(_echadmAShift && _echadmAShift.value));
+  const nature = s ? ECH_GROUPES[s.shift_type] : null;
+  echAdminRemplirShifts("echadm-b-med", "echadm-b-shift", nature);
+});
+if (_echadmApply) _echadmApply.addEventListener("click", async () => {
+  const msg = document.getElementById("echadm-msg");
+  const aId = _echadmAShift && _echadmAShift.value, bId = _echadmBShift && _echadmBShift.value;
+  if (!aId || !bId) { msg.textContent = "Choisis les deux shifts."; msg.className = "message error"; return; }
+  try {
+    const docs = Object.keys(echDocteurs).map((id) => ({ id, name: echDocteurs[id].name, grade: echDocteurs[id].grade }));
+    const r = validerEchange(echAdminShifts, aId, bId, docs);
+    if (!r.ok) { msg.textContent = "❌ " + r.message; msg.className = "message error"; return; }
+    if (!window.confirm("Appliquer cet échange ?")) return;
+    await echAppliquerChanges(r.changes, echAdminShifts);
+    const sA = echAdminShifts.find((s) => String(s.id) === String(aId));
+    const sB = echAdminShifts.find((s) => String(s.id) === String(bId));
+    await sb.from("shift_swaps").insert({
+      from_doctor_id: sA.doctor_id, from_shift_id: String(aId),
+      to_doctor_id: sB.doctor_id, to_shift_id: String(bId),
+      note: "(échange admin)", status: "accepte", decided_at: new Date().toISOString(),
+    });
+    const sync = await pousserVersSheetAuto("échange admin");
+    msg.textContent = "Échange appliqué." + (sync && sync.ok ? " Publié dans le Sheet. ✅" : (sync && sync.skip ? " ⚠️ Miroir Sheet non configuré." : " ⚠️ Synchro Sheet non confirmée."));
+    msg.className = "message info";
+    if (calendrier) calendrier.refetchEvents();
+    await echAdminCharger(); chargerEchangesAdmin();
+  } catch (e) { msg.textContent = "Erreur : " + (e.message || e); msg.className = "message error"; }
+});

@@ -538,6 +538,36 @@
             ne passent pas par une validation admin : ils s'appliquent dès qu'un
             collègue accepte, si les règles de garde restent respectées).
           </p>
+          <h3 class="sous-titre">Créer un échange (admin)</h3>
+          <p class="zone-info">
+            Échange direct entre deux médecins (appliqué immédiatement, sans attendre
+            d'acceptation). Mêmes règles que les échanges médecins : même nature, repos
+            et journées du lendemain/jour gérés automatiquement.
+          </p>
+          <div class="form-grid">
+            <div>
+              <label for="echadm-a-med">Médecin A</label>
+              <select id="echadm-a-med"><option value="">— choisir —</option></select>
+            </div>
+            <div>
+              <label for="echadm-a-shift">Shift de A (publié, à venir)</label>
+              <select id="echadm-a-shift" disabled><option value="">— choisir d'abord A —</option></select>
+            </div>
+            <div>
+              <label for="echadm-b-med">Médecin B</label>
+              <select id="echadm-b-med"><option value="">— choisir —</option></select>
+            </div>
+            <div>
+              <label for="echadm-b-shift">Shift de B (même nature)</label>
+              <select id="echadm-b-shift" disabled><option value="">— choisir d'abord le shift de A —</option></select>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="button" id="echadm-apply">Appliquer l'échange</button>
+          </div>
+          <p id="echadm-msg" class="message"></p>
+
+          <h3 class="sous-titre">Historique</h3>
           <table id="ech-admin-table" class="data-table">
             <thead>
               <tr><th>Date</th><th>Demandeur</th><th>Propose</th><th>Collègue</th><th>Contre</th><th>Note</th><th>Statut</th><th>Décidé le</th></tr>

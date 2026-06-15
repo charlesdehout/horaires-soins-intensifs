@@ -1403,5 +1403,18 @@ test("invariant : aucune 24 h de semaine ne coexiste avec un off-clinic après g
   assert.strictEqual(coincid, 0, "des 24 h de semaine coexistent encore avec un off-clinic : " + coincid);
 });
 
+test("échange de garde : la journée du MÊME JOUR du receveur passe au cédant", () => {
+  const meds = [{ id: "R1", grade: "resident", name: "R1" }, { id: "R2", grade: "resident", name: "R2" }];
+  const shifts = [
+    { id: "g1", date: "2026-06-10", shift_type: "garde_nuit", doctor_id: "R1", poste: null },
+    { id: "g2", date: "2026-06-17", shift_type: "garde_nuit", doctor_id: "R2", poste: null },
+    { id: "j2", date: "2026-06-10", shift_type: "jour", doctor_id: "R2", poste: "usi1" }, // R2 a une journée le 10 (jour de g1)
+  ];
+  const r = validerEchange(shifts, "g1", "g2", meds);
+  assert(r.ok, "échange refusé à tort : " + r.message);
+  assert(r.changes.some((c) => c.id === "j2" && c.doctor_id === "R1"),
+    "la journée du 10/6 (même jour que la garde) n'a pas été transférée au cédant R1");
+});
+
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");
 process.exit(reussis === total ? 0 : 1);
