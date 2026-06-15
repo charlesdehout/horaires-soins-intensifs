@@ -68,7 +68,7 @@ function plSansContinuite(code) { return PL_STATIONS_SANS_CONTINUITE.indexOf(cod
 
 /* VERSION de l'algorithme — affichée dans le message de génération pour
    vérifier que le navigateur exécute bien le code déployé (cache !). */
-const PL_VERSION = "v2026.06.16-1";
+const PL_VERSION = "v2026.06.16-2";
 
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
@@ -1482,6 +1482,10 @@ function plReequilibrerHeures(sortie, medecins, etat) {
     if (!plSansContinuite(s.poste)) {
       const u = unitesSem[m.id][plLundiDe(d)];
       if (u && u.size && !u.has(s.poste)) return false;
+      // CONTINUITÉ (révision 2026-06-16) : le rééquilibrage horaire ne transfère
+      // une journée que vers un médecin tenant DÉJÀ cette unité cette semaine
+      // (consolidation) → il n'ajoute plus de « visage » supplémentaire sur l'unité.
+      if (!(u && u.has(s.poste))) return false;
     }
     return true;
   };
