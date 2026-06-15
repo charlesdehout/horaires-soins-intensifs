@@ -795,4 +795,34 @@
           </div>
           <div>
             <label for="fc-fin">Au</label>
-            <input type="date" id="fc-fin" 
+            <input type="date" id="fc-fin" required />
+          </div>
+          <div>
+            <label for="fc-note">Note (optionnel)</label>
+            <input type="text" id="fc-note" maxlength="200" placeholder="ex. imposé, maladie…" />
+          </div>
+        </div>
+        <p id="fc-msg" class="message"></p>
+        <div class="form-actions">
+          <button type="button" id="fc-ok">Forcer (approuvé)</button>
+          <button type="button" id="fc-annuler" class="secondary">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Client Supabase officiel (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Règles métier (config : quotas de congés, jours fériés, postes…) -->
+  <script src="regles.js"></script>
+  <!-- Algorithme de génération du planning (Module 5) -->
+  <script src="planning.js"></script>
+  <!-- FullCalendar (Module 4) — bundle global (vues mois + liste) -->
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+  <!-- ExcelJS (Module 14) — génération de classeurs .xlsx stylés côté navigateur -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+  <!-- Notre logique applicative -->
+  <script src="app.js"></script>
+</body>
+</html>
