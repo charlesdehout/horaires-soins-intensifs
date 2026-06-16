@@ -1062,6 +1062,29 @@ function rendrePreferences(prefs) {
   });
 }
 
+/* Quota de congé PG par TRIMESTRE CIVIL (jours ouvrés). PG ULB : 10 ; Fellow : 20
+   (plus large, rôle recherche). La LIMITE n'est jamais montrée au PG. */
+const PG_CONGE_TRIM_ULB = 10;
+const PG_CONGE_TRIM_FELLOW = 20;
+/* Jours ouvrés (lun–ven hors fériés BE) entre deux dates ISO incluses. */
+function pgJoursOuvres(d1, d2) {
+  if (!d1 || !d2 || d1 > d2) return 0;
+  const feries = {}; let n = 0; let d = d1;
+  while (d <= d2) {
+    const dt = new Date(d + "T00:00:00Z"); const jr = dt.getUTCDay();
+    if (jr >= 1 && jr <= 5) { const an = dt.getUTCFullYear(); if (!feries[an]) { try { feries[an] = joursFeriesBE(an); } catch (e) { feries[an] = new Set(); } } if (!feries[an].has(d)) n++; }
+    const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + 1); d = x.toISOString().slice(0, 10);
+  }
+  return n;
+}
+/* Bornes du trimestre CIVIL contenant une date ISO. */
+function pgTrimBornes(iso) {
+  const d = new Date(iso + "T00:00:00Z"); const y = d.getUTCFullYear(); const q = Math.floor(d.getUTCMonth() / 3);
+  const start = y + "-" + String(q * 3 + 1).padStart(2, "0") + "-01";
+  const end = new Date(Date.UTC(y, q * 3 + 3, 0)).toISOString().slice(0, 10);
+  return { key: y + "-Q" + q, start, end };
+}
+
 /* Valide + insère une préférence pour le médecin connecté. Fonction PURE de DOM :
    renvoie { ok, message, level }. Réutilisée par le formulaire « Mes préférences »
    ET par le popup de désidérata depuis le calendrier. */
@@ -1074,9 +1097,28 @@ async function soumettrePreference(type, debut, fin, note, dateComp) {
     return { ok: false, level: "error", message: "Période de congrès : les jours sont gérés par l'administrateur, aucune demande n'est possible sur ces dates." };
   }
 
-  // Contrôle des quotas de congés (bloquant), par catégorie et par ANNÉE ACADÉMIQUE.
+  // Contrôle des quotas de congés (bloquant).
   const categorie = categorieConge(type);
-  if (categorie) {
+  // PG / Fellow : limite par TRIMESTRE CIVIL, jamais révélée (message générique).
+  if (categorie && medecinCourant.grade === "pg") {
+    const limite = (medecinCourant.pg_type === "fellow") ? PG_CONGE_TRIM_FELLOW : PG_CONGE_TRIM_ULB;
+    const trims = {};
+    [debut, fin].forEach((iso) => { const t = pgTrimBornes(iso); trims[t.key] = t; });
+    for (const k of Object.keys(trims)) {
+      const t = trims[k];
+      const demande = pgJoursOuvres(debut > t.start ? debut : t.start, fin < t.end ? fin : t.end);
+      if (demande <= 0) continue;
+      let deja = 0;
+      (prefsCourantes || []).forEach((p) => {
+        if (!categorieConge(p.pref_type)) return;
+        deja += pgJoursOuvres(p.start_date > t.start ? p.start_date : t.start, p.end_date < t.end ? p.end_date : t.end);
+      });
+      if (deja + demande > limite) {
+        return { ok: false, level: "error", message: "Limite de congé atteinte pour ce trimestre. Contacte l'administrateur si besoin." };
+      }
+    }
+  }
+  if (categorie && medecinCourant.grade !== "pg") {
     const anneeDebut = anneeAcademique(new Date(debut + "T00:00:00Z"));
     const anneeFin = anneeAcademique(new Date(fin + "T00:00:00Z"));
     for (let annee = anneeDebut; annee <= anneeFin; annee++) {
