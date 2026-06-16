@@ -1346,10 +1346,6 @@ const SHIFT_CONFIG = {
   twe:        { label: "Tour week-end",  court: "TWE", couleur: "#8250df", debut: "08:00", fin: "14:00", lendemain: false, heures: 6 },
   garde_nuit: { label: "Garde de nuit",  court: "GN",  couleur: "#bf3989", debut: "17:00", fin: "08:00", lendemain: true,  heures: 15 },
   garde_24h:  { label: "Garde 24h",      court: "G24", couleur: "#cf222e", debut: "08:00", fin: "08:00", lendemain: true,  heures: 24 },
-  // Shifts PG (postgradués) — générés par genererTrimestrePG (Module 28).
-  pg_jour:    { label: "PG – Journée",      court: "PG",   couleur: "#0891b2", debut: "08:45", fin: "17:15", lendemain: false, heures: 8.5 },
-  pg_twe:     { label: "PG – Tour WE",      court: "PG-WE",couleur: "#0e7490", debut: "08:00", fin: "14:00", lendemain: false, heures: 6 },
-  garde_pg:   { label: "Garde PG (24h)",    court: "GPG",  couleur: "#b45309", debut: "08:00", fin: "08:00", lendemain: true,  heures: 24 },
   // Absences / repos posables par l'admin (0 h, sans station, affichées en
   // pastille « journée entière »). Les congés posés ici ne décomptent pas les
   // quotas (ceux-ci restent gérés via les préférences du médecin).
@@ -1441,9 +1437,6 @@ function rangEvenementCal(shiftType, poste) {
     case "garde_nuit":        return 8;
     case "garde_24h":         return 9;   // garde 24 h sans station (week-end)
     case "twe":               return 10;
-    case "pg_jour":          return 15;
-    case "pg_twe":           return 16;
-    case "garde_pg":         return 17;
     case "repos_garde":       return 11;
     case "recup":             return 12;
     case "off":               return 13;
@@ -2109,16 +2102,9 @@ async function genererPgPourTrimestreAffiche() {
     if (nonPubies.length && !window.confirm("Mois non publiés (" + nonPubies.join(", ") + "). Générer le planning PG par-dessus le brouillon ?")) return;
 
     // 2) Médecins (avec champs PG), préférences, congrès/fermetures.
-    const { data: medecins, error: eMed } = await sb.from("doctors")
+    const { data: medecins } = await sb.from("doctors")
       .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, unite_reference, pg_type, opting_out")
       .neq("role", "admin");
-    if (eMed) {
-      // Erreur fréquente : colonnes pg_type/opting_out absentes → SQL module28_pg.sql non exécuté.
-      const hint = (eMed.message || "").includes("pg_type") || (eMed.message || "").includes("opting_out")
-        ? " ⚠️ Colonnes pg_type/opting_out manquantes : exécute sql/module28_pg.sql dans Supabase."
-        : "";
-      messageGeneration("Erreur lecture médecins : " + eMed.message + hint, "error"); return;
-    }
     const pgs = (medecins || []).filter((m) => m.grade === "pg");
     if (!pgs.length) { messageGeneration("Aucun PG dans l'équipe (coche le grade « PG / Fellow » dans une fiche médecin).", "error"); return; }
     const { data: prefs } = await sb.from("preferences").select("doctor_id, start_date, end_date, pref_type").eq("status", "approuve").lte("start_date", finTrim).gte("end_date", debutTrim);
