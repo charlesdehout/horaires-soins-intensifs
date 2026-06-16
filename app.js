@@ -741,7 +741,6 @@ function majOptionsPrefsParGrade() {
   const optsPG = [
     ["conge_annuel",       "Congé (bloquant — dans quota trimestriel)"],
     ...(estFellow ? [["recherche_clinique", "Jour de recherche clinique (bloquant — dans quota trimestriel)"]] : []),
-    ["recuperation",  "Lendemain de garde (bloque la journée — récupération)"],
     ["indispo",       "Indisponible pour le tour de week-end (souhait, non bloquant)"],
   ];
   const optsRes = [
