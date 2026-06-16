@@ -198,6 +198,10 @@ function afficherEspace(profil) {
   // admin de l'onglet Planning (génération, compteurs, conflits).
   document.querySelectorAll(".tab-admin").forEach((el) => el.classList.toggle("hidden", !estAdmin));
   document.querySelectorAll(".tab-doctor").forEach((el) => el.classList.toggle("hidden", estAdmin));
+  // PG : masquer l'onglet Échanges (non pertinent pour les PG)
+  const estPg = profil.grade === "pg";
+  const tabEchanges = document.querySelector('[data-tab="echanges"]');
+  if (tabEchanges && !estAdmin) tabEchanges.classList.toggle("hidden", estPg);
   const adminPlanning = document.getElementById("admin-planning");
   if (adminPlanning) adminPlanning.classList.toggle("hidden", !estAdmin);
   basculerOnglet("planning"); // toujours démarrer sur le planning
@@ -371,6 +375,24 @@ function majChampsPg() {
   if (dHours) dHours.value = (dOptingOut && dOptingOut.checked) ? 60 : 48;
 }
 
+/* Montre/masque les champs de planification selon le grade/rôle.
+   Un admin pur (grade="admin" ou admin_level!="aucun") n'a pas de
+   contrat, quotas, jours travaillables — il n'est jamais planifié. */
+function majChampsAdmin() {
+  const estAdmin = dGrade.value === "admin" || (dAdminLevel && dAdminLevel.value !== "aucun");
+  const travFields = document.getElementById("d-travailleur-fields");
+  if (travFields) travFields.classList.toggle("hidden", estAdmin);
+  // Sync : si on choisit admin dans le grade → force le rôle admin
+  if (dGrade.value === "admin" && dAdminLevel && dAdminLevel.value === "aucun") {
+    dAdminLevel.value = "secondaire";
+  }
+  // Sync inverse : si rôle admin → passe le grade à "admin"
+  if (dAdminLevel && dAdminLevel.value !== "aucun" && dGrade.value !== "admin") {
+    dGrade.value = "admin";
+  }
+  majChampsAdmin();
+}
+
 /* Quota de base d'un type de congé : surcharge du médecin, sinon défaut (regles.js). */
 function quotaBase(med, type) {
   const valeur = med["quota_" + type];
@@ -454,7 +476,7 @@ function ouvrirAjout() {
   dHours.value = HEURES_BASE; // 52h par défaut (plein temps)
   if (dPgType) dPgType.value = "ulb";
   if (dOptingOut) { dOptingOut.checked = false; dOptingOut.disabled = false; }
-  majChampsPg();
+  majChampsAdmin();
   setPeriodes([]);            // une seule période vide
   messageFormMedecin("");
   doctorForm.classList.remove("hidden");
@@ -498,8 +520,9 @@ function fermerFormulaire() {
 }
 
 addDoctorBtn.addEventListener("click", ouvrirAjout);
-if (dGrade) dGrade.addEventListener("change", majChampsPg);
+if (dGrade) dGrade.addEventListener("change", majChampsAdmin);
 if (dPgType) dPgType.addEventListener("change", majChampsPg);
+if (dAdminLevel) dAdminLevel.addEventListener("change", majChampsAdmin);
 if (dOptingOut) dOptingOut.addEventListener("change", () => { if (dHours) dHours.value = dOptingOut.checked ? 60 : 48; });
 cancelDoctorBtn.addEventListener("click", fermerFormulaire);
 
@@ -591,32 +614,33 @@ doctorForm.addEventListener("submit", async (e) => {
   const adminLevel = dAdminLevel.value;
 
   // Construit l'objet à envoyer. Dates vides → null.
+  const estAdminPur = adminLevel !== "aucun";
   const payload = {
     name: dName.value.trim(),
     email: dEmail.value.trim().toLowerCase(),
-    grade: dGrade.value,
-    pg_type: dGrade.value === "pg" ? (dPgType ? dPgType.value : "ulb") : null,
-    opting_out: dGrade.value === "pg" ? ((dPgType && dPgType.value === "fellow") || (dOptingOut && dOptingOut.checked)) : false,
-    fte: isNaN(fte) ? 1 : fte,
-    weekly_hours_target: parseFloat(dHours.value) || HEURES_BASE,
+    grade: estAdminPur ? null : dGrade.value,
+    pg_type: (!estAdminPur && dGrade.value === "pg") ? (dPgType ? dPgType.value : "ulb") : null,
+    opting_out: (!estAdminPur && dGrade.value === "pg") ? ((dPgType && dPgType.value === "fellow") || (dOptingOut && dOptingOut.checked)) : false,
+    fte: estAdminPur ? null : (isNaN(fte) ? 1 : fte),
+    weekly_hours_target: estAdminPur ? null : (parseFloat(dHours.value) || HEURES_BASE),
     // Rôle d'accès dérivé du niveau admin (travailleur → doctor, sinon admin).
     role: adminLevel === "aucun" ? "doctor" : "admin",
     admin_level: adminLevel,
-    statut: dStatut.value,
-    conges_100pct: dConges100.checked,
-    nouvel_engage: dNouvelEngage ? dNouvelEngage.checked : false,
-    reconnu: dReconnu ? dReconnu.checked : false,
-    contract_type: fte >= 1 ? "temps_plein" : "temps_partiel",
-    // Périodes contractuelles : 1re période = affichage/repli, tableau complet en jsonb.
-    contract_start: periodes[0] ? periodes[0].start : null,
-    contract_end:   periodes[0] ? periodes[0].end : null,
-    contract_periods: periodes.length ? periodes : null,
-    // Quotas de congés annuels (jours ouvrés). Vide → null = valeur par défaut.
-    quota_conge_annuel:       dQuotaAnnuel.value === "" ? null : parseInt(dQuotaAnnuel.value, 10),
-    quota_conge_extralegal:   dQuotaExtra.value === ""  ? null : parseInt(dQuotaExtra.value, 10),
-    quota_conge_scientifique: dQuotaScient.value === "" ? null : parseInt(dQuotaScient.value, 10),
-    // Jours de semaine travaillables (1=lundi … 7=dimanche), contrainte dure du planning.
-    jours_travailles: getJoursTravailles(),
+    statut: estAdminPur ? null : dStatut.value,
+    conges_100pct: estAdminPur ? false : dConges100.checked,
+    nouvel_engage: estAdminPur ? false : (dNouvelEngage ? dNouvelEngage.checked : false),
+    reconnu: estAdminPur ? false : (dReconnu ? dReconnu.checked : false),
+    contract_type: estAdminPur ? null : (fte >= 1 ? "temps_plein" : "temps_partiel"),
+    // Périodes contractuelles (non pertinent pour un admin pur).
+    contract_start: estAdminPur ? null : (periodes[0] ? periodes[0].start : null),
+    contract_end:   estAdminPur ? null : (periodes[0] ? periodes[0].end : null),
+    contract_periods: estAdminPur ? null : (periodes.length ? periodes : null),
+    // Quotas de congés (non pertinent pour un admin pur).
+    quota_conge_annuel:       estAdminPur ? null : (dQuotaAnnuel.value === "" ? null : parseInt(dQuotaAnnuel.value, 10)),
+    quota_conge_extralegal:   estAdminPur ? null : (dQuotaExtra.value === ""  ? null : parseInt(dQuotaExtra.value, 10)),
+    quota_conge_scientifique: estAdminPur ? null : (dQuotaScient.value === "" ? null : parseInt(dQuotaScient.value, 10)),
+    // Jours travaillables (non pertinent pour un admin pur).
+    jours_travailles: estAdminPur ? null : getJoursTravailles(),
   };
 
   let error;

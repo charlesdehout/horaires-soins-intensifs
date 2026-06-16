@@ -424,12 +424,15 @@
               <label for="d-email">Email</label>
               <input type="email" id="d-email" required />
             </div>
+            <!-- Champs visibles uniquement pour les travailleurs (masqués pour admin pur) -->
+            <div id="d-travailleur-fields" class="form-grid-full" style="display:contents;">
             <div>
               <label for="d-grade">Grade</label>
               <select id="d-grade">
                 <option value="resident">Résident</option>
                 <option value="assistant_specialiste">Assistant spécialiste</option>
                 <option value="pg">PG / Fellow</option>
+                <option value="admin">Admin (pur)</option>
               </select>
             </div>
             <div id="d-pg-fields" class="hidden">
@@ -509,6 +512,7 @@
             </div>
           </div>
           <p class="form-hint">Quotas annuels en jours ouvrés, proratisés selon la durée du contrat. Laisser vide = valeur par défaut.</p>
+            </div><!-- /d-travailleur-fields -->
           <div class="form-actions">
             <button type="submit" id="save-doctor-btn">Enregistrer</button>
             <button type="button" id="cancel-doctor-btn" class="secondary">Annuler</button>
