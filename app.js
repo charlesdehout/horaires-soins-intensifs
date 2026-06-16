@@ -366,6 +366,9 @@ function majChampsPg() {
   if (!dPgFields) return;
   const estPg = dGrade.value === "pg";
   dPgFields.classList.toggle("hidden", !estPg);
+  const trimBox = document.getElementById("d-pg-trimestres");
+  if (trimBox) trimBox.classList.toggle("hidden", !estPg);
+  if (estPg && typeof renderPgTrimestres === "function") renderPgTrimestres();
   if (!estPg) return;
   const fellow = dPgType && dPgType.value === "fellow";
   if (dOptingOut) {
@@ -390,7 +393,7 @@ function majChampsAdmin() {
   if (dAdminLevel && dAdminLevel.value !== "aucun" && dGrade.value !== "admin") {
     dGrade.value = "admin";
   }
-  majChampsAdmin();
+  majChampsPg();   // rafraîchit les champs PG après un éventuel changement de grade
 }
 
 /* Quota de base d'un type de congé : surcharge du médecin, sinon défaut (regles.js). */
@@ -404,8 +407,9 @@ function quotaBase(med, type) {
    aux « Compteurs de congés » de l'équipe (révision 2026-06-14). Année académique
    en cours (1 oct → 30 sep). */
 function quotasResume(med) {
-  const acad = anneeAcademique(new Date());
-  const f = fractionAnneeSousContrat(acad, med) * fteDe(med);
+  // Quota = base × quotité (FTE) uniquement — plus de proration par dates de
+  // contrat (jugée trompeuse pour les temps partiels permanents).
+  const f = fteDe(med);
   const q = (type) => Math.round(quotaBase(med, type) * f);
   return q("conge_annuel") + "/" + q("conge_extralegal") + "/" + q("conge_scientifique");
 }
@@ -468,6 +472,47 @@ function setPeriodes(periodes) {
 }
 if (dAddPeriode) dAddPeriode.addEventListener("click", () => ajouterLignePeriode("", ""));
 
+/* --- Trimestres de contrat PG : cases à cocher → périodes de dates --- */
+const QUART_DEB = ["01-01", "04-01", "07-01", "10-01"];
+const QUART_FIN = ["03-31", "06-30", "09-30", "12-31"];
+function quartDates(annee, q) {
+  return { start: annee + "-" + QUART_DEB[q], end: annee + "-" + QUART_FIN[q] };
+}
+let pgTrimAnnee = new Date().getFullYear();
+/* Coche les T1–T4 de l'année affichée selon les périodes de dates en cours. */
+function renderPgTrimestres() {
+  const lab = document.getElementById("trim-annee");
+  if (lab) lab.textContent = pgTrimAnnee;
+  const periodes = getPeriodes();
+  document.querySelectorAll(".trim-cb").forEach((cb) => {
+    const q = parseInt(cb.dataset.q, 10);
+    const d = quartDates(pgTrimAnnee, q);
+    cb.checked = periodes.some((p) => p.start === d.start && p.end === d.end);
+  });
+}
+/* Coche/décoche un trimestre → ajoute/retire la période de dates correspondante. */
+function togglePgTrimestre(q, coche) {
+  const d = quartDates(pgTrimAnnee, q);
+  let periodes = getPeriodes();
+  if (coche) {
+    if (!periodes.some((p) => p.start === d.start && p.end === d.end)) periodes.push(d);
+  } else {
+    periodes = periodes.filter((p) => !(p.start === d.start && p.end === d.end));
+  }
+  periodes.sort((a, b) => (a.start || "").localeCompare(b.start || ""));
+  setPeriodes(periodes);
+  renderPgTrimestres();
+}
+document.addEventListener("change", (e) => {
+  if (e.target && e.target.classList && e.target.classList.contains("trim-cb")) {
+    togglePgTrimestre(parseInt(e.target.dataset.q, 10), e.target.checked);
+  }
+});
+const trimPrevBtn = document.getElementById("trim-prev");
+const trimNextBtn = document.getElementById("trim-next");
+if (trimPrevBtn) trimPrevBtn.addEventListener("click", () => { pgTrimAnnee -= 1; renderPgTrimestres(); });
+if (trimNextBtn) trimNextBtn.addEventListener("click", () => { pgTrimAnnee += 1; renderPgTrimestres(); });
+
 /* Ouvre le formulaire en mode "ajout" (champs vides) */
 function ouvrirAjout() {
   doctorForm.reset();
@@ -503,6 +548,12 @@ function ouvrirEdition(med) {
       ? med.contract_periods
       : (med.contract_start ? [{ start: med.contract_start, end: med.contract_end }] : [])
   );
+  // Grille trimestres PG : ouvre sur l'année du 1er contrat (sinon année en cours).
+  if (typeof renderPgTrimestres === "function") {
+    const per0 = getPeriodes()[0];
+    if (per0 && per0.start) pgTrimAnnee = parseInt(per0.start.slice(0, 4), 10);
+    renderPgTrimestres();
+  }
   dQuotaAnnuel.value = med.quota_conge_annuel ?? "";
   dQuotaExtra.value = med.quota_conge_extralegal ?? "";
   dQuotaScient.value = med.quota_conge_scientifique ?? "";
@@ -961,9 +1012,8 @@ function fteDe(med) {
    pour une année académique. */
 function quotaEffectif(type, anneeAcad) {
   if (!medecinCourant) return 0;
-  return Math.round(quotaBase(medecinCourant, type) *
-                    fractionAnneeSousContrat(anneeAcad, medecinCourant) *
-                    fteDe(medecinCourant));
+  // Quota = base × FTE uniquement (anneeAcad conservé pour compat. d'appel).
+  return Math.round(quotaBase(medecinCourant, type) * fteDe(medecinCourant));
 }
 
 /* Jours ouvrés déjà encodés pour une catégorie et une année académique. */
@@ -2805,8 +2855,8 @@ function cgMajTypesPG(med) {
 /* ── Quota résidents ─────────────────────────────────────────────────── */
 function cgQuotaResHtml(med, prefs) {
   const anneesSet = new Set();
-  const today = new Date();
-  anneesSet.add(anneeAcademique(today));
+  // Ancre sur l'année académique du MOIS AFFICHÉ (suit la navigation), pas la date du jour.
+  anneesSet.add(anneeAcademiqueAffichee());
   prefs.forEach(function(p) {
     if (categorieConge(p.pref_type)) {
       anneesSet.add(anneeAcademique(new Date(p.start_date + "T00:00:00Z")));
@@ -2815,9 +2865,9 @@ function cgQuotaResHtml(med, prefs) {
   });
   const annees = Array.from(anneesSet).sort();
   const lignes = annees.map(function(annee) {
-    const f = Math.round(quotaBase(med, "conge_annuel") * fractionAnneeSousContrat(annee, med) * fteDe(med));
+    const f = Math.round(quotaBase(med, "conge_annuel") * fteDe(med));
     const parts = Object.keys(CONGE_TYPES).map(function(type) {
-      const quota = Math.round(quotaBase(med, type) * fractionAnneeSousContrat(annee, med) * fteDe(med));
+      const quota = Math.round(quotaBase(med, type) * fteDe(med));
       const utilises = prefs.filter(function(p) { return categorieConge(p.pref_type) === type; })
         .reduce(function(s, p) { return s + joursOuvresDansAnnee(p.start_date, p.end_date, annee); }, 0);
       return CONGE_TYPES[type].label + " <strong>" + utilises + "/" + quota + "</strong>";
@@ -2830,10 +2880,14 @@ function cgQuotaResHtml(med, prefs) {
 /* ── Quota PG ────────────────────────────────────────────────────────── */
 function cgQuotaPGHtml(med, prefs) {
   const limPG = (med.pg_type === "fellow") ? PG_CONGE_TRIM_FELLOW : PG_CONGE_TRIM_ULB;
-  // Trimestres couverts par les prefs + trimestre courant
-  const today = new Date().toISOString().slice(0, 10);
+  // Trimestres couverts par les prefs + trimestre du MOIS AFFICHÉ (suit la
+  // navigation du calendrier, et non la date du jour). Jour 15 → évite les
+  // bascules de trimestre dues au fuseau horaire.
+  const refAff = (typeof calendrier !== "undefined" && calendrier && typeof calendrier.getDate === "function")
+    ? calendrier.getDate() : new Date();
+  const isoAff = refAff.getFullYear() + "-" + String(refAff.getMonth() + 1).padStart(2, "0") + "-15";
   const trimsSet = {};
-  trimsSet[pgTrimBornes(today).key] = pgTrimBornes(today);
+  trimsSet[pgTrimBornes(isoAff).key] = pgTrimBornes(isoAff);
   prefs.forEach(function(p) {
     if (!categorieConge(p.pref_type)) return;
     [p.start_date, p.end_date].forEach(function(d) {
@@ -3722,7 +3776,7 @@ async function chargerCompteursConges() {
     const tdN = document.createElement("td"); tdN.textContent = d.name || "?"; tr.appendChild(tdN);
     let restantTotal = 0;
     TYPES.forEach((type) => {
-      const quota = Math.round(quotaBase(d, type) * fractionAnneeSousContrat(acad, d) * fteDe(d));
+      const quota = Math.round(quotaBase(d, type) * fteDe(d));
       const c = (conso[d.id] && conso[d.id][type]) || { ok: 0, att: 0 };
       restantTotal += Math.max(0, quota - c.ok);
       const td = document.createElement("td");

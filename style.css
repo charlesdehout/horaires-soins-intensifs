@@ -442,6 +442,26 @@ button.mini.danger:hover { background: #f7d9d5; }
 .planning-actions { align-items: stretch; }
 .planning-actions button { width: auto; padding: 0.5rem 1rem; margin: 0; }
 
+/* Grille de trimestres de contrat PG (cases à cocher + sélecteur d'année) */
+.trim-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+.trim-grid .trim-annee {
+  min-width: 3.2rem;
+  text-align: center;
+  font-size: 1rem;
+}
+.trim-grid label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0;
+}
+.trim-grid button.mini { margin-left: 0; }
+
 /* Groupes d'actions du planning : clusters labellisés pour la lisibilité */
 .pa-group {
   display: flex;

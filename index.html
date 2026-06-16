@@ -486,6 +486,19 @@
               <label for="d-reconnu" title="Médecin reconnu. L'export « Excel — Horaires reconnus » surligne en bleu les jours sans médecin reconnu parmi les personnes de garde.">
                 <input type="checkbox" id="d-reconnu" /> ✔️ Médecin reconnu</label>
             </div>
+            <div id="d-pg-trimestres" class="form-grid-full hidden">
+              <label>Trimestres de contrat (PG)</label>
+              <div class="trim-grid">
+                <button type="button" id="trim-prev" class="mini secondary" aria-label="Année précédente">‹</button>
+                <strong id="trim-annee" class="trim-annee">—</strong>
+                <button type="button" id="trim-next" class="mini secondary" aria-label="Année suivante">›</button>
+                <label><input type="checkbox" class="trim-cb" data-q="0" /> T1</label>
+                <label><input type="checkbox" class="trim-cb" data-q="1" /> T2</label>
+                <label><input type="checkbox" class="trim-cb" data-q="2" /> T3</label>
+                <label><input type="checkbox" class="trim-cb" data-q="3" /> T4</label>
+              </div>
+              <p class="form-hint">Coche les trimestres civils sous contrat : chaque case remplit une période de dates ci-dessous (modifiable à la main). Utilise ‹ › pour changer d'année.</p>
+            </div>
             <div class="form-grid-full">
               <label>Périodes contractuelles</label>
               <div id="d-periodes">
