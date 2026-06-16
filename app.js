@@ -1964,6 +1964,80 @@ async function genererTrimestrePourMoisAffiche() {
 
 if (genererTrimBtn) genererTrimBtn.addEventListener("click", genererTrimestrePourMoisAffiche);
 
+/* ===================================================================== */
+/* GÉNÉRATION DU PLANNING PG (trimestre) — APRÈS les résidents.           */
+/* Lit le planning résident en base (sans le supprimer), pose les shifts  */
+/* PG (pg_jour/pg_twe) et attribue les unités du week-end aux résidents.  */
+/* ===================================================================== */
+const genererPgBtn = document.getElementById("generer-pg-btn");
+async function genererPgPourTrimestreAffiche() {
+  if (!calendrier || typeof genererTrimestrePG !== "function") return;
+  const dateVue = calendrier.getDate();
+  const annee = dateVue.getFullYear();
+  const moisAffiche = dateVue.getMonth() + 1;
+  const trimestre = Math.floor((moisAffiche - 1) / 3) + 1;
+  const moisTrim = [0, 1, 2].map((k) => (trimestre - 1) * 3 + 1 + k);
+  const debutTrim = bornesMois(annee, moisTrim[0]).debut;
+  const finTrim = bornesMois(annee, moisTrim[2]).fin;
+  if (genererPgBtn) genererPgBtn.disabled = true;
+  try {
+    // 1) Les schedules des 3 mois doivent exister (résidents générés d'abord).
+    const { data: scheds } = await sb.from("schedules").select("id, month, status").eq("year", annee).in("month", moisTrim);
+    const schedByMonth = {}; (scheds || []).forEach((s) => { schedByMonth[s.month] = s; });
+    const manquants = moisTrim.filter((m) => !schedByMonth[m]);
+    if (manquants.length) { messageGeneration("Génère d'abord le planning des résidents (mois manquants : " + manquants.join(", ") + ").", "error"); return; }
+    const nonPubies = moisTrim.filter((m) => schedByMonth[m].status !== "published");
+    if (nonPubies.length && !window.confirm("Mois non publiés (" + nonPubies.join(", ") + "). Générer le planning PG par-dessus le brouillon ?")) return;
+
+    // 2) Médecins (avec champs PG), préférences, congrès/fermetures.
+    const { data: medecins } = await sb.from("doctors")
+      .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, unite_reference, pg_type, opting_out")
+      .neq("role", "admin");
+    const pgs = (medecins || []).filter((m) => m.grade === "pg");
+    if (!pgs.length) { messageGeneration("Aucun PG dans l'équipe (coche le grade « PG / Fellow » dans une fiche médecin).", "error"); return; }
+    const { data: prefs } = await sb.from("preferences").select("doctor_id, start_date, end_date, pref_type").eq("status", "approuve").lte("start_date", finTrim).gte("end_date", debutTrim);
+    const periodes = await periodesSur(debutTrim, finTrim);
+
+    // 3) Shifts résidents du trimestre (contexte + unités connues + cibles week-end).
+    const { data: pub } = await sb.from("shifts").select("id, date, shift_type, doctor_id, poste").gte("date", debutTrim).lte("date", finTrim);
+    const publishedShifts = pub || [];
+
+    // 4) Génération PG (fonction pure).
+    const res = genererTrimestrePG({ annee, trimestre, medecins: medecins || [], preferences: prefs || [], periodes, publishedShifts });
+
+    // 5) Écriture base.
+    //   a) supprimer les anciens shifts PG du trimestre.
+    await sb.from("shifts").delete().in("shift_type", ["pg_jour", "pg_twe", "garde_pg"]).gte("date", debutTrim).lte("date", finTrim);
+    //   b) réinitialiser les unités week-end posées sur les résidents (twe / garde_24h de week-end).
+    const estWE = (d) => (typeof plEstWeekendOuFerie === "function") ? plEstWeekendOuFerie(d) : [0, 6].includes(new Date(d + "T00:00:00Z").getUTCDay());
+    const weResIds = publishedShifts.filter((s) => (s.shift_type === "twe" || s.shift_type === "garde_24h") && estWE(s.date)).map((s) => s.id);
+    if (weResIds.length) await sb.from("shifts").update({ poste: null }).in("id", weResIds);
+    //   c) insérer les shifts PG (rattachés au schedule du mois).
+    const lignes = res.shifts.map((s) => ({
+      date: s.date, shift_type: s.shift_type, poste: s.poste, doctor_id: s.doctor_id,
+      schedule_id: (schedByMonth[parseInt(s.date.slice(5, 7), 10)] || {}).id,
+    })).filter((l) => l.schedule_id);
+    if (lignes.length) { const { error } = await sb.from("shifts").insert(lignes); if (error) throw error; }
+    //   d) poser les unités week-end sur les résidents (groupées par poste).
+    const parPoste = {}; (res.majResidents || []).forEach((m) => { (parPoste[m.poste] = parPoste[m.poste] || []).push(m.id); });
+    for (const poste of Object.keys(parPoste)) { await sb.from("shifts").update({ poste }).in("id", parPoste[poste]); }
+
+    // 6) Miroir Sheet + rafraîchissement.
+    const sync = await pousserVersSheetAuto("planning PG");
+    const nbConf = (res.conflits || []).length;
+    messageGeneration("Planning PG généré : " + lignes.length + " shifts PG, " + (res.majResidents || []).length +
+      " unité(s) week-end posée(s) aux résidents." + (nbConf ? " ⚠️ " + nbConf + " alerte(s) (tour PG incomplet)." : " ✅") +
+      (sync && sync.ok ? " Sheet mis à jour." : (sync && sync.skip ? " (Sheet non configuré.)" : "")), nbConf ? "error" : "info");
+    calendrier.refetchEvents();
+    if (typeof rafraichirPanneauAdmin === "function") rafraichirPanneauAdmin();
+  } catch (e) {
+    messageGeneration("Erreur génération PG : " + (e.message || e), "error");
+  } finally {
+    if (genererPgBtn) genererPgBtn.disabled = false;
+  }
+}
+if (genererPgBtn) genererPgBtn.addEventListener("click", genererPgPourTrimestreAffiche);
+
 
 /* ===================================================================== */
 /* MODULE 14 — Exports Excel (.xlsx) via ExcelJS (spec §13)              */
@@ -4214,11 +4288,13 @@ function construireSemainesSheet(shifts, prefs) {
     const jours = [0, 1, 2, 3, 4, 5, 6].map((k) => addJ(lundi, k));
     const rows = [["Poste"].concat(jours.map((iso, i) => JOURS[i] + " " + fmtJJMM(iso)))];
     stations.forEach(([lib, code]) => {
-      rows.push([lib].concat(jours.map((iso) => cell(iso, (s) => s.poste === code && (s.shift_type === "jour" || s.shift_type === "garde_24h")))));
+      rows.push([lib].concat(jours.map((iso) => cell(iso, (s) => s.poste === code &&
+        (s.shift_type === "jour" || s.shift_type === "garde_24h" || s.shift_type === "pg_jour" || s.shift_type === "pg_twe" || s.shift_type === "twe")))));
     });
     rows.push(["Garde de nuit (17h-9h)"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "garde_nuit"))));
     rows.push(["Garde 24h"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "garde_24h"))));
     rows.push(["Tour (TWE)"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "twe"))));
+    rows.push(["Tour PG (WE)"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "pg_twe"))));
     rows.push(["Off-clinic"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "off"))));
     rows.push(["Recuperation"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "recup"))));
     rows.push(["Repos de garde"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "repos_garde"))));

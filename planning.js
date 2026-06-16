@@ -71,7 +71,7 @@ function plSansContinuite(code) { return PL_STATIONS_SANS_CONTINUITE.indexOf(cod
 const PL_VERSION = "v2026.06.16-4";
 
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
-const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
+const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24, pg_jour: 8.5, pg_twe: 6, garde_pg: 24 };
 
 /* Off-clinic (§9) : journée de recherche CRÉDITÉE comme heures de travail
    (équivalent d'une journée), mais sans station ni repos généré. */
@@ -2675,7 +2675,133 @@ function validerEchange(shifts, idA, idB, medecins) {
   return { ok: true, message: "Échange valide.", changes };
 }
 
+/* =====================================================================
+   MODULE 28 — Générateur PG (postgraduate) — INDÉPENDANT des résidents
+   ---------------------------------------------------------------------
+   Lancé APRÈS publication du planning résidents (qu'il ne modifie pas).
+   Produit les shifts PG :
+     - SEMAINE (lun-ven) : chaque PG disponible est posé en `pg_jour` (8,5 h,
+       8:45-17:15) dans son UNITÉ MAISON, fixe par bloc de 3 semaines
+       (continuité), indépendamment des résidents (doublure permise).
+     - WEEK-END / FÉRIÉ : tour PG à part — 2 PG en `pg_twe` (6 h, 8h-14h),
+       les moins servis d'abord (équité).
+   Les GARDES PG sont AUTO-ENCODÉES par le PG (module ultérieur) : passées via
+   opts.pgGardes = [{doctor_id, date}], elles bloquent le jour ET le lendemain
+   (repos). opts = { annee, trimestre, medecins, preferences?, periodes?,
+   pgGardes? }. Renvoie { shifts, conflits, stats }. PUR (sans DOM/Supabase).
+   ===================================================================== */
+function genererTrimestrePG(opts) {
+  const pgs = (opts.medecins || []).filter((m) => m.grade === "pg");
+  const sortie = [], conflits = [];
+  if (!pgs.length) return { shifts: sortie, conflits, stats: [] };
+  const annee = opts.annee, trimestre = opts.trimestre;
+  const moisTrim = [0, 1, 2].map((k) => (trimestre - 1) * 3 + 1 + k);
+  let dates = [];
+  moisTrim.forEach((mo) => { dates = dates.concat(plDatesDuMois(annee, mo)); });
+
+  // Préférences bloquantes (congé/indispo/off/récup) + fenêtres « dispo ».
+  const bloquantes = plBloq();
+  const indispo = {}, dispo = {};
+  (opts.preferences || []).forEach((p) => {
+    if (p.pref_type === "dispo") {
+      (dispo[p.doctor_id] = dispo[p.doctor_id] || new Set());
+      let d = p.start_date; while (d <= p.end_date) { dispo[p.doctor_id].add(d); d = plAdd(d, 1); }
+      return;
+    }
+    if (!bloquantes.includes(p.pref_type)) return;
+    (indispo[p.doctor_id] = indispo[p.doctor_id] || new Set());
+    let d = p.start_date; while (d <= p.end_date) { indispo[p.doctor_id].add(d); d = plAdd(d, 1); }
+  });
+  // Gardes PG auto-encodées : bloquent le jour de garde ET le lendemain (repos).
+  const gardeBloc = {};
+  (opts.pgGardes || []).forEach((g) => {
+    (gardeBloc[g.doctor_id] = gardeBloc[g.doctor_id] || new Set());
+    gardeBloc[g.doctor_id].add(g.date); gardeBloc[g.doctor_id].add(plAdd(g.date, 1));
+  });
+
+  const jtOk = (m, d) => ((m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1,2,3,4,5,6,7]).includes(plJourSemaine(d));
+  const dispoCe = (m, d) => plSousContrat(m, d) && jtOk(m, d) &&
+    !(indispo[m.id] && indispo[m.id].has(d)) &&
+    (m.statut !== "independant" || (dispo[m.id] && dispo[m.id].has(d))) &&
+    !(gardeBloc[m.id] && gardeBloc[m.id].has(d));
+
+  // Continuité 3 semaines : unité maison par bloc de 3 semaines ISO.
+  const units = plPostes().map((p) => p.code).filter((c) => !plSansContinuite(c));
+  const lundis = [...new Set(dates.filter((d) => plJourSemaine(d) <= 5).map((d) => plLundiDe(d)))].sort();
+  const blocDe = {}; lundis.forEach((lk, i) => { blocDe[lk] = Math.floor(i / 3); });
+  const uniteDe = (pgIdx, lk) => {
+    if (!units.length) return null;
+    const b = (blocDe[lk] !== undefined) ? blocDe[lk] : 0;
+    return units[(b + pgIdx) % units.length];
+  };
+
+  const twe = {}; pgs.forEach((m) => { twe[m.id] = 0; });
+
+  dates.forEach((date) => {
+    if (!plEstWeekendOuFerie(date)) {
+      // SEMAINE : chaque PG disponible dans son unité maison du bloc.
+      pgs.forEach((m, i) => {
+        if (!dispoCe(m, date)) return;
+        const u = uniteDe(i, plLundiDe(date));
+        if (u) sortie.push({ date, shift_type: "pg_jour", poste: u, doctor_id: m.id });
+      });
+    } else {
+      // WEEK-END / FÉRIÉ : 2 PG au tour (pg_twe), les moins servis d'abord.
+      const libres = pgs.filter((m) => dispoCe(m, date)).sort((a, b) => twe[a.id] - twe[b.id]);
+      const pris = libres.slice(0, 2);
+      pris.forEach((m) => {
+        // Le PG tourne dans SON unité maison (continuité) ; toujours 6 h de travail.
+        const u = uniteDe(pgs.indexOf(m), plLundiDe(date));
+        sortie.push({ date, shift_type: "pg_twe", poste: u, doctor_id: m.id }); twe[m.id]++;
+      });
+      if (pris.length < 2) conflits.push({ date, message: "Tour PG week-end/férié : " + pris.length + "/2 PG disponibles." });
+    }
+  });
+
+  // ATTRIBUTION DES UNITÉS DU WEEK-END AUX RÉSIDENTS (les PG sont prioritaires).
+  // Pour chaque résident de tour (TWE) ou de garde 24 h le week-end/férié, on
+  // attribue une unité parmi les LIBRES (non prises par un PG ni un autre),
+  // en préférant son unité de référence, sinon une unité où il a déjà tourné.
+  // Renvoyé dans `majResidents` = [{id, poste}] à appliquer aux shifts résidents.
+  const majResidents = [];
+  const pub = opts.publishedShifts || [];
+  const medById = {}; (opts.medecins || []).forEach((m) => { medById[m.id] = m; });
+  const unitesConnues = {}; // résident -> Set(unités déjà tenues sur le trimestre)
+  pub.forEach((s) => {
+    if ((s.shift_type === "jour" || s.shift_type === "garde_24h") && s.poste && !plSansContinuite(s.poste)) {
+      (unitesConnues[s.doctor_id] = unitesConnues[s.doctor_id] || new Set()).add(s.poste);
+    }
+  });
+  const pgParDate = {}; // unités prises par les PG ce jour
+  sortie.forEach((s) => { if (s.shift_type === "pg_twe" && s.poste) (pgParDate[s.date] = pgParDate[s.date] || new Set()).add(s.poste); });
+  const weDates = [...new Set(pub.filter((s) => plEstWeekendOuFerie(s.date) && (s.shift_type === "twe" || s.shift_type === "garde_24h")).map((s) => s.date))];
+  weDates.forEach((date) => {
+    const pris = new Set(pgParDate[date] || []);
+    const ceJour = pub.filter((s) => s.date === date && (s.shift_type === "twe" || s.shift_type === "garde_24h"));
+    // D'abord, marquer les unités déjà posées (si certaines existaient).
+    ceJour.forEach((s) => { if (s.poste && !plSansContinuite(s.poste)) pris.add(s.poste); });
+    ceJour.forEach((s) => {
+      if (s.poste && !plSansContinuite(s.poste)) return; // déjà une unité
+      const m = medById[s.doctor_id];
+      const ref = m && m.unite_reference;
+      const libres = units.filter((u) => !pris.has(u));
+      if (!libres.length) return; // plus d'unité libre → on laisse sans
+      let choix = (ref && libres.indexOf(ref) !== -1) ? ref
+        : (libres.find((u) => unitesConnues[s.doctor_id] && unitesConnues[s.doctor_id].has(u)) || libres[0]);
+      pris.add(choix);
+      majResidents.push({ id: s.id, poste: choix });
+    });
+  });
+
+  const stats = pgs.map((m) => {
+    let h = 0, j = 0, t = 0;
+    sortie.forEach((s) => { if (s.doctor_id === m.id) { h += PL_HEURES[s.shift_type] || 0; if (s.shift_type === "pg_jour") j++; if (s.shift_type === "pg_twe") t++; } });
+    return { id: m.id, heures: Math.round(h * 10) / 10, jours: j, tours: t };
+  });
+  return { shifts: sortie, conflits, stats, majResidents };
+}
+
 /* ------------- Export pour Node (tests). Sans effet en navigateur. ------ */
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, validerEquite, compterParMedecin, plTrier, plRangDesiderata, alertesAbsences, validerEchange, plConflits24hSlack, plResorberOff24h };
+  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, validerEquite, compterParMedecin, plTrier, plRangDesiderata, alertesAbsences, validerEchange, plConflits24hSlack, plResorberOff24h, genererTrimestrePG };
 }

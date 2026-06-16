@@ -5,7 +5,7 @@
    ===================================================================== */
 
 const assert = require("assert");
-const { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, compterParMedecin, plTrier, alertesAbsences, validerEchange, plConflits24hSlack, plResorberOff24h } = require("./planning.js");
+const { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, compterParMedecin, plTrier, alertesAbsences, validerEchange, plConflits24hSlack, plResorberOff24h, genererTrimestrePG } = require("./planning.js");
 
 let reussis = 0, total = 0;
 function test(nom, fn) {
@@ -1427,6 +1427,86 @@ test("échange de garde : un OFF-CLINIC le lendemain est retiré (échange débl
   assert(r.ok, "échange refusé à tort : " + r.message);
   assert(r.changes.some((c) => c.id === "o2" && c.supprimer),
     "l'off-clinic du 11/6 n'a pas été retiré pour débloquer l'échange");
+});
+
+console.log("\n=== Module 28 — Générateur PG (indépendant des résidents) ===");
+
+function equipePG(n) {
+  const a = [];
+  for (let i = 1; i <= (n || 2); i++) a.push({ id: "pg" + i, name: "PG" + i, grade: "pg", fte: 1, weekly_hours_target: 48, jours_travailles: [1,2,3,4,5,6,7], statut: "dependant" });
+  return a;
+}
+
+test("PG semaine : pg_jour 8,5 h dans une unité (jamais le Labo)", () => {
+  const r = genererTrimestrePG({ annee: 2026, trimestre: 3, medecins: equipePG(2), preferences: [] });
+  const jours = r.shifts.filter((s) => s.shift_type === "pg_jour");
+  assert(jours.length > 0, "aucun pg_jour généré");
+  assert(jours.every((s) => s.poste && s.poste !== "labo_choc"), "pg_jour hors unité de continuité");
+  // heures
+  assert.strictEqual(genererTrimestrePG({ annee: 2026, trimestre: 3, medecins: equipePG(1), preferences: [] }).stats[0].heures > 0, true, "heures PG nulles");
+});
+
+test("PG : continuité 3 semaines (même unité sur un bloc de 3 sem.)", () => {
+  const r = genererTrimestrePG({ annee: 2026, trimestre: 3, medecins: equipePG(1), preferences: [] });
+  const lundiDe = (iso) => { const d = new Date(iso + "T00:00:00Z"); const j = d.getUTCDay() || 7; d.setUTCDate(d.getUTCDate() - (j - 1)); return d.toISOString().slice(0, 10); };
+  const parLundi = {};
+  r.shifts.filter((s) => s.shift_type === "pg_jour").forEach((s) => { (parLundi[lundiDe(s.date)] = parLundi[lundiDe(s.date)] || new Set()).add(s.poste); });
+  const lundis = Object.keys(parLundi).sort();
+  // Les 3 premières semaines : une seule unité, identique.
+  const u0 = [...parLundi[lundis[0]]][0];
+  for (let i = 0; i < 3 && i < lundis.length; i++) {
+    assert(parLundi[lundis[i]].size === 1 && [...parLundi[lundis[i]]][0] === u0,
+      "continuité 3 sem rompue à la semaine " + (i + 1));
+  }
+});
+
+test("PG week-end/férié : 2 PG au tour (pg_twe, 6 h)", () => {
+  const r = genererTrimestrePG({ annee: 2026, trimestre: 3, medecins: equipePG(3), preferences: [] });
+  const dow = (d) => { const j = new Date(d + "T00:00:00Z").getUTCDay(); return j === 0 ? 7 : j; };
+  const parDate = {};
+  r.shifts.filter((s) => s.shift_type === "pg_twe").forEach((s) => { parDate[s.date] = (parDate[s.date] || 0) + 1; });
+  const we = Object.keys(parDate).filter((d) => dow(d) >= 6);
+  assert(we.length > 0, "aucun tour PG week-end");
+  assert(we.every((d) => parDate[d] === 2), "tour PG week-end ≠ 2 PG un jour");
+});
+
+test("PG : un congé bloque la pose ce jour-là", () => {
+  const meds = equipePG(2);
+  const prefs = [{ doctor_id: "pg1", pref_type: "conge_annuel", start_date: "2026-07-06", end_date: "2026-07-10", status: "approuve" }];
+  const r = genererTrimestrePG({ annee: 2026, trimestre: 3, medecins: meds, preferences: prefs });
+  const enConge = r.shifts.filter((s) => s.doctor_id === "pg1" && s.date >= "2026-07-06" && s.date <= "2026-07-10");
+  assert.strictEqual(enConge.length, 0, "PG posé pendant son congé");
+});
+
+test("PG : aucun PG → planning PG vide (pas d'erreur)", () => {
+  const r = genererTrimestrePG({ annee: 2026, trimestre: 3, medecins: equipe(), preferences: [] });
+  assert.strictEqual(r.shifts.length, 0, "des shifts PG générés sans PG dans l'équipe");
+});
+
+test("PG week-end : unités attribuées aux résidents (PG prioritaires, réf./unité connue)", () => {
+  const meds = [
+    { id: "pg1", grade: "pg", name: "PG1", jours_travailles: [1,2,3,4,5,6,7], statut: "dependant" },
+    { id: "pg2", grade: "pg", name: "PG2", jours_travailles: [1,2,3,4,5,6,7], statut: "dependant" },
+    { id: "r1", grade: "resident", name: "R1", unite_reference: "usi3" },
+    { id: "r2", grade: "resident", name: "R2", unite_reference: "usi1" }, // usi1 prise par un PG
+    { id: "r3", grade: "resident", name: "R3" },                          // pas de réf, a tourné usi5
+  ];
+  const SAM = "2026-07-04";
+  const publishedShifts = [
+    { id: "jr2", date: "2026-07-07", shift_type: "jour", doctor_id: "r2", poste: "usi4" }, // r2 a tourné usi4
+    { id: "jr3", date: "2026-07-07", shift_type: "jour", doctor_id: "r3", poste: "usi5" }, // r3 a tourné usi5
+    { id: "t1", date: SAM, shift_type: "twe", doctor_id: "r1", poste: null },
+    { id: "g2", date: SAM, shift_type: "garde_24h", doctor_id: "r2", poste: null },
+    { id: "t3", date: SAM, shift_type: "twe", doctor_id: "r3", poste: null },
+  ];
+  const r = genererTrimestrePG({ annee: 2026, trimestre: 3, medecins: meds, preferences: [], publishedShifts });
+  // PG ont pris usi1 et usi2 ce samedi.
+  const pgU = r.shifts.filter((s) => s.shift_type === "pg_twe" && s.date === SAM).map((s) => s.poste).sort();
+  assert.deepStrictEqual(pgU, ["usi1", "usi2"], "PG n'ont pas pris usi1/usi2 : " + pgU.join(","));
+  const maj = {}; r.majResidents.forEach((m) => { maj[m.id] = m.poste; });
+  assert.strictEqual(maj["t1"], "usi3", "R1 (réf usi3 libre) → " + maj["t1"]);
+  assert.strictEqual(maj["g2"], "usi4", "R2 (réf usi1 prise → unité connue usi4) → " + maj["g2"]);
+  assert.strictEqual(maj["t3"], "usi5", "R3 (unité connue usi5) → " + maj["t3"]);
 });
 
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");
