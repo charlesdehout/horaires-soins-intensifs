@@ -63,6 +63,9 @@ const doctorId        = document.getElementById("doctor-id");
 const dName           = document.getElementById("d-name");
 const dEmail          = document.getElementById("d-email");
 const dGrade          = document.getElementById("d-grade");
+const dPgFields       = document.getElementById("d-pg-fields");
+const dPgType         = document.getElementById("d-pg-type");
+const dOptingOut      = document.getElementById("d-opting-out");
 const dFte            = document.getElementById("d-fte");
 const dHours          = document.getElementById("d-hours");
 const dAdminLevel     = document.getElementById("d-admin-level");
@@ -349,7 +352,24 @@ const HEURES_BASE = 52;
 const GRADE_LABELS = {
   resident: "Résident",
   assistant_specialiste: "Assistant spéc.",
+  pg: "PG / Fellow",
 };
+
+/* Affiche/masque les champs PG selon le grade ; un Fellow est toujours en
+   opting out (case forcée et désactivée). Auto-cible : 60 h/sem si opting out,
+   48 h/sem sinon (modifiable). */
+function majChampsPg() {
+  if (!dPgFields) return;
+  const estPg = dGrade.value === "pg";
+  dPgFields.classList.toggle("hidden", !estPg);
+  if (!estPg) return;
+  const fellow = dPgType && dPgType.value === "fellow";
+  if (dOptingOut) {
+    if (fellow) { dOptingOut.checked = true; dOptingOut.disabled = true; }
+    else { dOptingOut.disabled = false; }
+  }
+  if (dHours) dHours.value = (dOptingOut && dOptingOut.checked) ? 60 : 48;
+}
 
 /* Quota de base d'un type de congé : surcharge du médecin, sinon défaut (regles.js). */
 function quotaBase(med, type) {
@@ -432,6 +452,9 @@ function ouvrirAjout() {
   doctorId.value = "";
   dFte.value = "1";
   dHours.value = HEURES_BASE; // 52h par défaut (plein temps)
+  if (dPgType) dPgType.value = "ulb";
+  if (dOptingOut) { dOptingOut.checked = false; dOptingOut.disabled = false; }
+  majChampsPg();
   setPeriodes([]);            // une seule période vide
   messageFormMedecin("");
   doctorForm.classList.remove("hidden");
@@ -443,6 +466,9 @@ function ouvrirEdition(med) {
   dName.value = med.name || "";
   dEmail.value = med.email || "";
   dGrade.value = med.grade || "assistant_specialiste";
+  if (dPgType) dPgType.value = med.pg_type || "ulb";
+  if (dOptingOut) dOptingOut.checked = !!med.opting_out;
+  majChampsPg();
   dFte.value = med.fte ?? 1;
   dHours.value = med.weekly_hours_target ?? HEURES_BASE;
   dAdminLevel.value = med.admin_level || (med.role === "admin" ? "principal" : "aucun");
@@ -472,6 +498,9 @@ function fermerFormulaire() {
 }
 
 addDoctorBtn.addEventListener("click", ouvrirAjout);
+if (dGrade) dGrade.addEventListener("change", majChampsPg);
+if (dPgType) dPgType.addEventListener("change", majChampsPg);
+if (dOptingOut) dOptingOut.addEventListener("change", () => { if (dHours) dHours.value = dOptingOut.checked ? 60 : 48; });
 cancelDoctorBtn.addEventListener("click", fermerFormulaire);
 
 /* Charge tous les médecins depuis Supabase et les affiche dans le tableau */
@@ -566,6 +595,8 @@ doctorForm.addEventListener("submit", async (e) => {
     name: dName.value.trim(),
     email: dEmail.value.trim().toLowerCase(),
     grade: dGrade.value,
+    pg_type: dGrade.value === "pg" ? (dPgType ? dPgType.value : "ulb") : null,
+    opting_out: dGrade.value === "pg" ? ((dPgType && dPgType.value === "fellow") || (dOptingOut && dOptingOut.checked)) : false,
     fte: isNaN(fte) ? 1 : fte,
     weekly_hours_target: parseFloat(dHours.value) || HEURES_BASE,
     // Rôle d'accès dérivé du niveau admin (travailleur → doctor, sinon admin).

@@ -431,7 +431,17 @@
               <select id="d-grade">
                 <option value="resident">Résident</option>
                 <option value="assistant_specialiste">Assistant spécialiste</option>
+                <option value="pg">PG / Fellow</option>
               </select>
+            </div>
+            <div id="d-pg-fields" class="hidden">
+              <label for="d-pg-type">Sous-type PG</label>
+              <select id="d-pg-type">
+                <option value="ulb">PG ULB (standard, congé limité)</option>
+                <option value="fellow">Fellow (recherche, opting out)</option>
+              </select>
+              <label for="d-opting-out" style="display:block;margin-top:6px;">
+                <input type="checkbox" id="d-opting-out" /> Opting out (plafond 60 h/sem au lieu de 48 h)</label>
             </div>
             <div>
               <label for="d-fte">Quotité (fte)</label>
