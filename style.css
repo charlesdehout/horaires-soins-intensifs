@@ -439,7 +439,35 @@ button.mini.danger:hover { background: #fbeae8; }
   gap: 0.6rem;
   margin-bottom: 0.8rem;
 }
+.planning-actions { align-items: stretch; }
 .planning-actions button { width: auto; padding: 0.5rem 1rem; margin: 0; }
+
+/* Groupes d'actions du planning : clusters labellisés pour la lisibilité */
+.pa-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.7rem 0.6rem;
+  border: 1px solid var(--gris-bordure);
+  border-radius: 10px;
+  background: var(--gris-clair);
+}
+.pa-label {
+  flex: 1 1 100%;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #5b6b66;
+  margin-bottom: 0.15rem;
+}
+.pa-group-danger { background: #fbeae8; border-color: #f0c8c4; }
+.pa-group-danger .pa-label { color: var(--rouge); }
+
+/* Bouton d'action destructeur (pleine taille) : rouge, bien distinct */
+button.danger { background: var(--rouge); color: #fff; border: none; }
+button.danger:hover { background: #9e2b22; }
 
 /* Compteurs par médecin */
 .compteurs-table td.depasse { color: var(--rouge); font-weight: 600; }

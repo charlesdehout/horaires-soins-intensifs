@@ -1152,7 +1152,28 @@ function rendrePreferences(prefs) {
 
     prefsTbody.appendChild(tr);
   });
+
+  // Bouton « Supprimer mes demandes refusées » : visible s'il y en a.
+  const btnRef = document.getElementById("suppr-mes-refusees-btn");
+  if (btnRef) {
+    const nbRef = prefs.filter((p) => (p.status || "") === "refuse").length;
+    btnRef.classList.toggle("hidden", nbRef === 0);
+  }
 }
+
+/* Demandeur : supprime d'un coup toutes ses propres demandes refusées. */
+async function supprimerMesRefusees() {
+  if (!medecinCourant) return;
+  const refusees = (prefsCourantes || []).filter((p) => (p.status || "") === "refuse");
+  if (!refusees.length) return;
+  if (!window.confirm("Supprimer toutes vos demandes refusées (" + refusees.length + ") ?")) return;
+  const ids = refusees.map((p) => p.id);
+  const { error } = await sb.from("preferences").delete().in("id", ids);
+  if (error) { window.alert("Suppression impossible : " + error.message); return; }
+  chargerPreferences();
+}
+const supprMesRefuseesBtn = document.getElementById("suppr-mes-refusees-btn");
+if (supprMesRefuseesBtn) supprMesRefuseesBtn.addEventListener("click", supprimerMesRefusees);
 
 /* Quota de congé PG par TRIMESTRE CIVIL (jours ouvrés). PG ULB : 10 ; Fellow : 20
    (plus large, rôle recherche). La LIMITE n'est jamais montrée au PG. */
@@ -3640,6 +3661,14 @@ async function chargerDemandes() {
     .limit(200);
   rendreDemandesValidees(validees || []);
 
+  // Demandes REFUSÉES / RÉVOQUÉES → suppression définitive possible.
+  const { data: refusees } = await sb.from("preferences")
+    .select("id, doctor_id, start_date, end_date, pref_type, note, status, date_compensation")
+    .eq("status", "refuse")
+    .order("start_date", { ascending: true })
+    .limit(500);
+  rendreDemandesRefusees(refusees || []);
+
   // Compteurs de congés par médecin (vue admin).
   chargerCompteursConges();
 }
@@ -3747,6 +3776,47 @@ function rendreDemandesValidees(demandes) {
   });
 }
 
+/* Tableau des demandes REFUSÉES / RÉVOQUÉES, avec suppression définitive
+   (efface la ligne en base → disparaît aussi côté demandeur). */
+function rendreDemandesRefusees(demandes) {
+  const tbody = document.getElementById("demandes-refusees-tbody");
+  const table = document.getElementById("demandes-refusees-table");
+  const empty = document.getElementById("demandes-refusees-empty");
+  const btnAll = document.getElementById("suppr-refusees-btn");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  const vide = demandes.length === 0;
+  if (table) table.classList.toggle("hidden", vide);
+  if (empty) empty.classList.toggle("hidden", !vide);
+  if (btnAll) btnAll.classList.toggle("hidden", vide);
+  demandes.forEach((d) => {
+    const tr = document.createElement("tr");
+    const med = carteMedecins[d.doctor_id] || {};
+    const noteAff = (d.pref_type === "travailler_ferie" && d.date_compensation)
+      ? ("récup : " + d.date_compensation + (d.note ? " · " + d.note : ""))
+      : (d.note || "—");
+    [med.name || "?", PREF_LABELS_FULL[d.pref_type] || d.pref_type,
+     d.start_date, d.end_date, noteAff].forEach((v) => {
+      const td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
+    });
+    const tdA = document.createElement("td");
+    tdA.className = "actions-cell";
+    const del = document.createElement("button");
+    del.textContent = "Supprimer"; del.className = "mini danger";
+    del.addEventListener("click", async () => {
+      const lib = (med.name || "?") + " — " + (PREF_LABELS_FULL[d.pref_type] || d.pref_type) +
+        " du " + d.start_date + " au " + d.end_date;
+      if (!window.confirm("Supprimer définitivement cette demande refusée ?\n\n" + lib)) return;
+      const { error } = await sb.from("preferences").delete().eq("id", d.id);
+      if (error) { window.alert("Erreur : " + error.message); return; }
+      await chargerDemandes();
+    });
+    tdA.appendChild(del);
+    tr.appendChild(tdA);
+    tbody.appendChild(tr);
+  });
+}
+
 /* Construit le tableau des demandes en attente avec boutons Approuver/Refuser. */
 function rendreDemandes(demandes) {
   if (!demandesTbody) return;
@@ -3798,6 +3868,26 @@ async function deciderDemande(id, status) {
 }
 
 if (refreshDemandesBtn) refreshDemandesBtn.addEventListener("click", chargerDemandes);
+
+/* Purge ADMIN : supprime définitivement toutes les demandes refusées/révoquées. */
+const supprRefuseesBtn = document.getElementById("suppr-refusees-btn");
+if (supprRefuseesBtn) supprRefuseesBtn.addEventListener("click", async () => {
+  if (!window.confirm("Supprimer DÉFINITIVEMENT toutes les demandes refusées / révoquées ?\n\nElles disparaîtront aussi côté demandeurs.")) return;
+  const { error } = await sb.from("preferences").delete().eq("status", "refuse");
+  if (error) { window.alert("Erreur : " + error.message); return; }
+  await chargerDemandes();
+});
+
+/* Réinitialisation ADMIN : vide toutes les demandes EN ATTENTE + REFUSÉES de
+   tous les médecins, sans passer par eux. Conserve les congés VALIDÉS. */
+const resetDemandesBtn = document.getElementById("reset-demandes-btn");
+if (resetDemandesBtn) resetDemandesBtn.addEventListener("click", async () => {
+  if (!window.confirm("Mettre à VIERGE toutes les demandes EN ATTENTE et REFUSÉES de TOUS les médecins ?\n\nLes congés déjà VALIDÉS sont conservés. Action irréversible.")) return;
+  const { error } = await sb.from("preferences").delete().in("status", ["en_attente", "refuse"]);
+  if (error) { window.alert("Erreur : " + error.message); return; }
+  await chargerDemandes();
+  if (calendrier) calendrier.refetchEvents();
+});
 
 /* Nombre de demandes EN ATTENTE chevauchant une période [debut, fin].
    Sert à BLOQUER la génération tant que tout n'est pas validé (§8.3, §12). */

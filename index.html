@@ -168,18 +168,30 @@
 
         <!-- Barre d'actions sur le planning du mois affiché -->
         <div id="planning-actions" class="planning-actions">
-          <button id="generer-planning-btn">⚙️ Générer le mois (brouillon)</button>
-          <button id="generer-trimestre-btn" class="secondary">📅 Générer le trimestre (équité)</button>
-          <button id="generer-pg-btn" class="secondary">🩺 Générer le planning PG (trimestre)</button>
-          <button id="ajouter-shift-btn" class="secondary">+ Ajouter un shift</button>
-          <button id="publier-btn" class="secondary">✓ Publier</button>
-          <button id="depublier-btn" class="secondary">↩ Repasser en brouillon</button>
-          <button id="restaurer-trim-btn" class="secondary">♻ Restaurer le dernier publié (trimestre)</button>
-          <button id="supprimer-trim-btn" class="danger">🗑 Supprimer le trimestre</button>
-          <button id="export-planning-btn" class="secondary">⬇ Excel — Planning (mois)</button>
-          <button id="export-trimestre-btn" class="secondary">⬇ Excel — Planning (trimestre)</button>
-          <button id="export-recap-btn" class="secondary">⬇ Excel — Récap individuel</button>
-          <button id="export-reconnus-btn" class="secondary">⬇ Excel — Horaires reconnus</button>
+          <div class="pa-group">
+            <span class="pa-label">Génération</span>
+            <button id="generer-planning-btn">⚙️ Générer le mois (brouillon)</button>
+            <button id="generer-trimestre-btn" class="secondary">📅 Générer le trimestre (équité)</button>
+            <button id="generer-pg-btn" class="secondary">🩺 Générer le planning PG (trimestre)</button>
+          </div>
+          <div class="pa-group">
+            <span class="pa-label">Édition &amp; publication</span>
+            <button id="ajouter-shift-btn" class="secondary">+ Ajouter un shift</button>
+            <button id="publier-btn" class="secondary">✓ Publier</button>
+            <button id="depublier-btn" class="secondary">↩ Repasser en brouillon</button>
+            <button id="restaurer-trim-btn" class="secondary">♻ Restaurer le dernier publié (trimestre)</button>
+          </div>
+          <div class="pa-group">
+            <span class="pa-label">Export Excel</span>
+            <button id="export-planning-btn" class="secondary">⬇ Planning (mois)</button>
+            <button id="export-trimestre-btn" class="secondary">⬇ Planning (trimestre)</button>
+            <button id="export-recap-btn" class="secondary">⬇ Récap individuel</button>
+            <button id="export-reconnus-btn" class="secondary">⬇ Horaires reconnus</button>
+          </div>
+          <div class="pa-group pa-group-danger">
+            <span class="pa-label">Zone sensible</span>
+            <button id="supprimer-trim-btn" class="danger">🗑 Supprimer le trimestre</button>
+          </div>
         </div>
         <p class="zone-info">
           La génération crée un <strong>brouillon</strong> (greedy v1) pour le mois affiché ci-dessus,
@@ -675,6 +687,12 @@
 
           <!-- ── En attente / Validées (contenu ex-onglet Demandes) ─── -->
           <div id="cg-sec-att" class="hidden">
+            <div class="zone-header pa-group-danger" style="border-radius:10px;padding:0.6rem 0.8rem;">
+              <h3 class="sous-titre" style="margin:0;">Réinitialisation des demandes</h3>
+              <button id="reset-demandes-btn" class="danger">🗑 Tout mettre au vierge</button>
+            </div>
+            <p class="zone-info">Supprime toutes les demandes <strong>en attente</strong> et <strong>refusées / révoquées</strong> de tous les médecins, sans devoir passer par eux. Les congés <strong>validés</strong> sont conservés (le planning n'est pas impacté).</p>
+
             <div class="zone-header">
               <h3 class="sous-titre">Demandes à valider</h3>
               <button id="refresh-demandes-btn" class="mini secondary">Rafraîchir</button>
@@ -694,6 +712,17 @@
               <tbody id="demandes-validees-tbody"></tbody>
             </table>
             <p id="demandes-validees-empty" class="zone-info">Aucune demande validée à venir.</p>
+
+            <div class="zone-header">
+              <h3 class="sous-titre">Demandes refusées / révoquées</h3>
+              <button id="suppr-refusees-btn" type="button" class="mini danger hidden">Tout supprimer</button>
+            </div>
+            <p class="zone-info">Demandes refusées ou révoquées, conservées en base. Les supprimer ici les efface définitivement — elles disparaissent aussi côté demandeur.</p>
+            <table id="demandes-refusees-table" class="data-table hidden">
+              <thead><tr><th>Médecin</th><th>Type</th><th>Début</th><th>Fin</th><th>Note</th><th></th></tr></thead>
+              <tbody id="demandes-refusees-tbody"></tbody>
+            </table>
+            <p id="demandes-refusees-empty" class="zone-info">Aucune demande refusée.</p>
 
             <div class="zone-header"><h3 class="sous-titre" id="conges-admin-titre">Compteurs de congés</h3></div>
             <p class="zone-info">Jours ouvrés <strong>approuvés</strong> (+ en attente) / quota proratisé au contrat.</p>
@@ -784,6 +813,9 @@
         </form>
 
         <!-- Tableau des préférences encodées -->
+        <div class="zone-header" style="justify-content:flex-end;">
+          <button id="suppr-mes-refusees-btn" type="button" class="mini danger hidden">Supprimer mes demandes refusées</button>
+        </div>
         <table id="prefs-table" class="data-table">
           <thead>
             <tr>
