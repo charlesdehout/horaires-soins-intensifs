@@ -2685,15 +2685,19 @@ const cgPGMsg      = document.getElementById("cg-pg-msg");
 let cgResDoctors = [];  // résidents + AS chargés
 let cgPGDoctors  = [];  // PG + Fellow chargés
 
-/* Sous-onglets Résidents/PG */
-if (cgTabRes) cgTabRes.addEventListener("click", function() {
-  cgTabRes.classList.add("actif"); cgTabPG.classList.remove("actif");
-  cgSecRes.classList.remove("hidden"); cgSecPG.classList.add("hidden");
-});
-if (cgTabPG) cgTabPG.addEventListener("click", function() {
-  cgTabPG.classList.add("actif"); cgTabRes.classList.remove("actif");
-  cgSecPG.classList.remove("hidden"); cgSecRes.classList.add("hidden");
-});
+/* Sous-onglets Résidents/PG/En attente */
+const cgTabAtt = document.getElementById("cg-tab-att");
+const cgSecAtt = document.getElementById("cg-sec-att");
+function cgBasculer(actif) {
+  [cgTabRes, cgTabPG, cgTabAtt].forEach(function(b) { if (b) b.classList.remove("actif"); });
+  [cgSecRes, cgSecPG, cgSecAtt].forEach(function(s) { if (s) s.classList.add("hidden"); });
+  if (actif === "res")  { cgTabRes && cgTabRes.classList.add("actif");  cgSecRes && cgSecRes.classList.remove("hidden"); }
+  if (actif === "pg")   { cgTabPG  && cgTabPG.classList.add("actif");   cgSecPG  && cgSecPG.classList.remove("hidden"); }
+  if (actif === "att")  { cgTabAtt && cgTabAtt.classList.add("actif");  cgSecAtt && cgSecAtt.classList.remove("hidden"); chargerDemandes(); }
+}
+if (cgTabRes) cgTabRes.addEventListener("click", function() { cgBasculer("res"); });
+if (cgTabPG)  cgTabPG.addEventListener("click",  function() { cgBasculer("pg");  });
+if (cgTabAtt) cgTabAtt.addEventListener("click",  function() { cgBasculer("att"); });
 
 /* Initialisation : chargée à l'ouverture de l'onglet */
 async function cgInit() {
@@ -4870,7 +4874,7 @@ if (vueGrilleBtn) vueGrilleBtn.addEventListener("click", () => basculerVuePlanni
 /* les onglets ne gèrent que l'affichage.                                */
 /* ===================================================================== */
 
-const ONGLETS = ["planning", "demandes", "periodes", "medecins", "echanges-admin", "conges-admin", "prefs", "echanges"];
+const ONGLETS = ["planning", "periodes", "medecins", "echanges-admin", "conges-admin", "prefs", "echanges"];
 
 function basculerOnglet(nom) {
   ONGLETS.forEach((t) => {
@@ -4883,7 +4887,7 @@ function basculerOnglet(nom) {
   // sa taille quand on revient sur l'onglet Planning.
   if (nom === "planning" && calendrier) calendrier.updateSize();
   if (nom === "echanges-admin" && typeof chargerEchangesAdmin === "function") { chargerEchangesAdmin(); if (typeof echAdminCharger === "function") echAdminCharger(); }
-  if (nom === "conges-admin" && typeof cgInit === "function") cgInit();
+  if (nom === "conges-admin" && typeof cgInit === "function") { cgInit(); chargerDemandes(); }
 }
 
 document.querySelectorAll("#tabs-nav .tab").forEach((b) =>

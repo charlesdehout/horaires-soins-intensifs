@@ -75,8 +75,6 @@
       <!-- ===== Navigation par onglets (visibilité selon le rôle) ===== -->
       <nav id="tabs-nav" class="tabs">
         <button type="button" class="tab actif" data-tab="planning">Planning</button>
-        <button type="button" class="tab tab-admin hidden" data-tab="demandes">Demandes
-          <span id="tab-badge-demandes" class="tab-badge hidden"></span></button>
         <button type="button" class="tab tab-admin hidden" data-tab="periodes">Congrès &amp; fermetures</button>
         <button type="button" class="tab tab-admin hidden" data-tab="medecins">Médecins</button>
         <button type="button" class="tab tab-admin hidden" data-tab="echanges-admin">Échanges</button>
@@ -276,50 +274,6 @@
 
       <!-- ============ ONGLETS ADMIN ============ -->
       <div id="admin-zone" class="hidden">
-
-        <!-- Onglet DEMANDES (Module 10) -->
-        <div id="panel-demandes" class="tab-panel hidden">
-        <div class="zone-header">
-          <h3 class="sous-titre">Demandes à valider</h3>
-          <button id="forcer-conge-btn" class="mini">➕ Forcer un congé / une absence</button>
-          <button id="refresh-demandes-btn" class="mini secondary">Rafraîchir</button>
-        </div>
-        <p class="zone-info">La génération du planning est bloquée tant qu'il reste des demandes en attente sur la période.</p>
-        <table id="demandes-table" class="data-table hidden">
-          <thead>
-            <tr><th>Médecin</th><th>Type</th><th>Début</th><th>Fin</th><th>Note</th><th></th></tr>
-          </thead>
-          <tbody id="demandes-tbody"></tbody>
-        </table>
-        <p id="demandes-empty" class="zone-info">Aucune demande en attente. ✅</p>
-
-        <!-- Demandes déjà VALIDÉES (révision 2026-06-13) : l'admin peut les
-             révoquer dans un second temps (le statut repasse à « refusé »). -->
-        <div class="zone-header"><h3 class="sous-titre">Demandes validées (à venir)</h3></div>
-        <p class="zone-info">Demandes approuvées dont la période n'est pas terminée.
-          « Révoquer » repasse la demande en refusé — pense à régénérer le planning
-          concerné s'il en tenait compte.</p>
-        <table id="demandes-validees-table" class="data-table hidden">
-          <thead>
-            <tr><th>Médecin</th><th>Type</th><th>Début</th><th>Fin</th><th>Note</th><th></th></tr>
-          </thead>
-          <tbody id="demandes-validees-tbody"></tbody>
-        </table>
-        <p id="demandes-validees-empty" class="zone-info">Aucune demande validée à venir.</p>
-
-        <!-- Compteurs de congés par médecin (révision 2026-06-13) : vue admin
-             de la consommation des quotas sur l'année académique en cours. -->
-        <div class="zone-header"><h3 class="sous-titre" id="conges-admin-titre">Compteurs de congés</h3></div>
-        <p class="zone-info">Jours ouvrés <strong>approuvés</strong> (+ en attente) / quota proratisé au
-          contrat, sur l'année académique en cours (1 oct → 30 sep).</p>
-        <table id="conges-admin-table" class="data-table hidden">
-          <thead>
-            <tr><th>Médecin</th><th>Congé annuel</th><th>Extra-légaux</th><th>Scientifique</th><th>Total restant</th></tr>
-          </thead>
-          <tbody id="conges-admin-tbody"></tbody>
-        </table>
-        <p id="conges-admin-empty" class="zone-info hidden">Aucun médecin.</p>
-        </div><!-- /panel-demandes -->
 
         <!-- Onglet CONGRÈS & FERMETURES (Module 17) — saisie ADMIN uniquement -->
         <div id="panel-periodes" class="tab-panel hidden">
@@ -641,6 +595,7 @@
           <div class="vue-toggle" style="margin-bottom:1.2rem;">
             <button id="cg-tab-res" type="button" class="vue-btn actif">Résidents / AS</button>
             <button id="cg-tab-pg"  type="button" class="vue-btn">PG / Fellow</button>
+            <button id="cg-tab-att" type="button" class="vue-btn">En attente</button>
           </div>
 
           <!-- ── Résidents / AS ── -->
@@ -713,6 +668,37 @@
             <p id="cg-pg-empty" class="zone-info hidden">Aucune préférence pour ce médecin.</p>
           </div><!-- /cg-sec-pg -->
 
+
+          <!-- ── En attente / Validées (contenu ex-onglet Demandes) ─── -->
+          <div id="cg-sec-att" class="hidden">
+            <div class="zone-header">
+              <h3 class="sous-titre">Demandes à valider</h3>
+              <button id="refresh-demandes-btn" class="mini secondary">Rafraîchir</button>
+            </div>
+            <p class="zone-info">La génération du planning est bloquée tant qu'il reste des demandes en attente sur la période.</p>
+            <table id="demandes-table" class="data-table hidden">
+              <thead><tr><th>Médecin</th><th>Type</th><th>Début</th><th>Fin</th><th>Note</th><th></th></tr></thead>
+              <tbody id="demandes-tbody"></tbody>
+            </table>
+            <p id="demandes-empty" class="zone-info">Aucune demande en attente. ✅</p>
+
+            <div class="zone-header"><h3 class="sous-titre">Demandes validées (à venir)</h3></div>
+            <p class="zone-info">Demandes approuvées dont la période n'est pas terminée.
+              « Révoquer » repasse la demande en refusé — pense à régénérer le planning concerné.</p>
+            <table id="demandes-validees-table" class="data-table hidden">
+              <thead><tr><th>Médecin</th><th>Type</th><th>Début</th><th>Fin</th><th>Note</th><th></th></tr></thead>
+              <tbody id="demandes-validees-tbody"></tbody>
+            </table>
+            <p id="demandes-validees-empty" class="zone-info">Aucune demande validée à venir.</p>
+
+            <div class="zone-header"><h3 class="sous-titre" id="conges-admin-titre">Compteurs de congés</h3></div>
+            <p class="zone-info">Jours ouvrés <strong>approuvés</strong> (+ en attente) / quota proratisé au contrat.</p>
+            <table id="conges-admin-table" class="data-table hidden">
+              <thead><tr><th>Médecin</th><th>Congé annuel</th><th>Extra-légaux</th><th>Scientifique</th><th>Total restant</th></tr></thead>
+              <tbody id="conges-admin-tbody"></tbody>
+            </table>
+            <p id="conges-admin-empty" class="zone-info hidden">Aucun médecin.</p>
+          </div><!-- /cg-sec-att -->
         </div><!-- /panel-conges-admin -->
       </div><!-- /admin-zone -->
 
