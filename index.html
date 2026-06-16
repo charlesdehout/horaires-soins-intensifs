@@ -600,6 +600,30 @@
           en tiendra compte lors de la génération du planning.
         </p>
 
+        <!-- Gardes PG (auto-encodées par le PG) — visible seulement pour les PG -->
+        <div id="pg-garde-zone" class="hidden">
+          <h3 class="sous-titre">Mes gardes (PG)</h3>
+          <p class="zone-info">
+            Déclare une date de garde (compte 24 h). Une récupération est posée
+            automatiquement le lendemain. Tes gardes sont indépendantes du planning de service.
+          </p>
+          <div class="form-grid">
+            <div>
+              <label for="pg-garde-date">Date de garde</label>
+              <input type="date" id="pg-garde-date" />
+            </div>
+            <div style="align-self:end;">
+              <button type="button" id="pg-garde-add">Déclarer la garde</button>
+            </div>
+          </div>
+          <p id="pg-garde-msg" class="message"></p>
+          <table id="pg-garde-table" class="data-table">
+            <thead><tr><th>Garde (24 h)</th><th>Récup</th><th></th></tr></thead>
+            <tbody id="pg-garde-tbody"></tbody>
+          </table>
+          <p id="pg-garde-empty" class="zone-info hidden">Aucune garde déclarée.</p>
+        </div>
+
         <!-- Compteur de congés (affiché seulement si un quota est défini) -->
         <p id="conges-compteur" class="zone-info hidden"></p>
 

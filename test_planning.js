@@ -1509,5 +1509,14 @@ test("PG week-end : unités attribuées aux résidents (PG prioritaires, réf./u
   assert.strictEqual(maj["t3"], "usi5", "R3 (unité connue usi5) → " + maj["t3"]);
 });
 
+test("PG garde auto-encodée : bloque la pose le jour de garde ET le lendemain (récup)", () => {
+  const pgs = [{ id: "pg1", grade: "pg", name: "PG1", jours_travailles: [1,2,3,4,5,6,7], statut: "dependant" }];
+  const r = genererTrimestrePG({ annee: 2026, trimestre: 3, medecins: pgs, preferences: [], pgGardes: [{ doctor_id: "pg1", date: "2026-07-07" }] });
+  const j07 = r.shifts.filter((s) => s.doctor_id === "pg1" && s.date === "2026-07-07");
+  const j08 = r.shifts.filter((s) => s.doctor_id === "pg1" && s.date === "2026-07-08");
+  assert.strictEqual(j07.length, 0, "pg_jour posé le jour de garde");
+  assert.strictEqual(j08.length, 0, "pg_jour posé le lendemain (récup) de garde");
+});
+
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");
 process.exit(reussis === total ? 0 : 1);

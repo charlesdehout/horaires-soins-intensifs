@@ -748,7 +748,72 @@ async function chargerPreferences() {
   await chargerMesShifts();     // fériés travaillés → droits à récup férié
   majCompteurConges();          // met à jour l'affichage du quota
   rendrePreferences(prefsCourantes);
+  const pgZone = document.getElementById("pg-garde-zone");
+  if (pgZone) {
+    const estPg = medecinCourant.grade === "pg";
+    pgZone.classList.toggle("hidden", !estPg);
+    if (estPg) await chargerGardesPG();
+  }
 }
+
+/* ----- GARDES PG auto-encodées : le PG déclare une date → garde_pg (24 h) +
+   récup le lendemain. Indépendant du planning de service. ----- */
+const _pgAddJ = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+async function chargerGardesPG() {
+  const tbody = document.getElementById("pg-garde-tbody");
+  if (!tbody || !medecinCourant) return;
+  const { data } = await sb.from("shifts").select("id, date, shift_type, doctor_id")
+    .eq("doctor_id", medecinCourant.id).eq("shift_type", "garde_pg")
+    .gte("date", new Date().toISOString().slice(0, 10)).order("date");
+  const fmt = (iso) => { const d = iso.split("-"); return d[2] + "/" + d[1] + "/" + d[0]; };
+  tbody.innerHTML = "";
+  (data || []).forEach((g) => {
+    const tr = document.createElement("tr");
+    [fmt(g.date), fmt(_pgAddJ(g.date, 1))].forEach((c) => { const td = document.createElement("td"); td.textContent = c; tr.appendChild(td); });
+    const act = document.createElement("td");
+    const del = document.createElement("button"); del.type = "button"; del.textContent = "Supprimer"; del.className = "mini danger";
+    del.addEventListener("click", () => supprimerGardePG(g));
+    act.appendChild(del); tr.appendChild(act); tbody.appendChild(tr);
+  });
+  const empty = document.getElementById("pg-garde-empty");
+  if (empty) empty.classList.toggle("hidden", (data || []).length > 0);
+}
+async function declarerGardePG() {
+  const msg = document.getElementById("pg-garde-msg");
+  const dateEl = document.getElementById("pg-garde-date");
+  const date = dateEl && dateEl.value;
+  if (!date) { if (msg) { msg.textContent = "Choisis une date."; msg.className = "message error"; } return; }
+  const lendemain = _pgAddJ(date, 1);
+  try {
+    const [y, m] = date.split("-").map(Number);
+    const { data: sched } = await sb.from("schedules").select("id").eq("year", y).eq("month", m).maybeSingle();
+    if (!sched) { if (msg) { msg.textContent = "Le planning de ce mois n'existe pas encore (l'admin doit le générer)."; msg.className = "message error"; } return; }
+    const [y2, m2] = lendemain.split("-").map(Number);
+    let sched2 = sched;
+    if (m2 !== m || y2 !== y) { const r = await sb.from("schedules").select("id").eq("year", y2).eq("month", m2).maybeSingle(); sched2 = r.data || null; }
+    // Retire un éventuel pg_jour ce jour + le lendemain (de garde / en récup).
+    await sb.from("shifts").delete().eq("doctor_id", medecinCourant.id).in("date", [date, lendemain]).eq("shift_type", "pg_jour");
+    const lignes = [{ date, shift_type: "garde_pg", poste: null, doctor_id: medecinCourant.id, schedule_id: sched.id }];
+    if (sched2) lignes.push({ date: lendemain, shift_type: "recup", poste: null, doctor_id: medecinCourant.id, schedule_id: sched2.id });
+    const { error } = await sb.from("shifts").insert(lignes);
+    if (error) throw error;
+    if (msg) { msg.textContent = "Garde déclarée (24 h) + récup le " + lendemain + ". ✅"; msg.className = "message info"; }
+    if (dateEl) dateEl.value = "";
+    await pousserVersSheetAuto("garde PG");
+    if (calendrier) calendrier.refetchEvents();
+    chargerGardesPG();
+  } catch (e) { if (msg) { msg.textContent = "Erreur : " + (e.message || e); msg.className = "message error"; } }
+}
+async function supprimerGardePG(g) {
+  if (!window.confirm("Supprimer cette garde et sa récup ?")) return;
+  await sb.from("shifts").delete().eq("id", g.id);
+  await sb.from("shifts").delete().eq("doctor_id", g.doctor_id).eq("date", _pgAddJ(g.date, 1)).eq("shift_type", "recup");
+  await pousserVersSheetAuto("garde PG");
+  if (calendrier) calendrier.refetchEvents();
+  chargerGardesPG();
+}
+const _pgGardeAddBtn = document.getElementById("pg-garde-add");
+if (_pgGardeAddBtn) _pgGardeAddBtn.addEventListener("click", declarerGardePG);
 
 /* --- Comptage des congés en jours OUVRÉS, par catégorie et par ANNÉE ACADÉMIQUE --- */
 /* L'année de référence des quotas n'est PAS l'année civile mais l'année
@@ -922,6 +987,11 @@ function ligneRecupFerie() {
 /* Affiche les compteurs « X / Y jours ouvrés » par catégorie et par année académique. */
 function majCompteurConges() {
   if (!congesCompteur || !medecinCourant) return;
+  // PG / Fellow : la LIMITE de congé n'est PAS montrée au médecin (règle métier).
+  if (medecinCourant.grade === "pg") {
+    congesCompteur.innerHTML = "<em>Demandes de congé soumises à validation de l'admin.</em>";
+    return;
+  }
   const lignes = anneesAvecConges().map((annee) => {
     const parts = Object.keys(CONGE_TYPES).map((type) => {
       return CONGE_TYPES[type].label + " " +
@@ -2003,11 +2073,12 @@ async function genererPgPourTrimestreAffiche() {
     const publishedShifts = pub || [];
 
     // 4) Génération PG (fonction pure).
-    const res = genererTrimestrePG({ annee, trimestre, medecins: medecins || [], preferences: prefs || [], periodes, publishedShifts });
+    const pgGardes = publishedShifts.filter((s) => s.shift_type === "garde_pg").map((s) => ({ doctor_id: s.doctor_id, date: s.date }));
+    const res = genererTrimestrePG({ annee, trimestre, medecins: medecins || [], preferences: prefs || [], periodes, publishedShifts, pgGardes });
 
     // 5) Écriture base.
     //   a) supprimer les anciens shifts PG du trimestre.
-    await sb.from("shifts").delete().in("shift_type", ["pg_jour", "pg_twe", "garde_pg"]).gte("date", debutTrim).lte("date", finTrim);
+    await sb.from("shifts").delete().in("shift_type", ["pg_jour", "pg_twe"]).gte("date", debutTrim).lte("date", finTrim); // garde_pg (auto-déclarées) préservées
     //   b) réinitialiser les unités week-end posées sur les résidents (twe / garde_24h de week-end).
     const estWE = (d) => (typeof plEstWeekendOuFerie === "function") ? plEstWeekendOuFerie(d) : [0, 6].includes(new Date(d + "T00:00:00Z").getUTCDay());
     const weResIds = publishedShifts.filter((s) => (s.shift_type === "twe" || s.shift_type === "garde_24h") && estWE(s.date)).map((s) => s.id);
@@ -4295,6 +4366,7 @@ function construireSemainesSheet(shifts, prefs) {
     rows.push(["Garde 24h"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "garde_24h"))));
     rows.push(["Tour (TWE)"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "twe"))));
     rows.push(["Tour PG (WE)"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "pg_twe"))));
+    rows.push(["Garde PG (24h)"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "garde_pg"))));
     rows.push(["Off-clinic"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "off"))));
     rows.push(["Recuperation"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "recup"))));
     rows.push(["Repos de garde"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "repos_garde"))));

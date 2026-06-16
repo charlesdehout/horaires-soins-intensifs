@@ -21,3 +21,10 @@ ALTER TABLE doctors ADD  CONSTRAINT doctors_grade_check
 ALTER TABLE doctors DROP CONSTRAINT IF EXISTS doctors_pg_type_check;
 ALTER TABLE doctors ADD  CONSTRAINT doctors_pg_type_check
   CHECK (pg_type IS NULL OR pg_type IN ('ulb', 'fellow'));
+
+-- Nouveaux types de shift PG : pg_jour (8,5 h), pg_twe (6 h), garde_pg (24 h).
+-- La table shifts a une contrainte CHECK sur shift_type (étendue au fil des
+-- modules). Pour éviter de devoir relister TOUTES les valeurs existantes (et
+-- risquer d'en oublier une), on retire la contrainte : les types sont validés
+-- côté application (planning.js / app.js). Ré-exécutable sans risque.
+ALTER TABLE shifts DROP CONSTRAINT IF EXISTS shifts_shift_type_check;
