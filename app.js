@@ -1032,8 +1032,10 @@ function majCompteurConges() {
   // PG / Fellow : quota par trimestre CIVIL (pas par année académique).
   if (medecinCourant.grade === "pg") {
     const limPG = (medecinCourant.pg_type === "fellow") ? PG_CONGE_TRIM_FELLOW : PG_CONGE_TRIM_ULB;
-    const today = new Date().toISOString().slice(0, 10);
-    const tri = pgTrimBornes(today);
+    const refDate = (typeof calendrier !== "undefined" && calendrier && calendrier.getDate)
+      ? calendrier.getDate().toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
+    const tri = pgTrimBornes(refDate);
     // Jours de congé déjà posés dans ce trimestre
     let dejaPG = 0;
     (prefsCourantes || []).forEach((p) => {
@@ -2653,6 +2655,269 @@ if (semaineNext) semaineNext.addEventListener("click", function() {
   construireVueSemaine();
 });
 if (vueSemaineBtn) vueSemaineBtn.addEventListener("click", function() { basculerVuePlanning("semaine"); });
+
+/* MODULE 31 — Gestion des congés côté admin (Résidents/AS + PG)         */
+/* ===================================================================== */
+
+const cgTabRes     = document.getElementById("cg-tab-res");
+const cgTabPG      = document.getElementById("cg-tab-pg");
+const cgSecRes     = document.getElementById("cg-sec-res");
+const cgSecPG      = document.getElementById("cg-sec-pg");
+const cgResMedecin = document.getElementById("cg-res-medecin");
+const cgResType    = document.getElementById("cg-res-type");
+const cgResDebut   = document.getElementById("cg-res-debut");
+const cgResFin     = document.getElementById("cg-res-fin");
+const cgResNote    = document.getElementById("cg-res-note");
+const cgResQuota   = document.getElementById("cg-res-quota");
+const cgResTbody   = document.getElementById("cg-res-tbody");
+const cgResEmpty   = document.getElementById("cg-res-empty");
+const cgResMsg     = document.getElementById("cg-res-msg");
+const cgPGMedecin  = document.getElementById("cg-pg-medecin");
+const cgPGType     = document.getElementById("cg-pg-type");
+const cgPGDebut    = document.getElementById("cg-pg-debut");
+const cgPGFin      = document.getElementById("cg-pg-fin");
+const cgPGNote     = document.getElementById("cg-pg-note");
+const cgPGQuota    = document.getElementById("cg-pg-quota");
+const cgPGTbody    = document.getElementById("cg-pg-tbody");
+const cgPGEmpty    = document.getElementById("cg-pg-empty");
+const cgPGMsg      = document.getElementById("cg-pg-msg");
+
+let cgResDoctors = [];  // résidents + AS chargés
+let cgPGDoctors  = [];  // PG + Fellow chargés
+
+/* Sous-onglets Résidents/PG */
+if (cgTabRes) cgTabRes.addEventListener("click", function() {
+  cgTabRes.classList.add("actif"); cgTabPG.classList.remove("actif");
+  cgSecRes.classList.remove("hidden"); cgSecPG.classList.add("hidden");
+});
+if (cgTabPG) cgTabPG.addEventListener("click", function() {
+  cgTabPG.classList.add("actif"); cgTabRes.classList.remove("actif");
+  cgSecPG.classList.remove("hidden"); cgSecRes.classList.add("hidden");
+});
+
+/* Initialisation : chargée à l'ouverture de l'onglet */
+async function cgInit() {
+  const { data } = await sb.from("doctors")
+    .select("id, name, grade, pg_type, fte, contract_start, contract_end, quota_conge_annuel, quota_conge_extralegal, quota_conge_scientifique")
+    .neq("role", "admin").order("name", { ascending: true });
+
+  cgResDoctors = (data || []).filter(function(m) { return m.grade !== "pg"; });
+  cgPGDoctors  = (data || []).filter(function(m) { return m.grade === "pg"; });
+
+  cgResMedecin.innerHTML = "<option value=''>— Choisir —</option>" +
+    cgResDoctors.map(function(m) {
+      return "<option value='" + m.id + "'>" + escapeHtml(m.name || m.id) + "</option>";
+    }).join("");
+
+  cgPGMedecin.innerHTML = "<option value=''>— Choisir —</option>" +
+    cgPGDoctors.map(function(m) {
+      const label = escapeHtml(m.name || m.id) + (m.pg_type === "fellow" ? " (Fellow)" : " (ULB)");
+      return "<option value='" + m.id + "'>" + label + "</option>";
+    }).join("");
+
+  const optsRes = [
+    ["conge_annuel",       "Congé annuel"],
+    ["conge_extralegal",   "Congés extra-légaux"],
+    ["conge_scientifique", "Congé scientifique"],
+    ["conge_maladie",      "Congé maladie (hors quota)"],
+    ["formation",          "Formation USI"],
+    ["autre",              "Congé autre (hors quota)"],
+    ["indispo",            "Indisponibilité (non bloquant)"],
+    ["souhait",            "Souhait (non bloquant)"],
+  ];
+  if (cgResType) cgResType.innerHTML = optsRes.map(function(o) {
+    return "<option value='" + o[0] + "'>" + o[1] + "</option>";
+  }).join("");
+
+  // Types PG rechargés à la sélection du médecin
+  cgMajTypesPG(null);
+}
+
+function cgMajTypesPG(med) {
+  const estFellow = med && med.pg_type === "fellow";
+  const optsPG = [
+    ["conge_annuel",       "Congé (dans quota trimestriel)"],
+  ].concat(estFellow ? [["recherche_clinique", "Recherche clinique (dans quota trimestriel)"]] : []).concat([
+    ["conge_maladie",  "Congé maladie (hors quota)"],
+    ["formation",      "Formation USI"],
+    ["autre",          "Congé autre (hors quota)"],
+    ["indispo",        "Indisponibilité (non bloquant)"],
+  ]);
+  if (cgPGType) cgPGType.innerHTML = optsPG.map(function(o) {
+    return "<option value='" + o[0] + "'>" + o[1] + "</option>";
+  }).join("");
+}
+
+/* ── Quota résidents ─────────────────────────────────────────────────── */
+function cgQuotaResHtml(med, prefs) {
+  const anneesSet = new Set();
+  const today = new Date();
+  anneesSet.add(anneeAcademique(today));
+  prefs.forEach(function(p) {
+    if (categorieConge(p.pref_type)) {
+      anneesSet.add(anneeAcademique(new Date(p.start_date + "T00:00:00Z")));
+      anneesSet.add(anneeAcademique(new Date(p.end_date + "T00:00:00Z")));
+    }
+  });
+  const annees = Array.from(anneesSet).sort();
+  const lignes = annees.map(function(annee) {
+    const f = Math.round(quotaBase(med, "conge_annuel") * fractionAnneeSousContrat(annee, med) * fteDe(med));
+    const parts = Object.keys(CONGE_TYPES).map(function(type) {
+      const quota = Math.round(quotaBase(med, type) * fractionAnneeSousContrat(annee, med) * fteDe(med));
+      const utilises = prefs.filter(function(p) { return categorieConge(p.pref_type) === type; })
+        .reduce(function(s, p) { return s + joursOuvresDansAnnee(p.start_date, p.end_date, annee); }, 0);
+      return CONGE_TYPES[type].label + " <strong>" + utilises + "/" + quota + "</strong>";
+    });
+    return "<strong>" + labelAcad(annee) + "</strong> — " + parts.join(" · ");
+  });
+  return lignes.join("<br>") + "<br><em>jours ouvrés · année académique 1 oct → 30 sep</em>";
+}
+
+/* ── Quota PG ────────────────────────────────────────────────────────── */
+function cgQuotaPGHtml(med, prefs) {
+  const limPG = (med.pg_type === "fellow") ? PG_CONGE_TRIM_FELLOW : PG_CONGE_TRIM_ULB;
+  // Trimestres couverts par les prefs + trimestre courant
+  const today = new Date().toISOString().slice(0, 10);
+  const trimsSet = {};
+  trimsSet[pgTrimBornes(today).key] = pgTrimBornes(today);
+  prefs.forEach(function(p) {
+    if (!categorieConge(p.pref_type)) return;
+    [p.start_date, p.end_date].forEach(function(d) {
+      const t = pgTrimBornes(d); trimsSet[t.key] = t;
+    });
+  });
+  const lignes = Object.values(trimsSet).sort(function(a,b) { return a.key < b.key ? -1 : 1; }).map(function(tri) {
+    let utilises = 0;
+    prefs.forEach(function(p) {
+      if (!categorieConge(p.pref_type)) return;
+      const d1 = p.start_date > tri.start ? p.start_date : tri.start;
+      const d2 = p.end_date   < tri.end   ? p.end_date   : tri.end;
+      utilises += pgJoursOuvres(d1, d2);
+    });
+    const qNum = parseInt(tri.key.slice(-1)) + 1;
+    const triLisible = "T" + qNum + " " + tri.key.slice(0, 4);
+    const reste = Math.max(0, limPG - utilises);
+    const alerte = utilises >= limPG ? " <strong>⚠️ quota atteint</strong>" : "";
+    return "<strong>Congés " + triLisible + "</strong> : " + utilises + "/" + limPG + " j ouvrés · " + reste + " j restants" + alerte;
+  });
+  return lignes.join("<br>") + "<br><em>Quota par trimestre civil (ULB : 10 j / Fellow : 20 j)</em>";
+}
+
+/* ── Rendu du tableau des prefs ──────────────────────────────────────── */
+function cgRendrePrefs(tbody, emptyEl, prefs, reloadFn) {
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  const vide = !prefs || prefs.length === 0;
+  if (emptyEl) emptyEl.classList.toggle("hidden", !vide);
+  (prefs || []).forEach(function(p) {
+    const tr = document.createElement("tr");
+    const stLib = { en_attente: "⏳", approuve: "✅ approuvé", refuse: "✖ refusé" };
+    [
+      (PREF_LABELS[p.pref_type] || p.pref_type),
+      p.start_date,
+      p.end_date,
+      p.note || "—",
+      stLib[p.status || "approuve"] || p.status,
+    ].forEach(function(val) {
+      const td = document.createElement("td"); td.textContent = val; tr.appendChild(td);
+    });
+    const tdAct = document.createElement("td");
+    const btn = document.createElement("button");
+    btn.textContent = "Supprimer"; btn.className = "mini danger";
+    btn.addEventListener("click", async function() {
+      if (!window.confirm("Supprimer cette préférence ?")) return;
+      const { error } = await sb.from("preferences").delete().eq("id", p.id);
+      if (error) { window.alert("Erreur : " + error.message); return; }
+      reloadFn();
+    });
+    tdAct.appendChild(btn); tr.appendChild(tdAct);
+    tbody.appendChild(tr);
+  });
+}
+
+/* ── Chargement résidents ────────────────────────────────────────────── */
+async function cgChargerRes() {
+  const medId = cgResMedecin && cgResMedecin.value;
+  if (!medId) {
+    if (cgResQuota) cgResQuota.innerHTML = "";
+    if (cgResTbody) cgResTbody.innerHTML = "";
+    if (cgResEmpty) cgResEmpty.classList.add("hidden");
+    return;
+  }
+  const med = cgResDoctors.find(function(m) { return m.id === medId; });
+  if (!med) return;
+  const { data: prefs } = await sb.from("preferences").select("*")
+    .eq("doctor_id", medId).order("start_date", { ascending: true });
+  const prefsList = prefs || [];
+  if (cgResQuota) { cgResQuota.innerHTML = cgQuotaResHtml(med, prefsList); cgResQuota.classList.remove("hidden"); }
+  cgRendrePrefs(cgResTbody, cgResEmpty, prefsList, cgChargerRes);
+}
+
+/* ── Chargement PG ───────────────────────────────────────────────────── */
+async function cgChargerPG() {
+  const medId = cgPGMedecin && cgPGMedecin.value;
+  if (!medId) {
+    if (cgPGQuota) cgPGQuota.innerHTML = "";
+    if (cgPGTbody) cgPGTbody.innerHTML = "";
+    if (cgPGEmpty) cgPGEmpty.classList.add("hidden");
+    return;
+  }
+  const med = cgPGDoctors.find(function(m) { return m.id === medId; });
+  if (!med) return;
+  cgMajTypesPG(med);
+  const { data: prefs } = await sb.from("preferences").select("*")
+    .eq("doctor_id", medId).order("start_date", { ascending: true });
+  const prefsList = prefs || [];
+  if (cgPGQuota) { cgPGQuota.innerHTML = cgQuotaPGHtml(med, prefsList); cgPGQuota.classList.remove("hidden"); }
+  cgRendrePrefs(cgPGTbody, cgPGEmpty, prefsList, cgChargerPG);
+}
+
+/* ── Ajout résidents ─────────────────────────────────────────────────── */
+if (document.getElementById("cg-res-form")) {
+  document.getElementById("cg-res-form").addEventListener("submit", async function(e) {
+    e.preventDefault();
+    if (!cgResMedecin || !cgResMedecin.value) { cgResMsg.textContent = "Choisis un médecin."; cgResMsg.className = "message error"; return; }
+    const debut = cgResDebut.value, fin = cgResFin.value;
+    if (!debut || !fin || fin < debut) { cgResMsg.textContent = "Dates invalides."; cgResMsg.className = "message error"; return; }
+    const { error } = await sb.from("preferences").insert({
+      doctor_id: cgResMedecin.value,
+      pref_type: cgResType.value,
+      start_date: debut, end_date: fin,
+      note: cgResNote.value.trim() || null,
+      status: "approuve",
+      decided_at: new Date().toISOString(),
+    });
+    if (error) { cgResMsg.textContent = "Erreur : " + error.message; cgResMsg.className = "message error"; return; }
+    cgResMsg.textContent = "Ajouté."; cgResMsg.className = "message success";
+    cgResDebut.value = ""; cgResFin.value = ""; cgResNote.value = "";
+    cgChargerRes();
+  });
+}
+
+/* ── Ajout PG ────────────────────────────────────────────────────────── */
+if (document.getElementById("cg-pg-form")) {
+  document.getElementById("cg-pg-form").addEventListener("submit", async function(e) {
+    e.preventDefault();
+    if (!cgPGMedecin || !cgPGMedecin.value) { cgPGMsg.textContent = "Choisis un médecin."; cgPGMsg.className = "message error"; return; }
+    const debut = cgPGDebut.value, fin = cgPGFin.value;
+    if (!debut || !fin || fin < debut) { cgPGMsg.textContent = "Dates invalides."; cgPGMsg.className = "message error"; return; }
+    const { error } = await sb.from("preferences").insert({
+      doctor_id: cgPGMedecin.value,
+      pref_type: cgPGType.value,
+      start_date: debut, end_date: fin,
+      note: cgPGNote.value.trim() || null,
+      status: "approuve",
+      decided_at: new Date().toISOString(),
+    });
+    if (error) { cgPGMsg.textContent = "Erreur : " + error.message; cgPGMsg.className = "message error"; return; }
+    cgPGMsg.textContent = "Ajouté."; cgPGMsg.className = "message success";
+    cgPGDebut.value = ""; cgPGFin.value = ""; cgPGNote.value = "";
+    cgChargerPG();
+  });
+}
+
+if (cgResMedecin) cgResMedecin.addEventListener("change", cgChargerRes);
+if (cgPGMedecin)  cgPGMedecin.addEventListener("change",  cgChargerPG);
 
 /* MODULE 14 — Exports Excel (.xlsx) via ExcelJS (spec §13)              */
 /* ===================================================================== */
@@ -4605,7 +4870,7 @@ if (vueGrilleBtn) vueGrilleBtn.addEventListener("click", () => basculerVuePlanni
 /* les onglets ne gèrent que l'affichage.                                */
 /* ===================================================================== */
 
-const ONGLETS = ["planning", "demandes", "periodes", "medecins", "echanges-admin", "prefs", "echanges"];
+const ONGLETS = ["planning", "demandes", "periodes", "medecins", "echanges-admin", "conges-admin", "prefs", "echanges"];
 
 function basculerOnglet(nom) {
   ONGLETS.forEach((t) => {
@@ -4618,6 +4883,7 @@ function basculerOnglet(nom) {
   // sa taille quand on revient sur l'onglet Planning.
   if (nom === "planning" && calendrier) calendrier.updateSize();
   if (nom === "echanges-admin" && typeof chargerEchangesAdmin === "function") { chargerEchangesAdmin(); if (typeof echAdminCharger === "function") echAdminCharger(); }
+  if (nom === "conges-admin" && typeof cgInit === "function") cgInit();
 }
 
 document.querySelectorAll("#tabs-nav .tab").forEach((b) =>

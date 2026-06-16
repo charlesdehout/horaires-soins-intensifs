@@ -80,6 +80,7 @@
         <button type="button" class="tab tab-admin hidden" data-tab="periodes">Congrès &amp; fermetures</button>
         <button type="button" class="tab tab-admin hidden" data-tab="medecins">Médecins</button>
         <button type="button" class="tab tab-admin hidden" data-tab="echanges-admin">Échanges</button>
+        <button type="button" class="tab tab-admin hidden" data-tab="conges-admin">Congés</button>
         <button type="button" class="tab tab-doctor hidden" data-tab="prefs">Mes préférences</button>
         <button type="button" class="tab tab-doctor hidden" data-tab="echanges">Échanges
           <span id="tab-badge-echanges" class="tab-badge hidden"></span></button>
@@ -629,6 +630,90 @@
           </table>
           <p id="ech-admin-empty" class="zone-info hidden">Aucun échange enregistré.</p>
         </div><!-- /panel-echanges-admin -->
+
+        <!-- ====== MODULE 31 : Gestion des congés (admin) ====== -->
+        <div id="panel-conges-admin" class="tab-panel hidden">
+          <div class="zone-header">
+            <h2>Gestion des congés</h2>
+          </div>
+
+          <!-- Sous-onglets -->
+          <div class="vue-toggle" style="margin-bottom:1.2rem;">
+            <button id="cg-tab-res" type="button" class="vue-btn actif">Résidents / AS</button>
+            <button id="cg-tab-pg"  type="button" class="vue-btn">PG / Fellow</button>
+          </div>
+
+          <!-- ── Résidents / AS ── -->
+          <div id="cg-sec-res">
+            <div class="form-grid">
+              <div>
+                <label for="cg-res-medecin">Médecin</label>
+                <select id="cg-res-medecin"><option value="">— Choisir —</option></select>
+              </div>
+            </div>
+            <p id="cg-res-quota" class="zone-info" style="margin-top:.6rem;"></p>
+
+            <!-- Formulaire ajout -->
+            <form id="cg-res-form" class="doctor-form" style="margin-top:.8rem;">
+              <div class="form-grid">
+                <div>
+                  <label for="cg-res-type">Type</label>
+                  <select id="cg-res-type"></select>
+                </div>
+                <div><label for="cg-res-debut">Du</label><input type="date" id="cg-res-debut" required /></div>
+                <div><label for="cg-res-fin">Au</label><input type="date" id="cg-res-fin" required /></div>
+                <div><label for="cg-res-note">Note</label><input type="text" id="cg-res-note" maxlength="200" placeholder="optionnel" /></div>
+              </div>
+              <div class="form-actions">
+                <button type="submit" id="cg-res-ajouter">Ajouter</button>
+              </div>
+              <p id="cg-res-msg" class="message"></p>
+            </form>
+
+            <!-- Tableau -->
+            <table class="data-table" style="margin-top:1rem;">
+              <thead><tr><th>Type</th><th>Du</th><th>Au</th><th>Note</th><th>Statut</th><th></th></tr></thead>
+              <tbody id="cg-res-tbody"></tbody>
+            </table>
+            <p id="cg-res-empty" class="zone-info hidden">Aucune préférence pour ce médecin.</p>
+          </div><!-- /cg-sec-res -->
+
+          <!-- ── PG / Fellow ── -->
+          <div id="cg-sec-pg" class="hidden">
+            <div class="form-grid">
+              <div>
+                <label for="cg-pg-medecin">Médecin</label>
+                <select id="cg-pg-medecin"><option value="">— Choisir —</option></select>
+              </div>
+            </div>
+            <p id="cg-pg-quota" class="zone-info" style="margin-top:.6rem;"></p>
+
+            <!-- Formulaire ajout -->
+            <form id="cg-pg-form" class="doctor-form" style="margin-top:.8rem;">
+              <div class="form-grid">
+                <div>
+                  <label for="cg-pg-type">Type</label>
+                  <select id="cg-pg-type"></select>
+                </div>
+                <div><label for="cg-pg-debut">Du</label><input type="date" id="cg-pg-debut" required /></div>
+                <div><label for="cg-pg-fin">Au</label><input type="date" id="cg-pg-fin" required /></div>
+                <div><label for="cg-pg-note">Note</label><input type="text" id="cg-pg-note" maxlength="200" placeholder="optionnel" /></div>
+              </div>
+              <div class="form-actions">
+                <button type="submit" id="cg-pg-ajouter">Ajouter</button>
+              </div>
+              <p id="cg-pg-msg" class="message"></p>
+            </form>
+
+            <!-- Tableau -->
+            <table class="data-table" style="margin-top:1rem;">
+              <thead><tr><th>Type</th><th>Du</th><th>Au</th><th>Note</th><th>Statut</th><th></th></tr></thead>
+              <tbody id="cg-pg-tbody"></tbody>
+            </table>
+            <p id="cg-pg-empty" class="zone-info hidden">Aucune préférence pour ce médecin.</p>
+          </div><!-- /cg-sec-pg -->
+
+        </div><!-- /panel-conges-admin -->
       </div><!-- /admin-zone -->
 
       <!-- ===== Onglet MES PRÉFÉRENCES (Module 3) — médecins ===== -->
