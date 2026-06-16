@@ -2701,13 +2701,19 @@ function genererTrimestrePG(opts) {
   let dates = [];
   moisTrim.forEach((mo) => { dates = dates.concat(plDatesDuMois(annee, mo)); });
 
-  // Préférences bloquantes (congé/indispo/off/récup) + fenêtres « dispo ».
+  // Préférences bloquantes (congé/récup…) + souhait « indispo » pour WE.
   const bloquantes = plBloq();
-  const indispo = {}, dispo = {};
+  const indispo = {}, indispoWE = {}, dispo = {};
   (opts.preferences || []).forEach((p) => {
     if (p.pref_type === "dispo") {
       (dispo[p.doctor_id] = dispo[p.doctor_id] || new Set());
       let d = p.start_date; while (d <= p.end_date) { dispo[p.doctor_id].add(d); d = plAdd(d, 1); }
+      return;
+    }
+    // 'indispo' pour PG = souhait de ne PAS faire le tour WE ce jour (non bloquant pour pg_jour).
+    if (p.pref_type === "indispo") {
+      (indispoWE[p.doctor_id] = indispoWE[p.doctor_id] || new Set());
+      let d = p.start_date; while (d <= p.end_date) { indispoWE[p.doctor_id].add(d); d = plAdd(d, 1); }
       return;
     }
     if (!bloquantes.includes(p.pref_type)) return;
@@ -2738,6 +2744,39 @@ function genererTrimestrePG(opts) {
   };
 
   const twe = {}; pgs.forEach((m) => { twe[m.id] = 0; });
+  // Binômes fixes : pgs[0]+pgs[1], pgs[2]+pgs[3], …
+  // La rotation se fait par PAIRE (pas par individu) pour que le même binôme
+  // travaille toujours ensemble. tweParPaire compte les WE/fériés de chaque paire.
+  // weekendsDone : compteur d'ÉQUITÉ par PG (nombre de weekends effectués,
+  // pas de jours). Permet de choisir qui fait le prochain weekend sans biaiser
+  // par le fait qu'un weekend = 2 jours (sam + dim).
+  const weekendsDone = {}; pgs.forEach((m) => { weekendsDone[m.id] = 0; });
+
+  // Grouper les jours WE/fériés par semaine ISO : chaque groupe = 1 weekend.
+  // On choisit les PG UNE FOIS par weekend ; ils font sam ET dim ensemble,
+  // ce qui réduit le nombre total de weekends par personne.
+  const weParSemaine = {};
+  dates.forEach((d) => {
+    if (plEstWeekendOuFerie(d)) (weParSemaine[plLundiDe(d)] = weParSemaine[plLundiDe(d)] || []).push(d);
+  });
+  const pgParSemaine = {}; // lundi ISO → [PG choisis pour tout le weekend]
+  Object.keys(weParSemaine).sort().forEach((lk) => {
+    const joursWE = weParSemaine[lk].sort();
+    // Préférer les PG dispos sur TOUS les jours du weekend, sans indispoWE.
+    const pasIndispoWE = (m) => !joursWE.some((d) => indispoWE[m.id] && indispoWE[m.id].has(d));
+    const tousDisposFn = (m) => joursWE.every((d) => dispoCe(m, d)) && pasIndispoWE(m);
+    let candidats = pgs.filter(tousDisposFn).sort((a, b) => weekendsDone[a.id] - weekendsDone[b.id]);
+    // Fallback 1 : ignorer indispoWE si pas assez de candidats.
+    if (candidats.length < 2)
+      candidats = pgs.filter((m) => joursWE.every((d) => dispoCe(m, d))).sort((a, b) => weekendsDone[a.id] - weekendsDone[b.id]);
+    // Fallback 2 : dispos au moins le premier jour.
+    if (candidats.length < 2)
+      candidats = pgs.filter((m) => dispoCe(m, joursWE[0])).sort((a, b) => weekendsDone[a.id] - weekendsDone[b.id]);
+    const choisis = candidats.slice(0, 2);
+    choisis.forEach((m) => { weekendsDone[m.id]++; });
+    pgParSemaine[lk] = choisis;
+    if (choisis.length < 2) conflits.push({ date: joursWE[0], message: "Tour PG week-end : " + choisis.length + "/2 PG disponibles pour la semaine du " + lk + "." });
+  });
 
   dates.forEach((date) => {
     if (!plEstWeekendOuFerie(date)) {
@@ -2748,15 +2787,14 @@ function genererTrimestrePG(opts) {
         if (u) sortie.push({ date, shift_type: "pg_jour", poste: u, doctor_id: m.id });
       });
     } else {
-      // WEEK-END / FÉRIÉ : 2 PG au tour (pg_twe), les moins servis d'abord.
-      const libres = pgs.filter((m) => dispoCe(m, date)).sort((a, b) => twe[a.id] - twe[b.id]);
-      const pris = libres.slice(0, 2);
-      pris.forEach((m) => {
-        // Le PG tourne dans SON unité maison (continuité) ; toujours 6 h de travail.
+      // WEEK-END : les PG choisis pour ce weekend font sam ET dim ensemble.
+      const membres = (pgParSemaine[plLundiDe(date)] || []).filter((m) => dispoCe(m, date));
+      membres.forEach((m) => {
         const u = uniteDe(pgs.indexOf(m), plLundiDe(date));
-        sortie.push({ date, shift_type: "pg_twe", poste: u, doctor_id: m.id }); twe[m.id]++;
+        sortie.push({ date, shift_type: "pg_twe", poste: u, doctor_id: m.id });
+        twe[m.id]++;
       });
-      if (pris.length < 2) conflits.push({ date, message: "Tour PG week-end/férié : " + pris.length + "/2 PG disponibles." });
+      if (membres.length < 2) conflits.push({ date, message: "Tour PG week-end/férié : " + membres.length + "/2 PG disponibles le " + date + "." });
     }
   });
 

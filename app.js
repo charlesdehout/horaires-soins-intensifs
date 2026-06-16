@@ -728,6 +728,43 @@ function messageFormPref(texte, type = "error") {
 }
 
 /* Charge les préférences du médecin connecté et les affiche */
+/* Adapte le formulaire de préférences au grade de l'utilisateur connecté.
+   PG : congé annuel + indisponibilité seulement (pas de souhait-garde,
+   pas de demande-weekend, pas de scientifique/extra-légaux).
+   Appelée à chaque chargement des prefs (après connaissance du profil). */
+function majOptionsPrefsParGrade() {
+  if (!pType || !medecinCourant) return;
+  const estPg = medecinCourant.grade === "pg";
+  const optsPG = [
+    ["conge_annuel",  "Congé (bloquant — quota géré par l'admin)"],
+    ["recuperation",  "Lendemain de garde (bloque la journée — récupération)"],
+    ["indispo",       "Indisponible pour le tour de week-end (souhait, non bloquant)"],
+  ];
+  const optsRes = [
+    ["conge_annuel",       "Congé annuel (bloquant)"],
+    ["conge_extralegal",   "Congés extra-légaux (bloquant)"],
+    ["conge_scientifique", "Congé scientifique (bloquant)"],
+    ["indispo",            "Indisponibilité — souhait de ne pas être de garde ni de tour WE (non bloquant)"],
+    ["souhait",            "Souhait de garde ou de tour WE (non bloquant)"],
+    ["travailler_ferie",   "Travailler un jour férié (+ je choisis mon jour de récup)"],
+  ];
+  const opts = estPg ? optsPG : optsRes;
+  // Reconstruire seulement si la liste change (idempotent).
+  const vals = opts.map(function(o) { return o[0]; }).join(",");
+  const cur  = Array.from(pType.options).map(function(o) { return o.value; }).join(",");
+  if (cur !== vals) {
+    pType.innerHTML = opts.map(function(o) {
+      return "<option value=\"" + o[0] + "\">" + o[1] + "</option>";
+    }).join("");
+  }
+  // Texte d'intro
+  const intro = document.getElementById("prefs-intro");
+  if (intro) {
+    intro.textContent = estPg
+      ? "Encode tes congés, lendemains de garde et indisponibilités week-end. Ton quota de congés est géré par l'administration."
+      : "Encode tes congés, indisponibilités et souhaits. Si tu poses congé en incluant le samedi et/ou dimanche, ces jours sont automatiquement bloqués pour les tours et gardes — sans être décomptés du quota (seuls les jours ouvrés lun–ven comptent).";
+  }
+}
 async function chargerPreferences() {
   if (!medecinCourant) return;
 
@@ -746,6 +783,7 @@ async function chargerPreferences() {
 
   prefsCourantes = data || [];
   await chargerMesShifts();     // fériés travaillés → droits à récup férié
+  majOptionsPrefsParGrade();    // adapte les options selon le grade (PG vs résident/AS)
   majCompteurConges();          // met à jour l'affichage du quota
   rendrePreferences(prefsCourantes);
   const pgZone = document.getElementById("pg-garde-zone");
@@ -1234,8 +1272,8 @@ async function plagePendantCongres(debut, fin) {
 /* Ouvre le popup pré-rempli avec la plage sélectionnée. */
 function ouvrirPopupDesiderata(debut, fin) {
   if (!desModal) return;
-  desType.innerHTML = pType.innerHTML;     // mêmes types que le formulaire
-  desType.value = "souhait";               // défaut : désidérata
+  desType.innerHTML = pType.innerHTML;     // mêmes types que le formulaire (filtrés par grade)
+  desType.value = (medecinCourant && medecinCourant.grade === "pg") ? "recuperation" : "souhait";
   desNote.value = "";
   // Fenêtre de jours pré-remplie (jour choisi), DATES MODIFIABLES par le médecin.
   desDebut.value = debut;
@@ -1279,7 +1317,6 @@ async function ouvrirPopupForceConge() {
     "<option value='conge_scientifique'>Congé scientifique</option>" +
     "<option value='formation'>Formation USI</option>" +
     "<option value='autre'>Congé autre — maladie / mariage (hors quota)</option>" +
-    "<option value='demande_weekend'>Demande week-end / férié</option>" +
     "<option value='dispo'>✅ Disponible (désidérata indépendant)</option>" +
     "<option value='indispo'>Indisponibilité (garde)</option>" +
     "<option value='souhait'>Souhait (préférence non bloquante)</option>";
