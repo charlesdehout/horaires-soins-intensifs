@@ -2841,7 +2841,141 @@ function genererTrimestrePG(opts) {
   return { shifts: sortie, conflits, stats, majResidents };
 }
 
+/* =====================================================================
+   MODULE 29 — REBOUCHAGE CM (congé maladie en cours de trimestre)
+   Permet de regénérer uniquement une plage de dates [debut, fin] en
+   verrouillant tous les shifts existants des autres médecins.
+   ===================================================================== */
+
+/* Charge les shifts existants dans l'état (etat) sans les ajouter à la sortie.
+   Réplique les effets de plAffecter + majWE pour pré-alimenter les compteurs
+   d'équité avant le rebouchage. */
+function plPreChargerEtat(shifts, etat) {
+  const sorted = (shifts || []).slice().sort(function(a, b) {
+    return a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
+  });
+  sorted.forEach(function(s) {
+    if (!etat.heures.hasOwnProperty(s.doctor_id)) return; // médecin hors équipe
+    const id = s.doctor_id;
+    const type = s.shift_type;
+    plMarquerAssigne(s.date, id, etat);
+    etat.heures[id] += (PL_HEURES[type] || 0);
+    const lk = plLundiDe(s.date);
+    etat.heuresSemaine[id][lk] = (etat.heuresSemaine[id][lk] || 0) + (PL_HEURES[type] || 0);
+    if (type === "garde_nuit" || type === "garde_24h") {
+      etat.nbGardes[id]++;
+      etat.nbGardesTotal[id]++;
+      etat.gardesSemaine[id][lk] = (etat.gardesSemaine[id][lk] || 0) + 1;
+      etat.bloque[id].add(plAdd(s.date, 1));
+      etat.derniereGarde[id] = s.date;
+    }
+    // Équité week-end : twe + garde_24h en WE + garde_nuit un vendredi
+    const wkey = plWeekendKey(s.date);
+    const jrs = plJourSemaine(s.date);
+    const estWE = (type === "twe" || type === "garde_24h" ||
+                   (type === "garde_nuit" && jrs === 5));
+    if (wkey && estWE && !etat.weekendsTravailles[id].has(wkey)) {
+      etat.nbWeekend[id]++;
+      etat.nbWeekendTotal[id]++;
+      etat.weekendsTravailles[id].add(wkey);
+    }
+    // Repos couplé week-end (sam+dim ou ven+dim → +2)
+    if (type === "garde_24h" && (jrs === 6 || jrs === 7)) {
+      const avantDate = plAdd(s.date, -2);
+      const aCouple = sorted.some(function(prev) {
+        return prev.doctor_id === id && prev.date === avantDate &&
+               (prev.shift_type === "garde_nuit" || prev.shift_type === "garde_24h");
+      });
+      if (aCouple) etat.bloque[id].add(plAdd(s.date, 2));
+    }
+  });
+}
+
+/* Regénère UNIQUEMENT la plage [opts.debut … opts.fin] en verrouillant tous
+   les shifts passés dans opts.shiftsVerrouilles.
+   opts identiques à genererTrimestre +
+     debut         : ISO date de début de la plage à regénérer
+     fin           : ISO date de fin
+     shiftsVerrouilles : shifts existants à préserver (autres médecins +
+                     shifts du médecin malade HORS plage)
+   Retourne { shifts, conflits, stats } où shifts = NOUVEAUX shifts générés
+   (NE contient PAS les verrouillés — à insérer en base sans toucher aux autres). */
+function genererRebouchage(opts) {
+  const annee = opts.annee;
+  const trimestre = opts.trimestre;
+  const debut = opts.debut;
+  const fin = opts.fin;
+  const medecins = (opts.medecins || []).filter(function(m) { return m.grade !== "pg"; });
+  const preferences = opts.preferences || [];
+  if (opts.feriesAdmin) plDefinirFeriesAdmin(opts.feriesAdmin.ajouts, opts.feriesAdmin.retraits);
+  const moisTrim = [0, 1, 2].map(function(k) { return (trimestre - 1) * 3 + 1 + k; });
+
+  const etat = plNouvelEtat(medecins);
+  plIndexerPreferences(preferences, etat);
+  etat.periodes = plIndexerPeriodes(opts.periodes);
+  const ppParDate = plIndexerPrePlaces(opts.prePlaces);
+
+  // Poids week-end sur tout le trimestre (même logique que genererTrimestre)
+  etat.poidsWeekend = {};
+  medecins.forEach(function(m) {
+    var dispoWE = 0;
+    const indispoSet = etat.indispo[m.id];
+    const dispoSet = etat.dispoDeclaree[m.id];
+    moisTrim.forEach(function(mois) {
+      plDatesDuMois(annee, mois).forEach(function(date) {
+        if (!plDispoStatique(m, date, indispoSet, dispoSet)) return;
+        const jr = plJourSemaine(date);
+        if (jr === 6 || jr === 7) dispoWE++;
+      });
+    });
+    const fteW = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1;
+    etat.poidsWeekend[m.id] = dispoWE * fteW;
+  });
+
+  // Pré-charger les shifts verrouillés pour alimenter les compteurs d'équité
+  plPreChargerEtat(opts.shiftsVerrouilles || [], etat);
+
+  const sortie = [];
+  const conflits = [];
+  etat.debutPeriode = plBornesMois(annee, moisTrim[0]).debut;
+  plControlerNouveauxEngages(medecins, etat.debutPeriode, conflits);
+
+  moisTrim.forEach(function(mois) {
+    // Reset mensuel des gardes (même logique que genererTrimestre)
+    etat.poidsGarde = {};
+    medecins.forEach(function(m) {
+      etat.nbGardes[m.id] = 0;
+      var dispo = 0;
+      const indispoSet = etat.indispo[m.id];
+      const dispoSet = etat.dispoDeclaree[m.id];
+      plDatesDuMois(annee, mois).forEach(function(date) {
+        if (!plDispoStatique(m, date, indispoSet, dispoSet)) return;
+        dispo++;
+      });
+      const fteG = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1;
+      etat.poidsGarde[m.id] = dispo * fteG;
+    });
+    plDatesDuMois(annee, mois).forEach(function(date) {
+      if (date < debut || date > fin) return; // hors fenêtre de rebouchage
+      const pp = ppParDate[date] || [];
+      plCrediterAbsences(date, medecins, etat);
+      if (plEstWeekendOuFerie(date)) plGenererWeekend(date, medecins, etat, sortie, conflits, pp);
+      else plGenererSemaine(date, medecins, etat, sortie, conflits, pp);
+    });
+  });
+
+  const stats = medecins.map(function(m) {
+    return {
+      doctor_id: m.id,
+      heures: etat.heures[m.id],
+      nbGardes: etat.nbGardesTotal[m.id],
+      nbWeekend: etat.nbWeekendTotal[m.id],
+    };
+  });
+  return { shifts: sortie, conflits, stats };
+}
+
 /* ------------- Export pour Node (tests). Sans effet en navigateur. ------ */
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, validerEquite, compterParMedecin, plTrier, plRangDesiderata, alertesAbsences, validerEchange, plConflits24hSlack, plResorberOff24h, genererTrimestrePG };
+  module.exports = { genererPlanning, genererTrimestre, genererOffClinic, validerPlanning, validerEquite, compterParMedecin, plTrier, plRangDesiderata, alertesAbsences, validerEchange, plConflits24hSlack, plResorberOff24h, genererTrimestrePG, genererRebouchage, plPreChargerEtat };
 }

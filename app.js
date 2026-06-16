@@ -713,6 +713,7 @@ const PREF_LABELS = {
   indispo: "Indisponibilité (garde)",
   souhait: "Souhait (garde)",
   formation: "Formation USI",
+  conge_maladie: "Congé maladie",
   autre: "Congé autre",
   demande_weekend: "Demande WE/férié",
   recup_ferie: "Récup férié",
@@ -1315,8 +1316,9 @@ async function ouvrirPopupForceConge() {
     "<option value='conge_annuel'>Congé annuel</option>" +
     "<option value='conge_extralegal'>Congés extra-légaux</option>" +
     "<option value='conge_scientifique'>Congé scientifique</option>" +
+    "<option value='conge_maladie'>Congé maladie (admin — hors quota)</option>" +
     "<option value='formation'>Formation USI</option>" +
-    "<option value='autre'>Congé autre — maladie / mariage (hors quota)</option>" +
+    "<option value='autre'>Congé autre — mariage / circonstances (hors quota)</option>" +
     "<option value='dispo'>✅ Disponible (désidérata indépendant)</option>" +
     "<option value='indispo'>Indisponibilité (garde)</option>" +
     "<option value='souhait'>Souhait (préférence non bloquante)</option>";
@@ -1420,6 +1422,7 @@ const PREF_BG = {
   autre:              "rgba(110,84,148,0.16)",   // mauve
   demande_weekend:    "rgba(31,111,235,0.12)",   // bleu clair
   recup_ferie:        "rgba(8,145,178,0.18)",     // cyan (cf. récup)
+  conge_maladie:      "rgba(220,38,38,0.14)",      // rouge (maladie)
   travailler_ferie:   "rgba(207,34,46,0.14)",     // rouge clair (jour de garde férié)
   conge_ferie:        "rgba(8,145,178,0.18)",     // cyan (jour de récup)
 };
@@ -1436,6 +1439,7 @@ const PREF_LABELS_FULL = {
   recuperation: "Récupération",
   formation: "Formation USI",
   autre: "Congé autre (hors quota)",
+  conge_maladie: "Congé maladie (admin only, hors quota)",
   demande_weekend: "Demande week-end/férié",
   recup_ferie: "Récup férié (jour compensatoire)",
   travailler_ferie: "Travailler un férié (placement prioritaire)",
@@ -1464,6 +1468,7 @@ async function chargerCarteMedecins() {
   }
   carteMedecins = {};
   (data || []).forEach((m) => { carteMedecins[m.id] = m; });
+  rbChargerMedecins();
 }
 
 /* Ordre d'affichage des événements dans une case du calendrier mois/liste :
@@ -1595,7 +1600,7 @@ async function construireEvenements(debutISO, finISO) {
     // médecin : les siens, via la RLS).
     const PREF_PASTILLE = {
       conge: "🏖", conge_annuel: "🏖", conge_extralegal: "🏖", conge_scientifique: "🔬",
-      formation: "🎓", autre: "🏖", recuperation: "🛌", recup_ferie: "🛌",
+      formation: "🎓", autre: "🏖", recuperation: "🛌", recup_ferie: "🛌", conge_maladie: "🤒",
       conge_ferie: "🛌",
     };
     (prefs || []).forEach((p) => {
@@ -2204,6 +2209,223 @@ if (genererPgBtn) genererPgBtn.addEventListener("click", genererPgPourTrimestreA
 
 
 /* ===================================================================== */
+/* ===================================================================== */
+/* MODULE 29 — Rebouchage CM (congé maladie en cours de trimestre)       */
+/* ===================================================================== */
+
+const rbMedecin    = document.getElementById("rb-medecin");
+const rbDebut      = document.getElementById("rb-debut");
+const rbFin        = document.getElementById("rb-fin");
+const rbBtnApercu  = document.getElementById("rb-btn-apercu");
+const rbBtnGenerer = document.getElementById("rb-btn-generer");
+const rbBtnPublier = document.getElementById("rb-btn-publier");
+const rbApercuSup  = document.getElementById("rb-apercu-sup");
+const rbListeSup   = document.getElementById("rb-liste-sup");
+const rbApercuNew  = document.getElementById("rb-apercu-new");
+const rbListeNew   = document.getElementById("rb-liste-new");
+const rbConflitsNew= document.getElementById("rb-conflits-new");
+const rbMessage    = document.getElementById("rb-message");
+
+let rbShiftsASupprimer = [];
+let rbNouveauxShifts   = [];
+
+function rbMsg(txt, type) {
+  if (!rbMessage) return;
+  rbMessage.textContent = txt;
+  rbMessage.className = "message" + (type ? " " + type : "");
+}
+
+/* Peuple le select médecin avec les médecins non-PG (depuis carteMedecins) */
+function rbChargerMedecins() {
+  if (!rbMedecin) return;
+  rbMedecin.innerHTML = "";
+  Object.values(carteMedecins)
+    .filter(function(m) { return m.grade !== "pg"; })
+    .sort(function(a, b) { return (a.name || "").localeCompare(b.name || ""); })
+    .forEach(function(m) {
+      const o = document.createElement("option");
+      o.value = m.id;
+      o.textContent = m.name || m.id;
+      rbMedecin.appendChild(o);
+    });
+}
+
+/* Étape 1 — aperçu des shifts à supprimer pour le médecin malade */
+async function rbApercu() {
+  rbMsg("Chargement…");
+  rbApercuSup.classList.add("hidden");
+  rbApercuNew.classList.add("hidden");
+  rbShiftsASupprimer = [];
+  rbNouveauxShifts   = [];
+
+  const medecinId = rbMedecin && rbMedecin.value;
+  const debut = rbDebut && rbDebut.value;
+  const fin   = rbFin   && rbFin.value;
+  if (!medecinId || !debut || !fin || debut > fin) {
+    rbMsg("Sélectionne un médecin et une plage de dates valide.", "error"); return;
+  }
+
+  const { data: shifts, error } = await sb.from("shifts")
+    .select("id, date, shift_type, poste, doctor_id, schedule_id")
+    .eq("doctor_id", medecinId)
+    .gte("date", debut)
+    .lte("date", fin)
+    .order("date");
+
+  if (error) { rbMsg("Erreur : " + error.message, "error"); return; }
+  if (!shifts || shifts.length === 0) {
+    rbMsg("Aucun shift à supprimer sur cette période pour ce médecin.", "info"); return;
+  }
+
+  rbShiftsASupprimer = shifts;
+  rbListeSup.innerHTML = "";
+  shifts.forEach(function(s) {
+    const li = document.createElement("li");
+    const cfg = SHIFT_CONFIG[s.shift_type] || {};
+    li.textContent = s.date + " — " + (cfg.label || s.shift_type) + (s.poste ? " (" + s.poste + ")" : "");
+    rbListeSup.appendChild(li);
+  });
+  rbApercuSup.classList.remove("hidden");
+  rbMsg("");
+}
+
+/* Étape 2 — supprimer les shifts du médecin malade + générer le rebouchage */
+async function rbGenerer() {
+  rbMsg("Génération en cours…");
+  rbApercuNew.classList.add("hidden");
+  rbNouveauxShifts = [];
+
+  const medecinId = rbMedecin && rbMedecin.value;
+  const debut = rbDebut && rbDebut.value;
+  const fin   = rbFin   && rbFin.value;
+  if (!medecinId || !debut || !fin) { rbMsg("Plage invalide.", "error"); return; }
+
+  // Détecter trimestre à partir du mois de début
+  const annee      = parseInt(debut.slice(0, 4), 10);
+  const moisDebut  = parseInt(debut.slice(5, 7), 10);
+  const trimestre  = Math.ceil(moisDebut / 3);
+  const moisTrim   = [0, 1, 2].map(function(k) { return (trimestre - 1) * 3 + 1 + k; });
+  const debutTrim  = annee + "-" + String(moisTrim[0]).padStart(2, "0") + "-01";
+  const dernierJour = new Date(annee, moisTrim[2], 0).getDate();
+  const finTrim    = annee + "-" + String(moisTrim[2]).padStart(2, "0") + "-" + String(dernierJour).padStart(2, "0");
+
+  // Charger tous les shifts du trimestre
+  const { data: tousTrimShifts, error: eTrim } = await sb.from("shifts")
+    .select("id, date, shift_type, poste, doctor_id, schedule_id")
+    .gte("date", debutTrim).lte("date", finTrim);
+  if (eTrim) { rbMsg("Erreur chargement shifts : " + eTrim.message, "error"); return; }
+
+  // Verrouillés = tout sauf médecin malade dans la plage CM
+  const shiftsVerrouilles = (tousTrimShifts || []).filter(function(s) {
+    return !(s.doctor_id === medecinId && s.date >= debut && s.date <= fin);
+  });
+
+  // Supprimer les shifts du médecin malade dans la plage
+  const idsASupp = rbShiftsASupprimer.map(function(s) { return s.id; });
+  if (idsASupp.length > 0) {
+    const { error: eDel } = await sb.from("shifts").delete().in("id", idsASupp);
+    if (eDel) { rbMsg("Erreur suppression : " + eDel.message, "error"); return; }
+  }
+
+  // Charger médecins et préférences
+  const { data: medecins, error: eMed } = await sb.from("doctors")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference, nouvel_engage")
+    .neq("role", "admin");
+  if (eMed) { rbMsg("Erreur médecins : " + eMed.message, "error"); return; }
+
+  const { data: prefs } = await sb.from("preferences")
+    .select("doctor_id, start_date, end_date, pref_type, date_compensation")
+    .eq("status", "approuve")
+    .lte("start_date", finTrim).gte("end_date", debutTrim);
+
+  const periodes = await periodesSur(debutTrim, finTrim);
+
+  // Lancer le rebouchage
+  const resultat = genererRebouchage({
+    annee, trimestre, debut, fin,
+    medecins: medecins || [],
+    preferences: prefs || [],
+    periodes,
+    feriesAdmin: feriesAdminPourGeneration(),
+    shiftsVerrouilles,
+  });
+
+  rbNouveauxShifts = resultat.shifts || [];
+
+  // Afficher aperçu
+  rbListeNew.innerHTML = "";
+  if (rbNouveauxShifts.length === 0) {
+    rbListeNew.innerHTML = "<li>Aucun nouveau shift généré (couverture déjà assurée).</li>";
+  } else {
+    rbNouveauxShifts.forEach(function(s) {
+      const li = document.createElement("li");
+      const cfg = SHIFT_CONFIG[s.shift_type] || {};
+      const med = carteMedecins[s.doctor_id] || {};
+      li.textContent = s.date + " — " + (cfg.label || s.shift_type) +
+        " → " + (med.name || s.doctor_id) + (s.poste ? " (" + s.poste + ")" : "");
+      rbListeNew.appendChild(li);
+    });
+  }
+  rbConflitsNew.innerHTML = (resultat.conflits && resultat.conflits.length)
+    ? "<strong>⚠️ Conflits :</strong><ul>" +
+        resultat.conflits.map(function(c) { return "<li>" + c.date + " — " + c.message + "</li>"; }).join("") + "</ul>"
+    : "<span style='color:green'>✓ Aucun conflit.</span>";
+
+  rbApercuNew.classList.remove("hidden");
+  rbMsg("");
+}
+
+/* Étape 3 — insérer les nouveaux shifts en base (brouillon) */
+async function rbPublier() {
+  if (!rbNouveauxShifts || rbNouveauxShifts.length === 0) {
+    rbMsg("Rien à publier.", "info"); return;
+  }
+  rbMsg("Publication…");
+
+  const annee     = parseInt(rbDebut.value.slice(0, 4), 10);
+  const trimestre = Math.ceil(parseInt(rbDebut.value.slice(5, 7), 10) / 3);
+  const moisTrim  = [0, 1, 2].map(function(k) { return (trimestre - 1) * 3 + 1 + k; });
+
+  try {
+    // Regrouper les nouveaux shifts par mois et rattacher au schedule existant
+    for (const mois of moisTrim) {
+      const b = bornesMois(annee, mois);
+      const duMois = rbNouveauxShifts.filter(function(s) { return s.date >= b.debut && s.date <= b.fin; });
+      if (!duMois.length) continue;
+
+      // Récupérer le schedule_id existant pour ce mois (créer en draft si absent)
+      let { data: sched } = await sb.from("schedules")
+        .select("id").eq("year", annee).eq("month", mois).maybeSingle();
+      if (!sched) {
+        const { data: ns, error: eS } = await sb.from("schedules")
+          .insert({ year: annee, month: mois, status: "draft" }).select("id").single();
+        if (eS) throw eS;
+        sched = ns;
+      }
+
+      const lignes = duMois.map(function(s) {
+        return { date: s.date, shift_type: s.shift_type, poste: s.poste || null,
+                 doctor_id: s.doctor_id, schedule_id: sched.id, epingle: false };
+      });
+      const { error: eI } = await sb.from("shifts").insert(lignes);
+      if (eI) throw eI;
+    }
+  } catch (err) {
+    rbMsg("Erreur publication : " + (err.message || err), "error"); return;
+  }
+
+  rbMsg("✓ " + rbNouveauxShifts.length + " shifts insérés en brouillon. Recharge le calendrier.", "success");
+  rbApercuSup.classList.add("hidden");
+  rbApercuNew.classList.add("hidden");
+  rbNouveauxShifts = [];
+  rbShiftsASupprimer = [];
+  await chargerShifts();
+}
+
+if (rbBtnApercu)  rbBtnApercu.addEventListener("click", rbApercu);
+if (rbBtnGenerer) rbBtnGenerer.addEventListener("click", rbGenerer);
+if (rbBtnPublier) rbBtnPublier.addEventListener("click", rbPublier);
+
 /* MODULE 14 — Exports Excel (.xlsx) via ExcelJS (spec §13)              */
 /* ===================================================================== */
 

@@ -156,6 +156,7 @@ const PREF_BLOQUANTES = [
   "conge", "conge_annuel", "conge_extralegal", "conge_scientifique",
   "off_clinic", "recuperation",
   "formation", "autre", // Module 10 : formation USI et congé « autre » bloquent aussi
+  "conge_maladie",      // Admin only : congé maladie (hors quota, bloquant)
   "recup_ferie",        // Module 18 : récup férié approuvée = jour non planifiable
   // NB : 'indispo' n'est PLUS bloquant — c'est désormais un souhait SOUPLE de ne
   // pas être de GARDE (cf. planning.js plBiaisGarde), non bloquant, gardes only.

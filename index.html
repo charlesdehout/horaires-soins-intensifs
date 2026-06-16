@@ -228,6 +228,35 @@
           </div>
           <p id="rotation-msg" class="message"></p>
         </div>
+      <!-- Module 29 — Rebouchage CM -->
+      <div class="zone-header"><h3 class="sous-titre">🏥 Rebouchage — Congé maladie</h3></div>
+      <div id="rebouchage-zone" class="zone-info">
+        <p>Outil pour combler les trous créés par un congé maladie en cours de trimestre, sans toucher aux shifts existants des autres médecins.</p>
+        <div class="rebouchage-form">
+          <label>Médecin malade :
+            <select id="rb-medecin"></select>
+          </label>
+          <label>Du :
+            <input type="date" id="rb-debut">
+          </label>
+          <label>Au :
+            <input type="date" id="rb-fin">
+          </label>
+          <button id="rb-btn-apercu" class="secondary">🔍 Aperçu des shifts à libérer</button>
+        </div>
+        <div id="rb-apercu-sup" class="hidden">
+          <h4>Shifts qui seront supprimés :</h4>
+          <ul id="rb-liste-sup"></ul>
+          <button id="rb-btn-generer">⚙️ Libérer et générer le rebouchage</button>
+        </div>
+        <div id="rb-apercu-new" class="hidden">
+          <h4>Nouveaux shifts proposés :</h4>
+          <ul id="rb-liste-new"></ul>
+          <div id="rb-conflits-new"></div>
+          <button id="rb-btn-publier">✓ Publier les nouveaux shifts</button>
+        </div>
+        <p id="rb-message" class="message"></p>
+      </div>
       </div><!-- /admin-planning -->
       </div><!-- /panel-planning -->
 
