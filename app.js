@@ -2048,7 +2048,7 @@ async function genererTrimestrePourMoisAffiche() {
   //    s'évalue sur TOUT le trimestre (équilibrage trimestriel) via validerEquite.
   genererTrimBtn.disabled = false;
   const alertesEquite = (typeof validerEquite === "function")
-    ? validerEquite(res.shifts, medecins || [], prefs || []) : [];
+    ? validerEquite(res.shifts, (medecins || []).filter((m) => m.grade !== "pg"), prefs || []) : [];
   const nbConf = res.conflits.length;
   const nbDoublures = res.shifts.filter((s) => s.doublure).length;
   const base = "Trimestre " + libelleTrim + " généré : " + res.shifts.length + " shifts (" +

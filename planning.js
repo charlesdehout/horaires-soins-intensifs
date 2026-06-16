@@ -1147,7 +1147,8 @@ function plEmettreCongesFerie(sortie, etat, dates) {
 function genererPlanning(opts) {
   const annee = opts.annee;
   const mois = opts.mois;
-  const medecins = opts.medecins || [];
+  // Les PG ont leur PROPRE génération (genererTrimestrePG) → exclus du moteur résident.
+  const medecins = (opts.medecins || []).filter((m) => m.grade !== "pg");
   const preferences = opts.preferences || [];
   if (opts.feriesAdmin) plDefinirFeriesAdmin(opts.feriesAdmin.ajouts, opts.feriesAdmin.retraits); // M26
 
@@ -1589,7 +1590,8 @@ function plDatesDuMois(annee, mois) {
 function genererTrimestre(opts) {
   const annee = opts.annee;
   const trimestre = opts.trimestre;                 // 1-4
-  const medecins = opts.medecins || [];
+  // Les PG ont leur PROPRE génération (genererTrimestrePG) → exclus du moteur résident.
+  const medecins = (opts.medecins || []).filter((m) => m.grade !== "pg");
   const preferences = opts.preferences || [];
   if (opts.feriesAdmin) plDefinirFeriesAdmin(opts.feriesAdmin.ajouts, opts.feriesAdmin.retraits); // M26
   const moisTrim = [0, 1, 2].map((k) => (trimestre - 1) * 3 + 1 + k); // ex. T2 -> [4,5,6]

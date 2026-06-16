@@ -1518,5 +1518,13 @@ test("PG garde auto-encodée : bloque la pose le jour de garde ET le lendemain (
   assert.strictEqual(j08.length, 0, "pg_jour posé le lendemain (récup) de garde");
 });
 
+test("génération RÉSIDENTS : un PG n'est jamais planifié (exclu du moteur résident)", () => {
+  const meds = equipe();
+  meds.push({ id: "pgX", name: "PGX", grade: "pg", fte: 1, weekly_hours_target: 48, jours_travailles: [1,2,3,4,5,6,7], statut: "dependant" });
+  const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: meds, preferences: [] });
+  const shiftsPg = r.shifts.filter((s) => s.doctor_id === "pgX");
+  assert.strictEqual(shiftsPg.length, 0, "le PG a été planifié dans le planning résident (" + shiftsPg.length + " shifts)");
+});
+
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");
 process.exit(reussis === total ? 0 : 1);
