@@ -2964,6 +2964,47 @@ function genererRebouchage(opts) {
     });
   });
 
+  // Conflit : nouvelle garde assignée à quelqu'un qui a déjà un shift verrouillé le lendemain.
+  // L'admin devra échanger ce shift manuellement (module échanges).
+  const occupeVerr = {};
+  (opts.shiftsVerrouilles || []).forEach(function(s) {
+    (occupeVerr[s.doctor_id] = occupeVerr[s.doctor_id] || new Set()).add(s.date);
+  });
+  const GARDES_TYPES = ["garde_nuit", "garde_24h"];
+  sortie.forEach(function(s) {
+    if (!GARDES_TYPES.includes(s.shift_type)) return;
+    const lendemain = plAdd(s.date, 1);
+    if (occupeVerr[s.doctor_id] && occupeVerr[s.doctor_id].has(lendemain)) {
+      const med = medecins.find(function(m) { return m.id === s.doctor_id; }) || {};
+      conflits.push({ date: s.date, message:
+        "Rebouchage : " + (med.name || s.doctor_id) +
+        " a une garde le " + s.date + " mais un shift verrouillé le " + lendemain +
+        " — à échanger manuellement." });
+    }
+  });
+
+  // Matérialiser les repos post-garde des NOUVELLES gardes uniquement.
+  // On passe le combiné (verrouillés + sortie) pour la déduplication, mais
+  // on ne retourne que les repos portant sur des gardes de la nouvelle sortie.
+  const nouvellesGardes = new Set(
+    sortie.filter(function(s) { return s.shift_type === "garde_nuit" || s.shift_type === "garde_24h"; })
+          .map(function(s) { return s.doctor_id + "|" + s.date; })
+  );
+  const combined = (opts.shiftsVerrouilles || []).concat(sortie);
+  materialiserRepos(combined, null).forEach(function(r) {
+    // Garder seulement les repos issus d'une nouvelle garde
+    const prevDate = plAdd(r.date, -1);
+    if (nouvellesGardes.has(r.doctor_id + "|" + prevDate)) sortie.push(r);
+  });
+  materialiserReposCouples(combined.concat(sortie.filter(function(s) { return s.shift_type === "repos_garde"; })), null)
+    .forEach(function(r) {
+      const prevJ = plJourSemaine(plAdd(r.date, -4)); // jeudi(4) ou vendredi(5)
+      const prevDate = plAdd(r.date, -4);
+      const prevDate2 = plAdd(r.date, -2); // la garde sur le lendemain j+2
+      if (nouvellesGardes.has(r.doctor_id + "|" + prevDate) ||
+          nouvellesGardes.has(r.doctor_id + "|" + prevDate2)) sortie.push(r);
+    });
+
   const stats = medecins.map(function(m) {
     return {
       doctor_id: m.id,

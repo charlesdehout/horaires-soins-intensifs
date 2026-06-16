@@ -1757,7 +1757,7 @@ async function initCalendrier() {
       headerToolbar: {
         left: "prev,next today",
         center: "title",
-        right: "dayGridMonth,listMonth",
+        right: "dayGridMonth",
       },
       buttonText: {
         today: "Aujourd'hui",
@@ -2425,6 +2425,209 @@ async function rbPublier() {
 if (rbBtnApercu)  rbBtnApercu.addEventListener("click", rbApercu);
 if (rbBtnGenerer) rbBtnGenerer.addEventListener("click", rbGenerer);
 if (rbBtnPublier) rbBtnPublier.addEventListener("click", rbPublier);
+
+/* ===================================================================== */
+/* MODULE 30 — Vue Semaine (grille postes × jours, remplace la vue liste) */
+/* ===================================================================== */
+
+const vueSemaineBtn   = document.getElementById("vue-semaine-btn");
+const semaineWrapper  = document.getElementById("semaine-wrapper");
+const semaineTitre    = document.getElementById("semaine-titre");
+const semainePrev     = document.getElementById("semaine-prev");
+const semaineNext     = document.getElementById("semaine-next");
+const semaineTable    = document.getElementById("semaine-table");
+
+let semaineDebut = null; // ISO lundi de la semaine affichée
+
+function sLundi(iso) {
+  const d = new Date(iso + "T00:00:00Z");
+  const j = d.getUTCDay();
+  d.setUTCDate(d.getUTCDate() - (j === 0 ? 6 : j - 1));
+  return d.toISOString().slice(0, 10);
+}
+function sAdd(iso, n) {
+  const d = new Date(iso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function sFmtCourt(iso) { return iso.slice(8, 10) + "/" + iso.slice(5, 7); }
+const S_JOURS_FR = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
+
+async function construireVueSemaine() {
+  if (!semaineTable) return;
+  if (!semaineDebut) {
+    const base = calendrier ? calendrier.getDate().toISOString().slice(0, 10)
+                            : new Date().toISOString().slice(0, 10);
+    semaineDebut = sLundi(base);
+  }
+  const jours = [0,1,2,3,4,5,6].map(function(k) { return sAdd(semaineDebut, k); });
+  const fin = jours[6];
+
+  semaineTitre.textContent = "Semaine du " + sFmtCourt(semaineDebut) +
+    " au " + sFmtCourt(fin) + "/" + fin.slice(0, 4);
+
+  if (!Object.keys(carteMedecins).length) await chargerCarteMedecins();
+  const nomsCourts = construireNomsCourts(carteMedecins);
+  const nomFn = function(id) { return nomsCourts[id] || (carteMedecins[id] && carteMedecins[id].name) || "?"; };
+
+  const { data: shifts } = await sb.from("shifts")
+    .select("id, date, shift_type, doctor_id, poste, epingle")
+    .gte("date", semaineDebut).lte("date", fin);
+  const { data: prefs } = await sb.from("preferences")
+    .select("doctor_id, start_date, end_date, pref_type, status")
+    .lte("start_date", fin).gte("end_date", semaineDebut).eq("status", "approuve");
+  const { data: rosterRaw } = await sb.from("doctors")
+    .select("id, name, grade, role, contract_start, contract_end, contract_periods, jours_travailles");
+  const roster = rosterRaw || [];
+  const shiftsList = shifts || [];
+  const prefsList  = prefs  || [];
+
+  // Index congés par jour
+  const shiftDocsJour = {}, congeDocsJour = {};
+  shiftsList.forEach(function(s) {
+    (shiftDocsJour[s.date] = shiftDocsJour[s.date] || new Set()).add(s.doctor_id);
+    if (GRILLE_CONGES.includes(s.shift_type))
+      (congeDocsJour[s.date] = congeDocsJour[s.date] || new Set()).add(s.doctor_id);
+  });
+  prefsList.forEach(function(p) {
+    if (!GRILLE_CONGES.includes(p.pref_type)) return;
+    let d = p.start_date;
+    while (d <= p.end_date && d <= fin) {
+      (congeDocsJour[d] = congeDocsJour[d] || new Set()).add(p.doctor_id);
+      d = sAdd(d, 1);
+    }
+  });
+
+  const periodes = await periodesSur(semaineDebut, fin);
+  const nomsS = function(d, pred) {
+    return shiftsList.filter(function(s) { return s.date === d && pred(s); })
+      .map(function(s) { return { nom: nomFn(s.doctor_id), id: s.id }; });
+  };
+  const nomsP = function(d, types) {
+    return prefsList.filter(function(p) { return p.start_date <= d && p.end_date >= d && types.includes(p.pref_type); })
+      .map(function(p) { return { nom: nomFn(p.doctor_id), id: null }; });
+  };
+  const nonPlan = function(d) {
+    if (estWeekendOuFerieISO(d)) return [];
+    const aShift = shiftDocsJour[d] || new Set();
+    const enConge = congeDocsJour[d] || new Set();
+    return roster.filter(function(m) {
+      return m.role !== "admin" && medActifISO(m, d) && jourTravaillableISO(m, d) &&
+        !aShift.has(m.id) && !enConge.has(m.id);
+    }).map(function(m) { return { nom: nomFn(m.id), id: null }; })
+      .sort(function(a, b) { return a.nom.localeCompare(b.nom); });
+  };
+
+  const P = function(codes) { return function(s) { return codes.includes(s.shift_type); }; };
+  const lignes = [
+    { label: "USI 1",             cls: "semaine-row-station", code: "usi1",
+      get: function(d) { return nomsS(d, function(s) { return s.poste === "usi1" && (s.shift_type === "jour" || s.shift_type === "garde_24h"); }); } },
+    { label: "USI 2",             cls: "semaine-row-station", code: "usi2",
+      get: function(d) { return nomsS(d, function(s) { return s.poste === "usi2" && (s.shift_type === "jour" || s.shift_type === "garde_24h"); }); } },
+    { label: "USI 3",             cls: "semaine-row-station", code: "usi3",
+      get: function(d) { return nomsS(d, function(s) { return s.poste === "usi3" && (s.shift_type === "jour" || s.shift_type === "garde_24h"); }); } },
+    { label: "USI 4",             cls: "semaine-row-station", code: "usi4",
+      get: function(d) { return nomsS(d, function(s) { return s.poste === "usi4" && (s.shift_type === "jour" || s.shift_type === "garde_24h"); }); } },
+    { label: "USI 5",             cls: "semaine-row-station", code: "usi5",
+      get: function(d) { return nomsS(d, function(s) { return s.poste === "usi5" && (s.shift_type === "jour" || s.shift_type === "garde_24h"); }); } },
+    { label: "USI Bordet",        cls: "semaine-row-station", code: "bordet",
+      get: function(d) { return nomsS(d, function(s) { return s.poste === "bordet" && (s.shift_type === "jour" || s.shift_type === "garde_24h"); }); } },
+    { label: "Labo de choc",      cls: "semaine-row-station", code: "labo_choc", estLabo: true,
+      get: function(d) { return nomsS(d, function(s) { return s.poste === "labo_choc" && (s.shift_type === "jour" || s.shift_type === "garde_24h"); }); } },
+    { label: "Garde de nuit (17h–9h)", cls: "semaine-row-garde",
+      get: function(d) { return nomsS(d, P(["garde_nuit"])); } },
+    { label: "Garde 24h",              cls: "semaine-row-garde",
+      get: function(d) { return nomsS(d, P(["garde_24h"])); } },
+    { label: "Tour (TWE)",             cls: "semaine-row-garde",
+      get: function(d) { return nomsS(d, P(["twe"])); } },
+    { label: "Off-clinic",             cls: "semaine-row-off",
+      get: function(d) { return nomsS(d, P(["off_clinic"])); } },
+    { label: "Récupération",           cls: "semaine-row-repos",
+      get: function(d) { return nomsS(d, P(["recuperation"])); } },
+    { label: "Repos de garde",         cls: "semaine-row-reposg",
+      get: function(d) { return nomsS(d, P(["repos_garde"])); } },
+    { label: "Congé annuel",           cls: "semaine-row-conge",
+      get: function(d) { return nomsS(d, P(["conge_annuel","conge_extralegal"])).concat(nomsP(d, ["conge_annuel","conge_extralegal"])); } },
+    { label: "Congé scientifique",     cls: "semaine-row-conges",
+      get: function(d) { return nomsS(d, P(["conge_scientifique"])).concat(nomsP(d, ["conge_scientifique"])); } },
+    { label: "Formation / autre",      cls: "semaine-row-autre",
+      get: function(d) { return nomsS(d, P(["formation","autre","conge_maladie"])).concat(nomsP(d, ["formation","autre","conge_maladie"])); } },
+    { label: "Non planifiés",          cls: "semaine-row-repos",
+      get: function(d) { return nonPlan(d); } },
+  ];
+
+  const chipCouleur = function(cls) {
+    if (cls === "semaine-row-garde")  return "#0d9488";
+    if (cls === "semaine-row-off")    return "#9a6700";
+    if (cls === "semaine-row-repos")  return "#6e6e6e";
+    if (cls === "semaine-row-reposg") return "#6e5494";
+    if (cls === "semaine-row-conge")  return "#1a7f37";
+    if (cls === "semaine-row-conges") return "#0b6b63";
+    if (cls === "semaine-row-autre")  return "#8250df";
+    return "#1f6feb";
+  };
+
+  semaineTable.innerHTML = "";
+  const thead = semaineTable.createTHead();
+  const trHead = thead.insertRow();
+  const thCoin = document.createElement("th");
+  thCoin.className = "semaine-rowhead semaine-coin";
+  trHead.appendChild(thCoin);
+  jours.forEach(function(iso, i) {
+    const th = document.createElement("th");
+    const we = estWeekendOuFerieISO(iso);
+    const cg = congresISO(iso, periodes);
+    th.className = cg ? "semaine-th-ferie" : (we ? "semaine-th-we" : "semaine-th-sem");
+    th.innerHTML = "<strong>" + S_JOURS_FR[i] + " " + sFmtCourt(iso) + "</strong>" +
+      (cg ? "<br><small>" + cg + "</small>" : "");
+    trHead.appendChild(th);
+  });
+
+  const tbody = semaineTable.createTBody();
+  const estAdmin = (medecinCourant && medecinCourant.role === "admin");
+  lignes.forEach(function(lg) {
+    const tr = document.createElement("tr");
+    tr.className = lg.cls;
+    const tdLabel = document.createElement("td");
+    tdLabel.className = "semaine-rowhead";
+    tdLabel.textContent = lg.label;
+    tr.appendChild(tdLabel);
+    jours.forEach(function(iso) {
+      const td = document.createElement("td");
+      const we = estWeekendOuFerieISO(iso);
+      const cg = congresISO(iso, periodes);
+      if (lg.estLabo && we) { td.className = "semaine-td-ferme"; td.textContent = "Fermé"; tr.appendChild(td); return; }
+      if (lg.code && estUniteFermeeISO(iso, lg.code, periodes)) { td.className = "semaine-td-ferme"; td.textContent = "Fermé"; tr.appendChild(td); return; }
+      td.className = cg ? "semaine-td-ferie" : (we ? "semaine-td-we" : "");
+      (lg.get(iso) || []).forEach(function(item) {
+        const chip = document.createElement("span");
+        chip.className = "semaine-chip" + (estAdmin && item.id ? " clickable" : "");
+        chip.style.background = chipCouleur(lg.cls);
+        chip.textContent = item.nom;
+        if (estAdmin && item.id) {
+          chip.setAttribute("data-shiftid", item.id);
+          chip.addEventListener("click", function() {
+            const s = shiftsList.find(function(x) { return x.id === item.id; });
+            if (s) ouvrirPopupShift(s.date, s);
+          });
+        }
+        td.appendChild(chip);
+      });
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+if (semainePrev) semainePrev.addEventListener("click", function() {
+  semaineDebut = sAdd(semaineDebut || sLundi(new Date().toISOString().slice(0,10)), -7);
+  construireVueSemaine();
+});
+if (semaineNext) semaineNext.addEventListener("click", function() {
+  semaineDebut = sAdd(semaineDebut || sLundi(new Date().toISOString().slice(0,10)), 7);
+  construireVueSemaine();
+});
+if (vueSemaineBtn) vueSemaineBtn.addEventListener("click", function() { basculerVuePlanning("semaine"); });
 
 /* MODULE 14 — Exports Excel (.xlsx) via ExcelJS (spec §13)              */
 /* ===================================================================== */
@@ -4352,13 +4555,19 @@ grilleTable.addEventListener("click", (e) => {
 /* Bascule Calendrier / Grille. */
 function basculerVuePlanning(vue) {
   vueActive = vue;
-  const grille = vue === "grille";
-  grilleWrapper.classList.toggle("hidden", !grille);
-  calendarEl.classList.toggle("hidden", grille);
-  vueGrilleBtn.classList.toggle("actif", grille);
-  vueCalendrierBtn.classList.toggle("actif", !grille);
-  if (grille) {
+  const estGrille   = vue === "grille";
+  const estSemaine  = vue === "semaine";
+  const estCal      = vue === "calendrier";
+  grilleWrapper.classList.toggle("hidden", !estGrille);
+  if (semaineWrapper) semaineWrapper.classList.toggle("hidden", !estSemaine);
+  calendarEl.classList.toggle("hidden", !estCal);
+  vueGrilleBtn.classList.toggle("actif", estGrille);
+  if (vueSemaineBtn) vueSemaineBtn.classList.toggle("actif", estSemaine);
+  vueCalendrierBtn.classList.toggle("actif", estCal);
+  if (estGrille) {
     construireGrille();
+  } else if (estSemaine) {
+    construireVueSemaine();
   } else if (calendrier) {
     calendrier.updateSize(); // recalcule la taille après réaffichage
   }

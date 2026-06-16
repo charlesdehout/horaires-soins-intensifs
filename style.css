@@ -613,3 +613,64 @@ button.mini.danger:hover { background: #fbeae8; }
   .tabs { padding: 0.25rem 0.5rem 0; }
   .tab { padding: 0.5rem 0.6rem; font-size: 0.85rem; }
 }
+
+/* ===== Vue Semaine (Module 30) ===================================== */
+.semaine-table {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  min-width: 100%;
+}
+.semaine-table th, .semaine-table td {
+  border: 1px solid var(--gris-bordure);
+  padding: 3px 5px;
+  vertical-align: top;
+}
+/* Colonne libellé (sticky gauche) */
+.semaine-rowhead {
+  position: sticky; left: 0; z-index: 1;
+  background: #fff; text-align: left; font-weight: 600;
+  min-width: 9rem; max-width: 9rem; white-space: nowrap;
+  font-size: 0.78rem;
+}
+/* En-tête des jours (sticky haut) */
+.semaine-table thead th {
+  position: sticky; top: 0; z-index: 2;
+  text-align: center; font-weight: 700;
+  min-width: 7rem;
+}
+.semaine-table thead .semaine-coin {
+  z-index: 3; left: 0;
+  background: #04342C; color: #E1F5EE;
+}
+.semaine-th-sem  { background: #E1F5EE; color: #085041; }
+.semaine-th-we   { background: #D8DDDA; color: #444; }
+.semaine-th-ferie { background: #FAC775; color: #633806; }
+/* Lignes par type */
+.semaine-row-station  td.semaine-rowhead { background: #F1EFE8; }
+.semaine-row-garde    td.semaine-rowhead { background: #9FE1CB; }
+.semaine-row-off      td.semaine-rowhead { background: #FFE699; }
+.semaine-row-repos    td.semaine-rowhead { background: #EDEDED; }
+.semaine-row-reposg   td.semaine-rowhead { background: #E4DFEC; }
+.semaine-row-conge    td.semaine-rowhead { background: #FCE4D6; }
+.semaine-row-conges   td.semaine-rowhead { background: #F8CBAD; }
+.semaine-row-autre    td.semaine-rowhead { background: #F2F2F2; }
+/* Cellule WE/férié légèrement grisée */
+.semaine-td-we   { background: #f4f5f4; }
+.semaine-td-ferie { background: #fff7e6; }
+/* Cellule fermée (Labo le WE) */
+.semaine-td-ferme { background: #C8C8C8; font-style: italic; color: #666; font-size: 0.72rem; text-align: center; }
+/* Noms dans les cellules */
+.semaine-chip {
+  display: inline-block;
+  background: #0891b2;
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin: 1px 2px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: default;
+}
+.semaine-chip.clickable { cursor: pointer; }
+.semaine-chip.clickable:hover { opacity: 0.85; }

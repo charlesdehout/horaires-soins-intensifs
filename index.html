@@ -95,6 +95,7 @@
           <div class="vue-toggle">
             <button id="vue-calendrier-btn" type="button" class="vue-btn actif">Calendrier</button>
             <button id="vue-grille-btn" type="button" class="vue-btn">Grille</button>
+            <button id="vue-semaine-btn" type="button" class="vue-btn">Semaine</button>
           </div>
         </div>
 
@@ -127,6 +128,18 @@
             <span class="legend-item"><span class="dot" style="background:#6e6e6e"></span>Unité fermée</span>
           </span>
           <span id="legend-mine" class="legend-item hidden"><span class="dot dot-mine"></span>Mes shifts</span>
+        </div>
+
+        <!-- Vue 3 : grille postes × jours de la semaine -->
+        <div id="semaine-wrapper" class="hidden">
+          <div class="grille-nav">
+            <button id="semaine-prev" type="button" class="mini">‹ Sem. préc.</button>
+            <span id="semaine-titre" class="grille-titre"></span>
+            <button id="semaine-next" type="button" class="mini">Sem. suiv. ›</button>
+          </div>
+          <div id="semaine-scroll" class="grille-scroll">
+            <table id="semaine-table" class="semaine-table"></table>
+          </div>
         </div>
 
         <!-- Vue 1 : calendrier FullCalendar -->
