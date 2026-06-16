@@ -154,7 +154,7 @@ function basculerVue(connecte) {
 async function chargerProfil(user) {
   const { data, error } = await sb
     .from("doctors")
-    .select("id, name, role, statut, fte, contract_start, contract_end, quota_conge_annuel, quota_conge_extralegal, quota_conge_scientifique")
+    .select("id, name, role, grade, pg_type, statut, fte, contract_start, contract_end, quota_conge_annuel, quota_conge_extralegal, quota_conge_scientifique")
     .eq("email", user.email)
     .maybeSingle();
 
