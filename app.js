@@ -2563,7 +2563,7 @@ async function construireVueSemaine() {
     const aShift = shiftDocsJour[d] || new Set();
     const enConge = congeDocsJour[d] || new Set();
     return roster.filter(function(m) {
-      return m.role !== "admin" && medActifISO(m, d) && jourTravaillableISO(m, d) &&
+      return m.role !== "admin" && m.grade !== "pg" && medActifISO(m, d) && jourTravaillableISO(m, d) &&
         !aShift.has(m.id) && !enConge.has(m.id);
     }).map(function(m) { return { nom: nomFn(m.id), id: null }; })
       .sort(function(a, b) { return a.nom.localeCompare(b.nom); });
@@ -2591,6 +2591,8 @@ async function construireVueSemaine() {
       get: function(d) { return nomsS(d, P(["garde_24h"])); } },
     { label: "Tour (TWE)",             cls: "semaine-row-garde",
       get: function(d) { return nomsS(d, P(["twe"])); } },
+    { label: "Gardes PG",              cls: "semaine-row-garde",
+      get: function(d) { return nomsS(d, P(["garde_pg"])); } },
     { label: "Off-clinic",             cls: "semaine-row-off",
       get: function(d) { return nomsS(d, P(["off_clinic"])); } },
     { label: "Récupération",           cls: "semaine-row-repos",
