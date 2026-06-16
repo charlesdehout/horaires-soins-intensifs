@@ -320,8 +320,8 @@ button.mini {
   margin-left: 0.3rem;
 }
 button.mini:hover { background: var(--gris-clair); }
-button.mini.danger { color: var(--rouge); border-color: #f0c8c4; }
-button.mini.danger:hover { background: #fbeae8; }
+button.mini.danger { background: #fdf2f1; color: var(--rouge); border-color: #f0c8c4; }
+button.mini.danger:hover { background: #f7d9d5; }
 
 /* Pastilles de type de préférence (Module 3) + grades (refonte) */
 .badge {
@@ -465,9 +465,11 @@ button.mini.danger:hover { background: #fbeae8; }
 .pa-group-danger { background: #fbeae8; border-color: #f0c8c4; }
 .pa-group-danger .pa-label { color: var(--rouge); }
 
-/* Bouton d'action destructeur (pleine taille) : rouge, bien distinct */
-button.danger { background: var(--rouge); color: #fff; border: none; }
-button.danger:hover { background: #9e2b22; }
+/* Bouton d'action destructeur PLEINE TAILLE : rouge, bien distinct.
+   :not(.mini) → ne touche PAS les petits boutons « Supprimer » des tableaux,
+   qui restent en fond blanc + texte rouge (toujours lisibles). */
+button.danger:not(.mini) { background: var(--rouge); color: #fff; border: none; }
+button.danger:not(.mini):hover { background: #9e2b22; }
 
 /* Compteurs par médecin */
 .compteurs-table td.depasse { color: var(--rouge); font-weight: 600; }
