@@ -68,7 +68,7 @@ function plSansContinuite(code) { return PL_STATIONS_SANS_CONTINUITE.indexOf(cod
 
 /* VERSION de l'algorithme — affichée dans le message de génération pour
    vérifier que le navigateur exécute bien le code déployé (cache !). */
-const PL_VERSION = "v2026.06.16-3";
+const PL_VERSION = "v2026.06.16-4";
 
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
 const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24 };
@@ -2616,16 +2616,24 @@ function validerEchange(shifts, idA, idB, medecins) {
     if (gA === "garde") {
       sens.forEach(([g, ancien, nouveau]) => {
         [g.date, plAdd(g.date, 1)].forEach((jourCible) => {
-          const j = (shifts || []).find((s) => !suppr.has(s.id) && s.shift_type === "jour" &&
-            s.date === jourCible && docDe(s) === nouveau);
-          if (!j) return;
-          // L'ancien titulaire est-il libre ce jour-là pour reprendre la journée ?
-          const ancienOccupe = (shifts || []).some((s) => !suppr.has(s.id) && s.id !== j.id &&
-            s.date === jourCible && docDe(s) === ancien);
-          const ancienGardeVeille = aGardeApres(ancien, plAdd(jourCible, -1)); // garde la veille
-          if (ancienOccupe || ancienGardeVeille) return; // non résoluble → refus en étape 4
-          changes.push({ id: j.id, doctor_id: ancien });
-          reaff[j.id] = ancien;
+          // Tous les shifts de travail RÉSOLUBLES du nouveau titulaire ce jour :
+          // une JOURNÉE (transférable) ou un OFF-CLINIC (droit contournable).
+          (shifts || []).filter((s) => !suppr.has(s.id) && s.date === jourCible &&
+            docDe(s) === nouveau && (s.shift_type === "jour" || s.shift_type === "off")).forEach((c) => {
+            if (c.shift_type === "off") {
+              // Off-clinic incompatible avec un repos de garde → on le retire (contournable).
+              changes.push({ id: c.id, supprimer: true }); suppr.add(c.id);
+              return;
+            }
+            // Journée : confiée à l'ANCIEN titulaire (libéré : il a cédé la garde) s'il
+            // est libre ce jour-là ; sinon non transférée → l'étape 4 refusera.
+            const ancienOccupe = (shifts || []).some((s) => !suppr.has(s.id) && s.id !== c.id &&
+              s.date === jourCible && docDe(s) === ancien);
+            const ancienGardeVeille = aGardeApres(ancien, plAdd(jourCible, -1));
+            if (ancienOccupe || ancienGardeVeille) return;
+            changes.push({ id: c.id, doctor_id: ancien });
+            reaff[c.id] = ancien;
+          });
         });
       });
     }
@@ -2660,7 +2668,7 @@ function validerEchange(shifts, idA, idB, medecins) {
       const lendemain = (shifts || []).find((s) => !suppr.has(s.id) && estTravail(s.shift_type) &&
         s.date === plAdd(g.date, 1) && docDe(s) === nouveau);
       if (lendemain)
-        return { ok: false, message: "Échange refusé : " + nomDe(nouveau) + " travaille le lendemain de la garde du " + g.date + " (repos impossible)." };
+        return { ok: false, message: "Échange refusé : " + nomDe(nouveau) + " a « " + lendemain.shift_type + " » le lendemain de la garde du " + g.date + " (repos impossible, non transférable)." };
     }
   }
 

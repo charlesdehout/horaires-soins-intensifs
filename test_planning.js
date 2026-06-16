@@ -1416,5 +1416,18 @@ test("échange de garde : la journée du MÊME JOUR du receveur passe au cédant
     "la journée du 10/6 (même jour que la garde) n'a pas été transférée au cédant R1");
 });
 
+test("échange de garde : un OFF-CLINIC le lendemain est retiré (échange débloqué)", () => {
+  const meds = [{ id: "R1", grade: "resident", name: "R1" }, { id: "R2", grade: "resident", name: "R2" }];
+  const shifts = [
+    { id: "g1", date: "2026-06-10", shift_type: "garde_nuit", doctor_id: "R1", poste: null },
+    { id: "g2", date: "2026-06-17", shift_type: "garde_nuit", doctor_id: "R2", poste: null },
+    { id: "o2", date: "2026-06-11", shift_type: "off", doctor_id: "R2", poste: null }, // R2 off le lendemain de g1
+  ];
+  const r = validerEchange(shifts, "g1", "g2", meds);
+  assert(r.ok, "échange refusé à tort : " + r.message);
+  assert(r.changes.some((c) => c.id === "o2" && c.supprimer),
+    "l'off-clinic du 11/6 n'a pas été retiré pour débloquer l'échange");
+});
+
 console.log("\n--- " + reussis + "/" + total + " tests réussis ---\n");
 process.exit(reussis === total ? 0 : 1);

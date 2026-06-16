@@ -4703,11 +4703,47 @@ async function chargerEchangesAdmin() {
     [fmt(w.created_at), nom(w.from_doctor_id), lib(w.from_shift_id), nom(w.to_doctor_id),
      lib(w.to_shift_id), w.note || "", ECH_STATUTS[w.status] || w.status, fmt(w.decided_at)]
       .forEach((c) => { const td = document.createElement("td"); td.textContent = c; tr.appendChild(td); });
+    // Actions admin : valider / refuser une proposition EN ATTENTE à la place du médecin.
+    const act = document.createElement("td");
+    if (w.status === "en_attente") {
+      const ok = document.createElement("button");
+      ok.type = "button"; ok.textContent = "Valider"; ok.className = "mini";
+      ok.addEventListener("click", () => echAdminValiderProposition(w));
+      const no = document.createElement("button");
+      no.type = "button"; no.textContent = "Refuser"; no.className = "mini danger";
+      no.addEventListener("click", () => echAdminRefuserProposition(w));
+      act.appendChild(ok); act.appendChild(no);
+    }
+    tr.appendChild(act);
     tbody.appendChild(tr);
   });
   const empty = document.getElementById("ech-admin-empty");
   if (empty) empty.classList.toggle("hidden", (swaps || []).length > 0);
 }
+/* L'admin VALIDE une proposition en attente à la place du médecin (applique). */
+async function echAdminValiderProposition(swap) {
+  const msg = document.getElementById("echadm-msg");
+  try {
+    const c = await echContexte(swap.from_shift_id, swap.to_shift_id, swap.from_doctor_id, swap.to_doctor_id);
+    if (c.erreur) { if (msg) { msg.textContent = "Validation impossible : " + c.erreur; msg.className = "message error"; } return; }
+    const docs = Object.keys(echDocteurs).map((id) => ({ id, name: echDocteurs[id].name, grade: echDocteurs[id].grade }));
+    const r = validerEchange(c.ctx || [], swap.from_shift_id, swap.to_shift_id, docs);
+    if (!r.ok) { if (msg) { msg.textContent = "❌ " + r.message; msg.className = "message error"; } return; }
+    if (!window.confirm("Valider cet échange à la place du médecin ?")) return;
+    await echAppliquerChanges(r.changes, c.ctx || []);
+    await sb.from("shift_swaps").update({ status: "accepte", decided_at: new Date().toISOString() }).eq("id", swap.id);
+    const sync = await pousserVersSheetAuto("échange admin");
+    if (msg) { msg.textContent = "Échange validé par l'admin." + (sync && sync.ok ? " Publié dans le Sheet. ✅" : (sync && sync.skip ? " ⚠️ Miroir Sheet non configuré." : " ⚠️ Synchro Sheet non confirmée.")); msg.className = "message info"; }
+    if (calendrier) calendrier.refetchEvents();
+    chargerEchangesAdmin();
+  } catch (e) { if (msg) { msg.textContent = "Erreur : " + (e.message || e); msg.className = "message error"; } }
+}
+/* L'admin REFUSE une proposition en attente. */
+async function echAdminRefuserProposition(swap) {
+  await sb.from("shift_swaps").update({ status: "refuse", decided_at: new Date().toISOString() }).eq("id", swap.id);
+  chargerEchangesAdmin();
+}
+
 const echAdminRefreshBtn = document.getElementById("ech-admin-refresh");
 if (echAdminRefreshBtn) echAdminRefreshBtn.addEventListener("click", chargerEchangesAdmin);
 
