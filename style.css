@@ -335,6 +335,7 @@ button.mini.danger:hover { background: #fbeae8; }
 .badge-conge_annuel       { background: #ddf4e4; color: var(--vert); }
 .badge-conge_extralegal   { background: #c8ecd4; color: #0f5132; }
 .badge-conge_scientifique { background: #ccecea; color: #0b6b63; }
+.badge-recherche_clinique  { background: #e0d4f7; color: #5b21b6; }
 .badge-indispo            { background: #fdeaea; color: var(--rouge); }
 .badge-souhait            { background: #e3eefe; color: #1f6feb; }
 .badge-grade-resident     { background: #eeedfe; color: #3c3489; }

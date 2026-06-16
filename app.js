@@ -719,6 +719,7 @@ const PREF_LABELS = {
   recup_ferie: "Récup férié",
   travailler_ferie: "Travailler un férié",
   conge_ferie: "Congé férié (récup)",
+  recherche_clinique: "Recherche clinique",
   dispo: "✅ Disponible (indépendant, prioritaire)",
 };
 
@@ -735,9 +736,11 @@ function messageFormPref(texte, type = "error") {
    Appelée à chaque chargement des prefs (après connaissance du profil). */
 function majOptionsPrefsParGrade() {
   if (!pType || !medecinCourant) return;
-  const estPg = medecinCourant.grade === "pg";
+  const estPg     = medecinCourant.grade === "pg";
+  const estFellow = estPg && medecinCourant.pg_type === "fellow";
   const optsPG = [
-    ["conge_annuel",  "Congé (bloquant — quota géré par l'admin)"],
+    ["conge_annuel",       "Congé (bloquant — dans quota trimestriel)"],
+    ...(estFellow ? [["recherche_clinique", "Jour de recherche clinique (bloquant — dans quota trimestriel)"]] : []),
     ["recuperation",  "Lendemain de garde (bloque la journée — récupération)"],
     ["indispo",       "Indisponible pour le tour de week-end (souhait, non bloquant)"],
   ];
@@ -863,6 +866,7 @@ if (_pgGardeAddBtn) _pgGardeAddBtn.addEventListener("click", declarerGardePG);
 /* Catégorie de quota d'un pref_type ('conge' historique compté en annuel). */
 function categorieConge(prefType) {
   if (prefType === "conge") return "conge_annuel";
+  if (prefType === "recherche_clinique") return "recherche_clinique"; // Fellow : compte dans quota trimestriel
   return CONGE_TYPES[prefType] ? prefType : null;
 }
 
@@ -1026,9 +1030,30 @@ function ligneRecupFerie() {
 /* Affiche les compteurs « X / Y jours ouvrés » par catégorie et par année académique. */
 function majCompteurConges() {
   if (!congesCompteur || !medecinCourant) return;
-  // PG / Fellow : la LIMITE de congé n'est PAS montrée au médecin (règle métier).
+  // PG / Fellow : quota par trimestre CIVIL (pas par année académique).
   if (medecinCourant.grade === "pg") {
-    congesCompteur.innerHTML = "<em>Demandes de congé soumises à validation de l'admin.</em>";
+    const limPG = (medecinCourant.pg_type === "fellow") ? PG_CONGE_TRIM_FELLOW : PG_CONGE_TRIM_ULB;
+    const today = new Date().toISOString().slice(0, 10);
+    const tri = pgTrimBornes(today);
+    // Jours de congé déjà posés dans ce trimestre
+    let dejaPG = 0;
+    (prefsCourantes || []).forEach((p) => {
+      if (!categorieConge(p.pref_type)) return;
+      const d1 = p.start_date > tri.start ? p.start_date : tri.start;
+      const d2 = p.end_date   < tri.end   ? p.end_date   : tri.end;
+      dejaPG += pgJoursOuvres(d1, d2);
+    });
+    const restePG = Math.max(0, limPG - dejaPG);
+    const trimLabel = tri.key.replace("-Q", " T").replace("T0","T1").replace("T1","T1").replace("T2","T2").replace("T3","T3"); // "2025-Q2" → lisible
+    // Label trimestre lisible
+    const qNum = parseInt(tri.key.slice(-1)) + 1; // Q0→T1 … Q3→T4
+    const triLisible = "T" + qNum + " " + tri.key.slice(0, 4);
+    const alertePG = dejaPG >= limPG ? " <strong>⚠️ quota atteint</strong>" : "";
+    congesCompteur.innerHTML =
+      "<strong>Congés " + triLisible + "</strong> : " +
+      dejaPG + "/" + limPG + " j ouvrés utilisés · " + restePG + " j restants" + alertePG +
+      "<br><em>Quota par trimestre civil · jours ouvrés lun–ven hors fériés</em>";
+    congesCompteur.classList.remove("hidden");
     return;
   }
   const lignes = anneesAvecConges().map((annee) => {
@@ -1444,6 +1469,7 @@ const PREF_LABELS_FULL = {
   recup_ferie: "Récup férié (jour compensatoire)",
   travailler_ferie: "Travailler un férié (placement prioritaire)",
   conge_ferie: "Congé férié (jour de récup)",
+  recherche_clinique: "Jour de recherche clinique (Fellow — bloquant, dans quota trimestriel)",
   dispo: "✅ Disponible — souhaite travailler ce jour (indépendant, prioritaire)",
 };
 
