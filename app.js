@@ -2623,7 +2623,7 @@ async function construireVueSemaine() {
       const we = estWeekendOuFerieISO(iso);
       const cg = congresISO(iso, periodes);
       if (lg.estLabo && we) { td.className = "semaine-td-ferme"; td.textContent = "Fermé"; tr.appendChild(td); return; }
-      if (lg.code && estUniteFermeeISO(iso, lg.code, periodes)) { td.className = "semaine-td-ferme"; td.textContent = "Fermé"; tr.appendChild(td); return; }
+      if (lg.code && uniteFermeeISO(lg.code, iso, periodes)) { td.className = "semaine-td-ferme"; td.textContent = "Fermé"; tr.appendChild(td); return; }
       td.className = cg ? "semaine-td-ferie" : (we ? "semaine-td-we" : "");
       (lg.get(iso) || []).forEach(function(item) {
         const chip = document.createElement("span");
@@ -2634,7 +2634,7 @@ async function construireVueSemaine() {
           chip.setAttribute("data-shiftid", item.id);
           chip.addEventListener("click", function() {
             const s = shiftsList.find(function(x) { return x.id === item.id; });
-            if (s) ouvrirPopupShift(s.date, s);
+            if (s) ouvrirEditionShift(s);
           });
         }
         td.appendChild(chip);
@@ -4354,12 +4354,7 @@ function grilleLignes() {
 }
 
 /* Week-end ou férié (réutilise joursFeriesBE de regles.js si dispo). */
-function estWeekendOuFerieISO(iso) {
-  const d = new Date(iso + "T00:00:00Z");
-  const j = d.getUTCDay();
-  if (j === 0 || j === 6) return true;
-  try { return joursFeriesBE(d.getUTCFullYear()).has(iso); } catch (e) { return false; }
-}
+/* estWeekendOuFerieISO définie plus haut (export Excel) */
 
 /* Nom court d'un médecin pour la grille. */
 function nomCourt(id) {
