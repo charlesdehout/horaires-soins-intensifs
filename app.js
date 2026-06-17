@@ -825,6 +825,7 @@ const PREF_LABELS = {
   conge_ferie: "Congé férié (récup)",
   recherche_clinique: "Recherche clinique",
   dispo: "✅ Disponible (indépendant, prioritaire)",
+  garde_pg: "Garde PG (24 h)",
 };
 
 /* Affiche un message dans le formulaire de préférences */
@@ -907,14 +908,14 @@ const _pgAddJ = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDa
 async function chargerGardesPG() {
   const tbody = document.getElementById("pg-garde-tbody");
   if (!tbody || !medecinCourant) return;
-  const { data } = await sb.from("shifts").select("id, date, shift_type, doctor_id")
-    .eq("doctor_id", medecinCourant.id).eq("shift_type", "garde_pg")
-    .gte("date", new Date().toISOString().slice(0, 10)).order("date");
+  const { data } = await sb.from("preferences").select("id, start_date, doctor_id")
+    .eq("doctor_id", medecinCourant.id).eq("pref_type", "garde_pg")
+    .gte("start_date", new Date().toISOString().slice(0, 10)).order("start_date");
   const fmt = (iso) => { const d = iso.split("-"); return d[2] + "/" + d[1] + "/" + d[0]; };
   tbody.innerHTML = "";
   (data || []).forEach((g) => {
     const tr = document.createElement("tr");
-    [fmt(g.date), fmt(_pgAddJ(g.date, 1))].forEach((c) => { const td = document.createElement("td"); td.textContent = c; tr.appendChild(td); });
+    [fmt(g.start_date), fmt(_pgAddJ(g.start_date, 1))].forEach((c) => { const td = document.createElement("td"); td.textContent = c; tr.appendChild(td); });
     const act = document.createElement("td");
     const del = document.createElement("button"); del.type = "button"; del.textContent = "Supprimer"; del.className = "mini danger";
     del.addEventListener("click", () => supprimerGardePG(g));
@@ -928,34 +929,26 @@ async function declarerGardePG() {
   const dateEl = document.getElementById("pg-garde-date");
   const date = dateEl && dateEl.value;
   if (!date) { if (msg) { msg.textContent = "Choisis une date."; msg.className = "message error"; } return; }
-  const lendemain = _pgAddJ(date, 1);
   try {
-    const [y, m] = date.split("-").map(Number);
-    const { data: sched } = await sb.from("schedules").select("id").eq("year", y).eq("month", m).maybeSingle();
-    if (!sched) { if (msg) { msg.textContent = "Le planning de ce mois n'existe pas encore (l'admin doit le générer)."; msg.className = "message error"; } return; }
-    const [y2, m2] = lendemain.split("-").map(Number);
-    let sched2 = sched;
-    if (m2 !== m || y2 !== y) { const r = await sb.from("schedules").select("id").eq("year", y2).eq("month", m2).maybeSingle(); sched2 = r.data || null; }
-    // Retire un éventuel pg_jour ce jour + le lendemain (de garde / en récup).
-    await sb.from("shifts").delete().eq("doctor_id", medecinCourant.id).in("date", [date, lendemain]).eq("shift_type", "pg_jour");
-    const lignes = [{ date, shift_type: "garde_pg", poste: null, doctor_id: medecinCourant.id, schedule_id: sched.id }];
-    if (sched2) lignes.push({ date: lendemain, shift_type: "recup", poste: null, doctor_id: medecinCourant.id, schedule_id: sched2.id });
-    const { error } = await sb.from("shifts").insert(lignes);
+    // Garde PG = auto-déclaration INDÉPENDANTE du planning → stockée en préférence
+    // (type 'garde_pg', statut 'approuve'). Le PG a le droit d'écrire ses propres
+    // préférences (RLS), donc plus besoin de planning existant ni de droits admin.
+    // La génération PG la lira (blocage jour + lendemain) et matérialisera les shifts.
+    const { error } = await sb.from("preferences").insert({
+      doctor_id: medecinCourant.id, start_date: date, end_date: date,
+      pref_type: "garde_pg", status: "approuve",
+    });
     if (error) throw error;
-    if (msg) { msg.textContent = "Garde déclarée (24 h) + récup le " + lendemain + ". ✅"; msg.className = "message info"; }
+    if (msg) { msg.textContent = "Garde déclarée (24 h) + récup le " + _pgAddJ(date, 1) + ". ✅"; msg.className = "message info"; }
     if (dateEl) dateEl.value = "";
-    await pousserVersSheetAuto("garde PG");
-    if (calendrier) calendrier.refetchEvents();
-    chargerGardesPG();
+    chargerPreferences();
   } catch (e) { if (msg) { msg.textContent = "Erreur : " + (e.message || e); msg.className = "message error"; } }
 }
 async function supprimerGardePG(g) {
-  if (!window.confirm("Supprimer cette garde et sa récup ?")) return;
-  await sb.from("shifts").delete().eq("id", g.id);
-  await sb.from("shifts").delete().eq("doctor_id", g.doctor_id).eq("date", _pgAddJ(g.date, 1)).eq("shift_type", "recup");
-  await pousserVersSheetAuto("garde PG");
-  if (calendrier) calendrier.refetchEvents();
-  chargerGardesPG();
+  if (!window.confirm("Supprimer cette garde déclarée ?")) return;
+  const { error } = await sb.from("preferences").delete().eq("id", g.id);
+  if (error) { window.alert("Erreur : " + error.message); return; }
+  chargerPreferences();
 }
 const _pgGardeAddBtn = document.getElementById("pg-garde-add");
 if (_pgGardeAddBtn) _pgGardeAddBtn.addEventListener("click", declarerGardePG);
@@ -1188,6 +1181,8 @@ function majCompteurConges() {
 function rendrePreferences(prefs) {
   prefsTbody.innerHTML = "";
 
+  // Les gardes PG (type garde_pg) sont affichées séparément dans « Mes gardes ».
+  prefs = (prefs || []).filter((p) => p.pref_type !== "garde_pg");
   const vide = prefs.length === 0;
   prefsTable.classList.toggle("hidden", vide);
   prefsEmpty.classList.toggle("hidden", !vide);
@@ -2322,12 +2317,14 @@ async function genererPgPourTrimestreAffiche() {
     const publishedShifts = pub || [];
 
     // 4) Génération PG (fonction pure).
-    const pgGardes = publishedShifts.filter((s) => s.shift_type === "garde_pg").map((s) => ({ doctor_id: s.doctor_id, date: s.date }));
+    // Gardes PG = préférences garde_pg (auto-déclarées par les PG, status approuve).
+    const pgGardes = (prefs || []).filter((p) => p.pref_type === "garde_pg")
+      .map((p) => ({ doctor_id: p.doctor_id, date: p.start_date }));
     const res = genererTrimestrePG({ annee, trimestre, medecins: medecins || [], preferences: prefs || [], periodes, publishedShifts, pgGardes });
 
     // 5) Écriture base.
     //   a) supprimer les anciens shifts PG du trimestre.
-    await sb.from("shifts").delete().in("shift_type", ["pg_jour", "pg_twe"]).gte("date", debutTrim).lte("date", finTrim); // garde_pg (auto-déclarées) préservées
+    await sb.from("shifts").delete().in("shift_type", ["pg_jour", "pg_twe", "garde_pg", "recup"]).gte("date", debutTrim).lte("date", finTrim); // re-matérialisés depuis les préférences ci-dessous
     //   b) réinitialiser les unités week-end posées sur les résidents (twe / garde_24h de week-end).
     const estWE = (d) => (typeof plEstWeekendOuFerie === "function") ? plEstWeekendOuFerie(d) : [0, 6].includes(new Date(d + "T00:00:00Z").getUTCDay());
     const weResIds = publishedShifts.filter((s) => (s.shift_type === "twe" || s.shift_type === "garde_24h") && estWE(s.date)).map((s) => s.id);
@@ -2338,6 +2335,16 @@ async function genererPgPourTrimestreAffiche() {
       schedule_id: (schedByMonth[parseInt(s.date.slice(5, 7), 10)] || {}).id,
     })).filter((l) => l.schedule_id);
     if (lignes.length) { const { error } = await sb.from("shifts").insert(lignes); if (error) throw error; }
+    //   c-bis) matérialiser les gardes PG déclarées : shift garde_pg le jour + recup le lendemain.
+    const gardeLignes = [];
+    pgGardes.forEach((g) => {
+      const sidG = (schedByMonth[parseInt(g.date.slice(5, 7), 10)] || {}).id;
+      if (sidG) gardeLignes.push({ date: g.date, shift_type: "garde_pg", poste: null, doctor_id: g.doctor_id, schedule_id: sidG });
+      const lend = _pgAddJ(g.date, 1);
+      const sidL = (schedByMonth[parseInt(lend.slice(5, 7), 10)] || {}).id;
+      if (sidL) gardeLignes.push({ date: lend, shift_type: "recup", poste: null, doctor_id: g.doctor_id, schedule_id: sidL });
+    });
+    if (gardeLignes.length) { const { error: eg } = await sb.from("shifts").insert(gardeLignes); if (eg) throw eg; }
     //   d) poser les unités week-end sur les résidents (groupées par poste).
     const parPoste = {}; (res.majResidents || []).forEach((m) => { (parPoste[m.poste] = parPoste[m.poste] || []).push(m.id); });
     for (const poste of Object.keys(parPoste)) { await sb.from("shifts").update({ poste }).in("id", parPoste[poste]); }
@@ -3751,6 +3758,62 @@ async function chargerDemandes() {
 
   // Compteurs de congés par médecin (vue admin).
   chargerCompteursConges();
+  chargerCompteursCongesPG();
+}
+
+/* COMPTEURS PG / FELLOW — vue ADMIN. Quota par TRIMESTRE CIVIL du mois affiché
+   (PG ULB 10 j ouvrés / Fellow 20 j ; congé + recherche clinique combinés). */
+async function chargerCompteursCongesPG() {
+  const tbody = document.getElementById("conges-pg-tbody");
+  if (!tbody) return;
+  const table = document.getElementById("conges-pg-table");
+  const empty = document.getElementById("conges-pg-empty");
+  const titre = document.getElementById("conges-pg-titre");
+  // Trimestre civil du MOIS AFFICHÉ.
+  const refAff = (typeof calendrier !== "undefined" && calendrier && typeof calendrier.getDate === "function")
+    ? calendrier.getDate() : new Date();
+  const isoAff = refAff.getFullYear() + "-" + String(refAff.getMonth() + 1).padStart(2, "0") + "-15";
+  const tri = pgTrimBornes(isoAff);
+  const qNum = parseInt(tri.key.slice(-1)) + 1;
+  const triLisible = "T" + qNum + " " + tri.key.slice(0, 4);
+  if (titre) titre.textContent = "Compteurs PG / Fellow — " + triLisible;
+
+  const { data: docs, error: e1 } = await sb.from("doctors")
+    .select("id, name, pg_type").eq("grade", "pg").order("name", { ascending: true });
+  if (e1) { console.error("Compteurs PG :", e1); return; }
+  const { data: prefs, error: e2 } = await sb.from("preferences")
+    .select("doctor_id, start_date, end_date, pref_type, status")
+    .neq("status", "refuse")
+    .lte("start_date", tri.end).gte("end_date", tri.start);
+  if (e2) { console.error("Compteurs PG :", e2); return; }
+
+  // Jours ouvrés de congé (catégorie reconnue) dans les bornes du trimestre, par PG.
+  const conso = {};
+  (prefs || []).forEach((p) => {
+    if (!categorieConge(p.pref_type)) return; // garde_pg, indispo… non comptés
+    const d1 = p.start_date > tri.start ? p.start_date : tri.start;
+    const d2 = p.end_date   < tri.end   ? p.end_date   : tri.end;
+    conso[p.doctor_id] = (conso[p.doctor_id] || 0) + pgJoursOuvres(d1, d2);
+  });
+
+  tbody.innerHTML = "";
+  const liste = docs || [];
+  if (table) table.classList.toggle("hidden", liste.length === 0);
+  if (empty) empty.classList.toggle("hidden", liste.length > 0);
+  liste.forEach((d) => {
+    const fellow = d.pg_type === "fellow";
+    const quota = fellow ? PG_CONGE_TRIM_FELLOW : PG_CONGE_TRIM_ULB;
+    const used = conso[d.id] || 0;
+    const reste = Math.max(0, quota - used);
+    const tr = document.createElement("tr");
+    [d.name || "?", fellow ? "Fellow" : "PG ULB", triLisible, String(used), String(quota), reste + " j"]
+      .forEach((v, i) => {
+        const td = document.createElement("td"); td.textContent = v;
+        if (i === 3 && used > quota) { td.className = "depasse"; td.title = "Quota dépassé"; }
+        tr.appendChild(td);
+      });
+    tbody.appendChild(tr);
+  });
 }
 
 /* COMPTEURS DE CONGÉS — vue ADMIN (révision 2026-06-13) : consommation des
@@ -3773,6 +3836,7 @@ async function chargerCompteursConges() {
   const { data: docs, error: e1 } = await sb.from("doctors")
     .select("id, name, role, fte, contract_start, contract_end, quota_conge_annuel, quota_conge_extralegal, quota_conge_scientifique")
     .neq("role", "admin")
+    .neq("grade", "pg")
     .order("name", { ascending: true });
   if (e1) { console.error("Compteurs congés admin :", e1); return; }
   const { data: prefs, error: e2 } = await sb.from("preferences")
