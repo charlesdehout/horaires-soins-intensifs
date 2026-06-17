@@ -5162,8 +5162,12 @@ async function proposerRotation() {
   const stations = (typeof POSTES_JOUR !== "undefined" ? POSTES_JOUR : [])
     .map((p) => p.code).filter((c) => c !== "labo_choc");
 
+  // Rotation réservée aux Assistants spécialistes / Résidents (pas les PG/Fellows ni admins).
   const { data: meds, error: e1 } = await sb.from("doctors")
-    .select("id, name, grade, unite_reference").neq("role", "admin").order("name", { ascending: true });
+    .select("id, name, grade, unite_reference")
+    .neq("role", "admin")
+    .in("grade", ["resident", "assistant_specialiste"])
+    .order("name", { ascending: true });
   if (e1) { rotationMsg.textContent = "Erreur lecture médecins : " + e1.message; rotationMsg.className = "message error"; return; }
   rotationMedecins = meds || [];
 
@@ -5520,9 +5524,18 @@ async function echSchedulesPublies() {
 }
 
 async function echChargerDocteurs() {
-  const { data, error } = await sb.from("doctors").select("id, name, grade");
+  const { data, error } = await sb.from("doctors").select("id, name, grade, pg_type, role");
   if (error) throw error;
   echDocteurs = {}; (data || []).forEach((m) => { echDocteurs[m.id] = m; });
+}
+/* Catégorie d'échange : "clin" (résident/AS), "pg" (PG/Fellow) ou "autre" (admin).
+   Un résident/AS ne peut s'échanger qu'avec un résident/AS ; un PG avec un PG. */
+function echCategorie(doc) {
+  if (!doc) return "autre";
+  if (doc.role === "admin") return "autre";
+  if (doc.grade === "pg") return "pg";
+  if (doc.grade === "resident" || doc.grade === "assistant_specialiste") return "clin";
+  return "autre";
 }
 
 /* Charge en MÉMOIRE tout le planning PUBLIÉ (contexte de validerEchange) +
@@ -5734,8 +5747,9 @@ async function echAppliquerChanges(changes, shiftsContexte) {
       const { error } = await sb.from("shifts").delete().eq("id", c.id);
       if (error) throw error;
     } else {
-      const { error } = await sb.from("shifts").update({ doctor_id: c.doctor_id }).eq("id", c.id);
+      const { data: maj, error } = await sb.from("shifts").update({ doctor_id: c.doctor_id }).eq("id", c.id).select("id");
       if (error) throw error;
+      if (!maj || !maj.length) throw new Error("Mise à jour du shift refusée (droits insuffisants / RLS, ou shift introuvable — id=" + c.id + ").");
     }
   }
 }
@@ -5983,15 +5997,32 @@ async function echAdminCharger() {
       .select("id, date, shift_type, poste, doctor_id, schedule_id").in("schedule_id", pubIds);
     echAdminShifts = data || [];
   }
-  const opts = "<option value=''>— choisir —</option>" + Object.keys(echDocteurs)
-    .sort((a, b) => (echDocteurs[a].name || "").localeCompare(echDocteurs[b].name || ""))
-    .map((id) => "<option value='" + id + "'>" + ((echDocteurs[id].name) || id) + "</option>").join("");
-  ["echadm-a-med", "echadm-b-med"].forEach((id) => { const el = document.getElementById(id); if (el) el.innerHTML = opts; });
+  const idsClin = Object.keys(echDocteurs)
+    .filter((id) => echCategorie(echDocteurs[id]) !== "autre")
+    .sort((a, b) => (echDocteurs[a].name || "").localeCompare(echDocteurs[b].name || ""));
+  const aOpts = "<option value=''>— choisir —</option>" +
+    idsClin.map((id) => "<option value='" + id + "'>" + ((echDocteurs[id].name) || id) + "</option>").join("");
+  const _aEl = document.getElementById("echadm-a-med"); if (_aEl) _aEl.innerHTML = aOpts;
+  const _bEl = document.getElementById("echadm-b-med"); if (_bEl) _bEl.innerHTML = "<option value=''>— choisir d'abord le médecin A —</option>";
   ["echadm-a-shift", "echadm-b-shift"].forEach((id) => { const el = document.getElementById(id); if (el) { el.innerHTML = "<option value=''>—</option>"; el.disabled = true; } });
   const msg = document.getElementById("echadm-msg"); if (msg) msg.textContent = "";
 }
 function echAdminShiftsDe(docId) {
   return echAdminShifts.filter((s) => s.doctor_id === docId && s.date >= echAujourdhui() && ECH_GROUPES[s.shift_type]);
+}
+/* Remplit la liste « Médecin B » avec les médecins de MÊME catégorie que A
+   (résident/AS ↔ résident/AS, PG ↔ PG ; jamais de mélange, jamais d'admin). */
+function echAdminRemplirMedB() {
+  const aMed = document.getElementById("echadm-a-med");
+  const bEl = document.getElementById("echadm-b-med");
+  if (!aMed || !bEl) return;
+  const catA = echCategorie(echDocteurs[aMed.value]);
+  if (!aMed.value || catA === "autre") { bEl.innerHTML = "<option value=''>— choisir d'abord le médecin A —</option>"; return; }
+  const ids = Object.keys(echDocteurs)
+    .filter((id) => id !== aMed.value && echCategorie(echDocteurs[id]) === catA)
+    .sort((a, b) => (echDocteurs[a].name || "").localeCompare(echDocteurs[b].name || ""));
+  bEl.innerHTML = "<option value=''>— choisir —</option>" +
+    ids.map((id) => "<option value='" + id + "'>" + ((echDocteurs[id].name) || id) + "</option>").join("");
 }
 function echAdminRemplirShifts(medSelId, shiftSelId, nature) {
   const med = document.getElementById(medSelId).value;
@@ -6008,7 +6039,7 @@ const _echadmAShift = document.getElementById("echadm-a-shift");
 const _echadmBMed = document.getElementById("echadm-b-med");
 const _echadmBShift = document.getElementById("echadm-b-shift");
 const _echadmApply = document.getElementById("echadm-apply");
-if (_echadmAMed) _echadmAMed.addEventListener("change", () => { echAdminRemplirShifts("echadm-a-med", "echadm-a-shift"); if (_echadmBShift) { _echadmBShift.innerHTML = "<option value=''>—</option>"; _echadmBShift.disabled = true; } });
+if (_echadmAMed) _echadmAMed.addEventListener("change", () => { echAdminRemplirShifts("echadm-a-med", "echadm-a-shift"); echAdminRemplirMedB(); if (_echadmBShift) { _echadmBShift.innerHTML = "<option value=''>—</option>"; _echadmBShift.disabled = true; } });
 if (_echadmAShift) _echadmAShift.addEventListener("change", () => {
   const s = echAdminShifts.find((x) => String(x.id) === String(_echadmAShift.value));
   const nature = s ? ECH_GROUPES[s.shift_type] : null;
