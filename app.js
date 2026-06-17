@@ -591,8 +591,34 @@ async function chargerMedecins() {
     return;
   }
 
-  rendreTableau(data || []);
+  medecinsListe = data || [];
+  appliquerFiltreMedecins();
 }
+
+/* Filtre la liste des médecins par catégorie (sous-onglets). */
+let medecinsListe = [];
+let medFiltre = "tous";
+function medCategorie(med) {
+  // Admin détecté AVANT le grade : un admin pur porte un grade factice
+  // (assistant_specialiste) imposé par la contrainte NOT NULL.
+  if (med.role === "admin" || (med.admin_level && med.admin_level !== "aucun")) return "admin";
+  if (med.grade === "pg") return (med.pg_type === "fellow") ? "fellow" : "pg_ulb";
+  if (med.grade === "assistant_specialiste") return "as";
+  if (med.grade === "resident") return "resident";
+  return "autre"; // sans grade → visible seulement sous « Tous »
+}
+function appliquerFiltreMedecins() {
+  const liste = (medFiltre === "tous")
+    ? medecinsListe
+    : medecinsListe.filter((m) => medCategorie(m) === medFiltre);
+  rendreTableau(liste);
+}
+document.querySelectorAll("#med-filtres .vue-btn").forEach((b) =>
+  b.addEventListener("click", () => {
+    medFiltre = b.dataset.filtre;
+    document.querySelectorAll("#med-filtres .vue-btn").forEach((x) => x.classList.toggle("actif", x === b));
+    appliquerFiltreMedecins();
+  }));
 
 /* Construit les lignes du tableau */
 function rendreTableau(medecins) {
@@ -5879,6 +5905,12 @@ async function chargerEchangesAdmin() {
       no.type = "button"; no.textContent = "Refuser"; no.className = "mini danger";
       no.addEventListener("click", () => echAdminRefuserProposition(w));
       act.appendChild(ok); act.appendChild(no);
+    } else {
+      // Échange clôturé (accepté / refusé / annulé) → suppression de l'historique.
+      const del = document.createElement("button");
+      del.type = "button"; del.textContent = "Supprimer"; del.className = "mini danger";
+      del.addEventListener("click", () => echAdminSupprimer(w));
+      act.appendChild(del);
     }
     tr.appendChild(act);
     tbody.appendChild(tr);
@@ -5912,6 +5944,30 @@ async function echAdminRefuserProposition(swap) {
 
 const echAdminRefreshBtn = document.getElementById("ech-admin-refresh");
 if (echAdminRefreshBtn) echAdminRefreshBtn.addEventListener("click", chargerEchangesAdmin);
+
+/* Supprime un échange de l'historique (action admin, irréversible). */
+async function echAdminSupprimer(swap) {
+  if (!window.confirm("Supprimer définitivement cet échange de l'historique ?")) return;
+  const { error } = await sb.from("shift_swaps").delete().eq("id", swap.id);
+  if (error) { window.alert("Erreur : " + error.message); return; }
+  chargerEchangesAdmin();
+}
+/* Purge les échanges REFUSÉS et ANNULÉS. */
+const echSupprRefusesBtn = document.getElementById("ech-suppr-refuses");
+if (echSupprRefusesBtn) echSupprRefusesBtn.addEventListener("click", async () => {
+  if (!window.confirm("Supprimer tous les échanges REFUSÉS et ANNULÉS de l'historique ?")) return;
+  const { error } = await sb.from("shift_swaps").delete().in("status", ["refuse", "annule"]);
+  if (error) { window.alert("Erreur : " + error.message); return; }
+  chargerEchangesAdmin();
+});
+/* Efface TOUT l'historique des échanges (les shifts déjà échangés ne changent pas). */
+const echSupprToutBtn = document.getElementById("ech-suppr-tout");
+if (echSupprToutBtn) echSupprToutBtn.addEventListener("click", async () => {
+  if (!window.confirm("Tout effacer l'historique des échanges ?\n\nSupprime TOUS les échanges (y compris acceptés et en attente). Les shifts déjà échangés ne sont PAS modifiés. Action irréversible.")) return;
+  const { error } = await sb.from("shift_swaps").delete().gte("created_at", "1970-01-01");
+  if (error) { window.alert("Erreur : " + error.message); return; }
+  chargerEchangesAdmin();
+});
 
 /* ÉCHANGE ADMIN (création directe, appliqué immédiatement). Réutilise le moteur
    validerEchange + l'application des changes (échAppliquerChanges). */

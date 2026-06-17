@@ -75,10 +75,10 @@
       <!-- ===== Navigation par onglets (visibilité selon le rôle) ===== -->
       <nav id="tabs-nav" class="tabs">
         <button type="button" class="tab actif" data-tab="planning">Planning</button>
-        <button type="button" class="tab tab-admin hidden" data-tab="periodes">Congrès &amp; fermetures</button>
         <button type="button" class="tab tab-admin hidden" data-tab="medecins">Médecins</button>
         <button type="button" class="tab tab-admin hidden" data-tab="echanges-admin">Échanges</button>
-        <button type="button" class="tab tab-admin hidden" data-tab="conges-admin">Congés</button>
+        <button type="button" class="tab tab-admin hidden" data-tab="conges-admin">Congés et demandes</button>
+        <button type="button" class="tab tab-admin hidden" data-tab="periodes">Congrès, fermetures &amp; export</button>
         <button type="button" class="tab tab-doctor hidden" data-tab="prefs">Mes préférences</button>
         <button type="button" class="tab tab-doctor hidden" data-tab="echanges">Échanges
           <span id="tab-badge-echanges" class="tab-badge hidden"></span></button>
@@ -545,6 +545,16 @@
           <p id="doctor-form-msg" class="message"></p>
         </form>
 
+        <!-- Sous-onglets de filtrage par catégorie -->
+        <div class="vue-toggle" id="med-filtres" style="margin-bottom:1rem;">
+          <button type="button" class="vue-btn actif" data-filtre="tous">Tous</button>
+          <button type="button" class="vue-btn" data-filtre="pg_ulb">PG ULB</button>
+          <button type="button" class="vue-btn" data-filtre="fellow">Fellows</button>
+          <button type="button" class="vue-btn" data-filtre="as">Assistants spécialistes</button>
+          <button type="button" class="vue-btn" data-filtre="resident">Résidents</button>
+          <button type="button" class="vue-btn" data-filtre="admin">Admins</button>
+        </div>
+
         <!-- Tableau des médecins -->
         <table id="doctors-table" class="data-table">
           <thead>
@@ -604,7 +614,13 @@
           </div>
           <p id="echadm-msg" class="message"></p>
 
-          <h3 class="sous-titre">Historique</h3>
+          <div class="zone-header">
+            <h3 class="sous-titre" style="margin:0;">Historique</h3>
+            <span style="display:flex;gap:0.4rem;flex-wrap:wrap;">
+              <button type="button" id="ech-suppr-refuses" class="mini danger">Supprimer refusés &amp; annulés</button>
+              <button type="button" id="ech-suppr-tout" class="mini danger">Tout effacer l'historique</button>
+            </span>
+          </div>
           <table id="ech-admin-table" class="data-table">
             <thead>
               <tr><th>Date</th><th>Demandeur</th><th>Propose</th><th>Collègue</th><th>Contre</th><th>Note</th><th>Statut</th><th>Décidé le</th><th>Actions</th></tr>
