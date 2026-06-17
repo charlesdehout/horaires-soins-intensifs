@@ -407,6 +407,11 @@ function quotaBase(med, type) {
    aux « Compteurs de congés » de l'équipe (révision 2026-06-14). Année académique
    en cours (1 oct → 30 sep). */
 function quotasResume(med) {
+  // PG / Fellow : quota par TRIMESTRE civil (10 j ULB / 20 j Fellow), pas annuel.
+  if (med.grade === "pg") {
+    const lim = (med.pg_type === "fellow") ? PG_CONGE_TRIM_FELLOW : PG_CONGE_TRIM_ULB;
+    return lim + " j/trim";
+  }
   // Quota = base × quotité (FTE) uniquement — plus de proration par dates de
   // contrat (jugée trompeuse pour les temps partiels permanents).
   const f = fteDe(med);
@@ -2679,19 +2684,19 @@ async function construireVueSemaine() {
   const P = function(codes) { return function(s) { return codes.includes(s.shift_type); }; };
   const lignes = [
     { label: "USI 1",             cls: "semaine-row-station", code: "usi1",
-      get: function(d) { return nomsS(d, function(s) { return s.poste === "usi1" && (s.shift_type === "jour" || s.shift_type === "garde_24h"); }); } },
+      get: function(d) { return nomsS(d, function(s) { return s.poste === "usi1" && (s.shift_type === "jour" || s.shift_type === "garde_24h" || s.shift_type === "pg_jour"); }); } },
     { label: "USI 2",             cls: "semaine-row-station", code: "usi2",
-      get: function(d) { return nomsS(d, function(s) { return s.poste === "usi2" && (s.shift_type === "jour" || s.shift_type === "garde_24h"); }); } },
+      get: function(d) { return nomsS(d, function(s) { return s.poste === "usi2" && (s.shift_type === "jour" || s.shift_type === "garde_24h" || s.shift_type === "pg_jour"); }); } },
     { label: "USI 3",             cls: "semaine-row-station", code: "usi3",
-      get: function(d) { return nomsS(d, function(s) { return s.poste === "usi3" && (s.shift_type === "jour" || s.shift_type === "garde_24h"); }); } },
+      get: function(d) { return nomsS(d, function(s) { return s.poste === "usi3" && (s.shift_type === "jour" || s.shift_type === "garde_24h" || s.shift_type === "pg_jour"); }); } },
     { label: "USI 4",             cls: "semaine-row-station", code: "usi4",
-      get: function(d) { return nomsS(d, function(s) { return s.poste === "usi4" && (s.shift_type === "jour" || s.shift_type === "garde_24h"); }); } },
+      get: function(d) { return nomsS(d, function(s) { return s.poste === "usi4" && (s.shift_type === "jour" || s.shift_type === "garde_24h" || s.shift_type === "pg_jour"); }); } },
     { label: "USI 5",             cls: "semaine-row-station", code: "usi5",
-      get: function(d) { return nomsS(d, function(s) { return s.poste === "usi5" && (s.shift_type === "jour" || s.shift_type === "garde_24h"); }); } },
+      get: function(d) { return nomsS(d, function(s) { return s.poste === "usi5" && (s.shift_type === "jour" || s.shift_type === "garde_24h" || s.shift_type === "pg_jour"); }); } },
     { label: "USI Bordet",        cls: "semaine-row-station", code: "bordet",
-      get: function(d) { return nomsS(d, function(s) { return s.poste === "bordet" && (s.shift_type === "jour" || s.shift_type === "garde_24h"); }); } },
+      get: function(d) { return nomsS(d, function(s) { return s.poste === "bordet" && (s.shift_type === "jour" || s.shift_type === "garde_24h" || s.shift_type === "pg_jour"); }); } },
     { label: "Labo de choc",      cls: "semaine-row-station", code: "labo_choc", estLabo: true,
-      get: function(d) { return nomsS(d, function(s) { return s.poste === "labo_choc" && (s.shift_type === "jour" || s.shift_type === "garde_24h"); }); } },
+      get: function(d) { return nomsS(d, function(s) { return s.poste === "labo_choc" && (s.shift_type === "jour" || s.shift_type === "garde_24h" || s.shift_type === "pg_jour"); }); } },
     { label: "Garde de nuit (17h–9h)", cls: "semaine-row-garde",
       get: function(d) { return nomsS(d, P(["garde_nuit"])); } },
     { label: "Garde 24h",              cls: "semaine-row-garde",
@@ -2700,6 +2705,8 @@ async function construireVueSemaine() {
       get: function(d) { return nomsS(d, P(["twe"])); } },
     { label: "Gardes PG",              cls: "semaine-row-garde",
       get: function(d) { return nomsS(d, P(["garde_pg"])); } },
+    { label: "Tour PG (WE)",           cls: "semaine-row-garde",
+      get: function(d) { return nomsS(d, P(["pg_twe"])); } },
     { label: "Off-clinic",             cls: "semaine-row-off",
       get: function(d) { return nomsS(d, P(["off_clinic"])); } },
     { label: "Récupération",           cls: "semaine-row-repos",
@@ -5150,6 +5157,7 @@ function basculerOnglet(nom) {
   // sa taille quand on revient sur l'onglet Planning.
   if (nom === "planning" && calendrier) calendrier.updateSize();
   if (nom === "echanges-admin" && typeof chargerEchangesAdmin === "function") { chargerEchangesAdmin(); if (typeof echAdminCharger === "function") echAdminCharger(); }
+  if (nom === "echanges" && typeof initEchanges === "function") { initEchanges(); }
   if (nom === "conges-admin" && typeof cgInit === "function") { cgInit(); chargerDemandes(); }
 }
 
