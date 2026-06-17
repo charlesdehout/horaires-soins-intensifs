@@ -1188,6 +1188,8 @@ function genererPlanning(opts) {
 
   // Minimum d'heures hebdomadaire (doublures d'unités si nécessaire).
   plCompleterMinimumHeures(sortie, medecins, etat, plDatesDuMois(annee, mois));
+  // Équité des TOURS week-end isolés (déplace uniquement des twe, pas les gardes).
+  plEquilibrerTours(sortie, medecins, etat);
   // Correction finale avant brouillon : écart d'heures resserré au maximum.
   plReequilibrerHeures(sortie, medecins, etat);
 
@@ -1429,6 +1431,53 @@ function plCompleterMinimumHeures(sortie, medecins, etat, dates) {
    unité cette semaine-là (continuité clinique préservée), et le donneur reste
    au-dessus de son minimum cumulé. À appeler en FIN de génération (après le
    plancher d'heures), avant les stats. Mute sortie + etat.heures. */
+/* RÉÉQUILIBRAGE DES TOURS WEEK-END ISOLÉS (twe) — passe finale (plancher/équité).
+   Déplace des WEEK-ENDS de tour des médecins SUR-représentés vers des médecins
+   SOUS-représentés QUI SONT LIBRES ce week-end. Ne touche JAMAIS aux gardes
+   (seuls des shifts 'twe' sont réaffectés) ni au binôme (sam+dim ensemble).
+   Vise un écart ≤ 1 week-end de tour entre éligibles. Scope = la période passée
+   dans `sortie` (mois pour genererPlanning, trimestre pour genererTrimestre). */
+function plTourPossible(m, date, sortie, etat) {
+  if (!plDispoStatique(m, date, etat.indispo[m.id], etat.dispoDeclaree[m.id])) return false;
+  if (plEstNouvelEngage(m, date, etat.debutPeriode)) return false; // jamais le week-end
+  // Aucun autre shift ce jour-là (garde, repos, absence, tour déjà posé…).
+  return !sortie.some((s) => s.doctor_id === m.id && s.date === date);
+}
+function plEquilibrerTours(sortie, medecins, etat) {
+  const byId = {}; medecins.forEach((m) => { byId[m.id] = m; });
+  const eligibles = medecins.filter((m) => {
+    const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
+    return jt.includes(6) || jt.includes(7);
+  });
+  if (eligibles.length < 2) return;
+  const wkOf = {}; eligibles.forEach((m) => { wkOf[m.id] = new Set(); });
+  sortie.forEach((s) => {
+    if (s.shift_type !== "twe") return;
+    const wk = plWeekendKey(s.date);
+    if (wk && wkOf[s.doctor_id]) wkOf[s.doctor_id].add(wk);
+  });
+  const count = (id) => (wkOf[id] ? wkOf[id].size : 0);
+  let guard = 0;
+  while (guard++ < 300) {
+    const ids = eligibles.map((m) => m.id).sort((a, b) => count(b) - count(a));
+    const hi = ids[0];
+    if (count(hi) - count(ids[ids.length - 1]) <= 1) break; // équilibré (écart ≤ 1)
+    let fait = false;
+    for (const wk of Array.from(wkOf[hi])) {
+      const dts = sortie.filter((s) => s.shift_type === "twe" && s.doctor_id === hi && plWeekendKey(s.date) === wk).map((s) => s.date);
+      if (!dts.length) continue;
+      const cand = ids.filter((id) => count(id) < count(hi) - 1 && dts.every((d) => plTourPossible(byId[id], d, sortie, etat)));
+      if (!cand.length) continue;
+      cand.sort((a, b) => count(a) - count(b));
+      const u = cand[0];
+      dts.forEach((d) => { const sh = sortie.find((x) => x.shift_type === "twe" && x.doctor_id === hi && x.date === d); if (sh) sh.doctor_id = u; });
+      wkOf[hi].delete(wk); wkOf[u].add(wk);
+      fait = true; break;
+    }
+    if (!fait) break; // plus aucun transfert valable
+  }
+}
+
 function plReequilibrerHeures(sortie, medecins, etat) {
   const eq = plEquite();
   const seuil = (typeof eq.ecart_heures_max === "number") ? eq.ecart_heures_max : 12;
@@ -1686,6 +1735,8 @@ function genererTrimestre(opts) {
     moisTrim.forEach((mois) => { datesTrim = datesTrim.concat(plDatesDuMois(annee, mois)); });
     plCompleterMinimumHeures(sortie, medecins, etat, datesTrim);
   }
+  // Équité des TOURS week-end isolés (déplace uniquement des twe, pas les gardes).
+  plEquilibrerTours(sortie, medecins, etat);
   // Correction finale avant brouillon : écart d'heures resserré au maximum.
   plReequilibrerHeures(sortie, medecins, etat);
 
