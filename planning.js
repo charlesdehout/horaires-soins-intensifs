@@ -2830,15 +2830,15 @@ function genererTrimestrePG(opts) {
     const tousDisposFn = (m) => joursWE.every((d) => dispoCe(m, d)) && pasIndispoWE(m);
     let candidats = pgs.filter(tousDisposFn).sort((a, b) => weekendsDone[a.id] - weekendsDone[b.id]);
     // Fallback 1 : ignorer indispoWE si pas assez de candidats.
-    if (candidats.length < 2)
+    if (candidats.length < 3)
       candidats = pgs.filter((m) => joursWE.every((d) => dispoCe(m, d))).sort((a, b) => weekendsDone[a.id] - weekendsDone[b.id]);
     // Fallback 2 : dispos au moins le premier jour.
-    if (candidats.length < 2)
+    if (candidats.length < 3)
       candidats = pgs.filter((m) => dispoCe(m, joursWE[0])).sort((a, b) => weekendsDone[a.id] - weekendsDone[b.id]);
-    const choisis = candidats.slice(0, 2);
+    const choisis = candidats.slice(0, 3); // 3 PG au tour week-end (nouvelle règle)
     choisis.forEach((m) => { weekendsDone[m.id]++; });
     pgParSemaine[lk] = choisis;
-    if (choisis.length < 2) conflits.push({ date: joursWE[0], message: "Tour PG week-end : " + choisis.length + "/2 PG disponibles pour la semaine du " + lk + "." });
+    if (choisis.length < 3) conflits.push({ date: joursWE[0], message: "Tour PG week-end : " + choisis.length + "/3 PG disponibles pour la semaine du " + lk + "." });
   });
 
   dates.forEach((date) => {
@@ -2850,14 +2850,18 @@ function genererTrimestrePG(opts) {
         if (u) sortie.push({ date, shift_type: "pg_jour", poste: u, doctor_id: m.id });
       });
     } else {
-      // WEEK-END : les PG choisis pour ce weekend font sam ET dim ensemble.
+      // WEEK-END : les PG choisis pour ce weekend font sam ET dim ensemble,
+      // chacun sur une unité DISTINCTE (pas de doublure entre PG).
       const membres = (pgParSemaine[plLundiDe(date)] || []).filter((m) => dispoCe(m, date));
+      const prisPG = new Set();
       membres.forEach((m) => {
-        const u = uniteDe(pgs.indexOf(m), plLundiDe(date));
+        let u = uniteDe(pgs.indexOf(m), plLundiDe(date));
+        if (!u || prisPG.has(u)) u = units.find((x) => !prisPG.has(x)) || u; // évite la doublure PG
+        if (u) prisPG.add(u);
         sortie.push({ date, shift_type: "pg_twe", poste: u, doctor_id: m.id });
         twe[m.id]++;
       });
-      if (membres.length < 2) conflits.push({ date, message: "Tour PG week-end/férié : " + membres.length + "/2 PG disponibles le " + date + "." });
+      if (membres.length < 3) conflits.push({ date, message: "Tour PG week-end/férié : " + membres.length + "/3 PG disponibles le " + date + "." });
     }
   });
 
@@ -2894,6 +2898,9 @@ function genererTrimestrePG(opts) {
       pris.add(choix);
       majResidents.push({ id: s.id, poste: choix });
     });
+    // COUVERTURE : toutes les unités ouvertes (hors labo) doivent être tenues.
+    const vides = units.filter((u) => !pris.has(u));
+    if (vides.length) conflits.push({ date, message: "Week-end : unité(s) non couverte(s) le " + date + " : " + vides.join(", ") + " (effectif/PG insuffisant)." });
   });
 
   const stats = pgs.map((m) => {

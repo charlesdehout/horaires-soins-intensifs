@@ -1460,14 +1460,14 @@ test("PG : continuité 3 semaines (même unité sur un bloc de 3 sem.)", () => {
   }
 });
 
-test("PG week-end/férié : 2 PG au tour (pg_twe, 6 h)", () => {
+test("PG week-end/férié : 3 PG au tour (pg_twe, 6 h)", () => {
   const r = genererTrimestrePG({ annee: 2026, trimestre: 3, medecins: equipePG(3), preferences: [] });
   const dow = (d) => { const j = new Date(d + "T00:00:00Z").getUTCDay(); return j === 0 ? 7 : j; };
   const parDate = {};
   r.shifts.filter((s) => s.shift_type === "pg_twe").forEach((s) => { parDate[s.date] = (parDate[s.date] || 0) + 1; });
   const we = Object.keys(parDate).filter((d) => dow(d) >= 6);
   assert(we.length > 0, "aucun tour PG week-end");
-  assert(we.every((d) => parDate[d] === 2), "tour PG week-end ≠ 2 PG un jour");
+  assert(we.every((d) => parDate[d] === 3), "tour PG week-end ≠ 3 PG un jour (nouvelle règle)");
 });
 
 test("PG : un congé bloque la pose ce jour-là", () => {
