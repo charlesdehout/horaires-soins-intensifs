@@ -1495,7 +1495,24 @@ function plReequilibrerHeures(sortie, medecins, etat) {
   // heures brutes (équité réelle), pas autant que ses pairs sans congé.
   const fteR = {}; medecins.forEach((m) => { fteR[m.id] = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1; });
   const credit = (id) => (etat.heuresEquite && etat.heuresEquite[id]) || 0;
-  const hNorm = (id) => (heures[id] + credit(id)) / fteR[id];
+  // CALIBRATION SUR LA MOY H/SEM (révision) : on équilibre l'ÉCART À LA CIBLE
+  // EFFECTIVE de chaque médecin = (cible hebdo) × (semaines de présence effective,
+  // congés retirés du dénominateur). Un médecin en congé ou à temps partiel est
+  // ainsi jugé sur son INTENSITÉ (h par semaine présente), pas sur ses heures
+  // brutes. En plein temps sans congé, cibleEff est identique pour tous → revient
+  // à équilibrer les heures brutes (les tests d'équité existants restent valides).
+  let _mn = null, _mx = null;
+  sortie.forEach((s) => { if (_mn === null || s.date < _mn) _mn = s.date; if (_mx === null || s.date > _mx) _mx = s.date; });
+  const semainesPeriode = _mn ? ((Date.parse(_mx) - Date.parse(_mn)) / 86400000 / 7 + 1 / 7) : 4.345;
+  const cibleHebdoDe = (m) => (typeof m.weekly_hours_target === "number" && m.weekly_hours_target > 0) ? m.weekly_hours_target : (PL_REF_HEBDO * fteR[m.id]);
+  const cibleEff = {};
+  medecins.forEach((m) => {
+    const jtLen = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles.length : 7;
+    const jConge = credit(m.id) / PL_HEURES.jour;            // jours de congé (crédités)
+    const sEff = Math.max(semainesPeriode - jConge / jtLen, 0.2);
+    cibleEff[m.id] = cibleHebdoDe(m) * sEff;
+  });
+  const hNorm = (id) => heures[id] - (cibleEff[id] || 0);     // écart (h) à la cible effective
   sortie.forEach((s) => {
     if (heures[s.doctor_id] === undefined) return;
     heures[s.doctor_id] += H(s.shift_type);
