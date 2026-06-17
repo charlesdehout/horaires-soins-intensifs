@@ -1538,7 +1538,7 @@ const SHIFT_CONFIG = {
   // Shifts PG (postgradués) — générés par genererTrimestrePG (Module 28).
   pg_jour:    { label: "PG – Journée",      court: "PG",   couleur: "#0891b2", debut: "08:45", fin: "17:15", lendemain: false, heures: 8.5 },
   pg_twe:     { label: "PG – Tour WE",      court: "PG-WE",couleur: "#0e7490", debut: "08:00", fin: "14:00", lendemain: false, heures: 6 },
-  garde_pg:   { label: "Garde PG (24h)",    court: "GPG",  couleur: "#b45309", debut: "08:00", fin: "08:00", lendemain: true,  heures: 24 },
+  garde_pg:   { label: "Garde PG (soir)",   court: "GPG",  couleur: "#b45309", debut: "17:15", fin: "08:00", lendemain: true,  heures: 15.5 }, // journée USI (pg_jour 8,5 h) + garde 15,5 h = 24 h
   // Absences / repos posables par l'admin (0 h, sans station, affichées en
   // pastille « journée entière »). Les congés posés ici ne décomptent pas les
   // quotas (ceux-ci restent gérés via les préférences du médecin).

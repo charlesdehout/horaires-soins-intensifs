@@ -1509,13 +1509,14 @@ test("PG week-end : unités attribuées aux résidents (PG prioritaires, réf./u
   assert.strictEqual(maj["t3"], "usi5", "R3 (unité connue usi5) → " + maj["t3"]);
 });
 
-test("PG garde auto-encodée : bloque la pose le jour de garde ET le lendemain (récup)", () => {
+test("PG garde auto-encodée : le PG TRAVAILLE le jour de garde (USI), seul le lendemain (récup) est bloqué", () => {
   const pgs = [{ id: "pg1", grade: "pg", name: "PG1", jours_travailles: [1,2,3,4,5,6,7], statut: "dependant" }];
   const r = genererTrimestrePG({ annee: 2026, trimestre: 3, medecins: pgs, preferences: [], pgGardes: [{ doctor_id: "pg1", date: "2026-07-07" }] });
   const j07 = r.shifts.filter((s) => s.doctor_id === "pg1" && s.date === "2026-07-07");
   const j08 = r.shifts.filter((s) => s.doctor_id === "pg1" && s.date === "2026-07-08");
-  assert.strictEqual(j07.length, 0, "pg_jour posé le jour de garde");
-  assert.strictEqual(j08.length, 0, "pg_jour posé le lendemain (récup) de garde");
+  assert.strictEqual(j07.length, 1, "le PG doit être en unité le jour de sa garde (journée USI puis garde le soir)");
+  assert.strictEqual(j07[0].shift_type, "pg_jour", "le jour de garde = pg_jour (USI)");
+  assert.strictEqual(j08.length, 0, "lendemain de garde = récupération (aucune pose)");
 });
 
 test("génération RÉSIDENTS : un PG n'est jamais planifié (exclu du moteur résident)", () => {

@@ -71,7 +71,7 @@ function plSansContinuite(code) { return PL_STATIONS_SANS_CONTINUITE.indexOf(cod
 const PL_VERSION = "v2026.06.16-4";
 
 /* Durées réelles (h) par type de shift — doivent coller à SHIFT_CONFIG (app.js). */
-const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24, pg_jour: 8.5, pg_twe: 6, garde_pg: 24 };
+const PL_HEURES = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24, pg_jour: 8.5, pg_twe: 6, garde_pg: 15.5 }; // garde_pg = part SOIR/NUIT (la journée USI = pg_jour 8,5 h ; total jour de garde = 24 h)
 
 /* Off-clinic (§9) : journée de recherche CRÉDITÉE comme heures de travail
    (équivalent d'une journée), mais sans station ni repos généré. */
@@ -2444,10 +2444,20 @@ function validerEquite(shifts, medecins, preferences) {
    d'une liste de shifts. Pur, réutilisé par le panneau admin (Module 6). */
 function compterParMedecin(shifts) {
   const stats = {}; // doctorId -> { heures, gardes, weekends, tours, offs }
+  // Jour de garde PG = 24 h FORFAITAIRES (journée USI ou tour de ce jour INCLUS) :
+  // on les compte une seule fois (sur le shift garde_pg) pour ne jamais dépasser 24 h.
+  const gardePGJours = new Set();
+  (shifts || []).forEach((s) => { if (s.shift_type === "garde_pg") gardePGJours.add(s.doctor_id + "|" + s.date); });
   (shifts || []).forEach((s) => {
     const st = stats[s.doctor_id] ||
       (stats[s.doctor_id] = { heures: 0, gardes: 0, weekends: 0, tours: 0, offs: 0, repos: 0, reposGarde: 0, joursSemaine: 0 });
-    st.heures += PL_HEURES[s.shift_type] || 0;
+    if (gardePGJours.has(s.doctor_id + "|" + s.date)) {
+      // Jour de garde PG : 24 h, portées par le shift garde_pg ; pg_jour/pg_twe de
+      // ce jour n'ajoutent rien (déjà inclus dans les 24 h).
+      st.heures += (s.shift_type === "garde_pg") ? 24 : 0;
+    } else {
+      st.heures += PL_HEURES[s.shift_type] || 0;
+    }
     // Off-clinic crédité comme heures de travail (§9).
     if (s.shift_type === "off") { st.heures += PL_HEURES_OFFCLINIC; st.offs++; }
     if (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h") st.gardes++;
@@ -2720,11 +2730,13 @@ function genererTrimestrePG(opts) {
     (indispo[p.doctor_id] = indispo[p.doctor_id] || new Set());
     let d = p.start_date; while (d <= p.end_date) { indispo[p.doctor_id].add(d); d = plAdd(d, 1); }
   });
-  // Gardes PG auto-encodées : bloquent le jour de garde ET le lendemain (repos).
+  // Gardes PG auto-encodées : la garde est le SOIR (le PG fait sa journée à l'USI
+  // puis une garde ailleurs dans l'hôpital → 24 h). On NE bloque donc PAS le jour
+  // de garde (il travaille en unité), seulement le LENDEMAIN (récupération).
   const gardeBloc = {};
   (opts.pgGardes || []).forEach((g) => {
     (gardeBloc[g.doctor_id] = gardeBloc[g.doctor_id] || new Set());
-    gardeBloc[g.doctor_id].add(g.date); gardeBloc[g.doctor_id].add(plAdd(g.date, 1));
+    gardeBloc[g.doctor_id].add(plAdd(g.date, 1));
   });
 
   const jtOk = (m, d) => ((m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1,2,3,4,5,6,7]).includes(plJourSemaine(d));
