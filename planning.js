@@ -1507,7 +1507,7 @@ function plReequilibrerHeures(sortie, medecins, etat) {
     }
   });
   const byId = {}; medecins.forEach((m) => { byId[m.id] = m; });
-  const peutRecevoirJour = (m, s) => {
+  const peutRecevoirJour = (m, s, relax) => {
     const d = s.date;
     if (plEstWeekendOuFerie(d)) return false;
     // Jours de CONGRÈS exclus : leur équité propre (jours de congrès
@@ -1535,7 +1535,7 @@ function plReequilibrerHeures(sortie, medecins, etat) {
       // CONTINUITÉ (révision 2026-06-16) : le rééquilibrage horaire ne transfère
       // une journée que vers un médecin tenant DÉJÀ cette unité cette semaine
       // (consolidation) → il n'ajoute plus de « visage » supplémentaire sur l'unité.
-      if (!(u && u.has(s.poste))) return false;
+      if (!relax && !(u && u.has(s.poste))) return false; // strict : déjà sur l'unité (sauf 2e passe gardée)
     }
     return true;
   };
@@ -1564,6 +1564,48 @@ function plReequilibrerHeures(sortie, medecins, etat) {
             (unitesSem[bas.id][lk] = unitesSem[bas.id][lk] || new Set()).add(s.poste);
           }
           heures[haut.id] -= PL_HEURES.jour; heures[bas.id] += PL_HEURES.jour;
+          etat.heures[haut.id] -= PL_HEURES.jour; etat.heures[bas.id] += PL_HEURES.jour;
+          s.doctor_id = bas.id;
+          bouge = true; break;
+        }
+      }
+    }
+    if (!bouge) break;
+  }
+
+  // 2e PASSE — continuité ASSOUPLIE mais GARDÉE : autorise un transfert
+  // hors-continuité (un médecin SANS unité cette semaine peut prendre la station)
+  // UNIQUEMENT s'il RÉDUIT l'écart global d'heures normalisées. Aucune régression
+  // possible (on annule tout transfert qui n'améliore pas l'écart max-min).
+  const ecartGlobal = () => {
+    let mx = -Infinity, mn = Infinity;
+    actifs.forEach((m) => { const v = hNorm(m.id); if (v > mx) mx = v; if (v < mn) mn = v; });
+    return mx - mn;
+  };
+  for (let iter = 0; iter < 150; iter++) {
+    const tri = actifs.slice().sort((a, b) => hNorm(b.id) - hNorm(a.id));
+    if (hNorm(tri[0].id) - hNorm(tri[tri.length - 1].id) <= seuil) break;
+    let bouge = false;
+    for (let hi = 0; hi < tri.length && !bouge; hi++) {
+      for (let bi = tri.length - 1; bi > hi && !bouge; bi--) {
+        const haut = tri[hi], bas = tri[bi];
+        if (hNorm(haut.id) - hNorm(bas.id) <= seuil) break;
+        for (const s of sortie) {
+          if (s.doctor_id !== haut.id || s.shift_type !== "jour") continue;
+          if (etat.attenduMin && heures[haut.id] - PL_HEURES.jour < (etat.attenduMin[haut.id] || 0)) break;
+          if (!peutRecevoirJour(bas, s, true)) continue; // continuité ASSOUPLIE
+          const avant = ecartGlobal();
+          heures[haut.id] -= PL_HEURES.jour; heures[bas.id] += PL_HEURES.jour; // simulation
+          if (ecartGlobal() >= avant - 1e-9) { // pas d'amélioration → on annule
+            heures[haut.id] += PL_HEURES.jour; heures[bas.id] -= PL_HEURES.jour;
+            continue;
+          }
+          // Transfert validé : on applique au reste de l'état.
+          occupe[haut.id].delete(s.date); occupe[bas.id].add(s.date);
+          const lk = plLundiDe(s.date);
+          hSem[haut.id][lk] = (hSem[haut.id][lk] || 0) - PL_HEURES.jour;
+          hSem[bas.id][lk] = (hSem[bas.id][lk] || 0) + PL_HEURES.jour;
+          if (s.poste) { const uh = unitesSem[haut.id][lk]; if (uh) uh.delete(s.poste); (unitesSem[bas.id][lk] = unitesSem[bas.id][lk] || new Set()).add(s.poste); }
           etat.heures[haut.id] -= PL_HEURES.jour; etat.heures[bas.id] += PL_HEURES.jour;
           s.doctor_id = bas.id;
           bouge = true; break;
