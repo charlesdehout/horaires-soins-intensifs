@@ -131,21 +131,24 @@ function genererTrimestreCouple(opts) {
     poserWE(sat, thu);   // samedi couplé jeudi
     poserWE(sun, fri);   // dimanche couplé vendredi
 
-    // Tours : 3 sam + 3 dim, binôme (mêmes personnes), hors gardes du week-end.
+    // Tour : les 2 gardes 24h font DÉJÀ le tour (présentes). On ne fixe donc que
+    // les tours SUPPLÉMENTAIRES = twe_weekend - gardes_weekend (1 par défaut),
+    // binôme sam+dim, hors gardes du week-end.
     const tourBase = medecins.filter((m) =>
       plDispo(m, sat, etat) && plDispo(m, sun, etat) &&
       !plEstNouvelEngage(m, sat, etat.debutPeriode));
     let tourPool = tourBase.filter((m) => plPeutWeekend(m.id, sat, etat));
     if (tourPool.length < couv.twe_weekend) tourPool = tourBase;
     const triT = tourPool.sort((a, b) => (etat._nbTours[a.id] - etat._nbTours[b.id]) || (plNormGardeCpl(a.id, etat) - plNormGardeCpl(b.id, etat)));
-    const tw = triT.slice(0, couv.twe_weekend);
+    const nbTourSeul = Math.max(0, couv.twe_weekend - couv.gardes_weekend);
+    const tw = triT.slice(0, nbTourSeul);
     tw.forEach((m) => {
       plAffecter(sortie, etat, sat, "twe", m.id, null);
       plAffecter(sortie, etat, sun, "twe", m.id, null);
       marquerWeekend(m.id, sat);
       etat._nbTours[m.id] += 1; // 1 week-end de tour (binôme = 1)
     });
-    if (tw.length < couv.twe_weekend) conflits.push({ date: sat, message: "Tours : " + tw.length + "/" + couv.twe_weekend + "." });
+    if (tw.length < nbTourSeul) conflits.push({ date: sat, message: "Tour : " + tw.length + "/" + nbTourSeul + " (en plus des 2 gardes 24h qui font le tour)." });
   });
 
 

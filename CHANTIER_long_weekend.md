@@ -473,6 +473,18 @@ La dé-doublure n'aide que les mois dont la sur-charge vient des doublures (pas 
 ex. août). → décision produit + équilibrage des GARDES par mois nécessaires. NON porté ;
 état déployé = **fix mi-temps uniquement** (9/9). À re-tester sur données réelles.
 
+### 6 quaterdecies. BUG tours week-end corrigé (Dr Dehout 2026-06-18)
+**Signalé** : le moteur couplé fixait **3 tours (twe) distincts** EN PLUS des 2 gardes 24h
+→ 5 personnes le week-end. FAUX : les **2 gardes 24h FONT le tour** (présentes). Le
+week-end = **2 gardes 24h + 1 tour seul = 3 présents** (comme l'ancien moteur, vérifié).
+**Fix** (planning-couple.js + prototype) : tours-seuls posés = `twe_weekend - gardes_weekend`
+(= 1) au lieu de `twe_weekend` (= 3). Tests mis à jour : couverture WE = 3 présents ;
+équité tours mesurée sur les **participations au tour = gardes 24h WE + twe** (les gardes
+comptent comme faisant le tour) → spread ≤2, aucun à 0. **9/9.**
+> Note display : le compteur « TOURS » de l'app compte les `twe` seuls (comme l'ancien) ;
+> si Dr Dehout veut que les gardes 24h apparaissent aussi dans la colonne Tours, c'est un
+> petit ajustement d'affichage (app.js), non fait ici.
+
 ## 7. Risques
 
 - Reconstruire le filet de couverture sans le couplage : si mal fait → trous de couverture.

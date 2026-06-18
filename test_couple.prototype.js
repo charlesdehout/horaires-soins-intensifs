@@ -10,10 +10,11 @@ const byDate={};R.shifts.forEach(s=>{(byDate[s.date]=byDate[s.date]||[]).push(s)
 const isG=t=>t==="garde_nuit"||t==="garde_24h";
 
 console.log("\n=== Moteur couplé (week-ends d'abord) ===");
-t("couverture WE : 2 gardes 24h + 3 tours chaque sam/dim",()=>{
+t("couverture WE : 2 gardes 24h + 1 tour = 3 présents (les gardes font le tour)",()=>{
   Object.keys(byDate).forEach(d=>{const jj=js(d);if(jj===6||jj===7){
     assert(byDate[d].filter(s=>s.shift_type==="garde_24h").length>=2,"gardes "+d);
-    assert(byDate[d].filter(s=>s.shift_type==="twe").length>=3,"tours "+d);}});
+    assert(byDate[d].filter(s=>s.shift_type==="twe").length>=1,"tour "+d);
+    assert(byDate[d].filter(s=>["garde_24h","twe"].includes(s.shift_type)).length===3,"présents WE != 3 (sur-staff ?) : "+d);}});
 });
 t("couverture nuit semaine : 2 gardes, ≥1 résident",()=>{
   const meds=equipe();const gr={};meds.forEach(m=>gr[m.id]=m.grade);
@@ -33,8 +34,9 @@ t("équité gardes ≤2 intra-grade",()=>{
   const meds=equipe();const G={};meds.forEach(m=>G[m.id]=0);R.shifts.forEach(s=>{if(isG(s.shift_type))G[s.doctor_id]++;});
   ["resident","assistant_specialiste"].forEach(g=>{const v=meds.filter(m=>m.grade===g).map(m=>G[m.id]);assert(Math.max(...v)-Math.min(...v)<=2,g+" "+v.join(","));});
 });
-t("équité tours ≤2 intra-grade, aucun à 0",()=>{
-  const meds=equipe();const T={};meds.forEach(m=>T[m.id]=0);R.shifts.forEach(s=>{if(s.shift_type==="twe")T[s.doctor_id]++;});
+t("équité tours WE (gardes 24h + twe font le tour) ≤2 intra-grade, aucun à 0",()=>{
+  const meds=equipe();const T={};meds.forEach(m=>T[m.id]=0);
+  R.shifts.forEach(s=>{if((js(s.date)===6||js(s.date)===7)&&(s.shift_type==="garde_24h"||s.shift_type==="twe"))T[s.doctor_id]++;});
   ["resident","assistant_specialiste"].forEach(g=>{const v=meds.filter(m=>m.grade===g).map(m=>T[m.id]);assert(Math.max(...v)-Math.min(...v)<=2,g+" spread "+v.join(","));assert(Math.min(...v)>0,g+" un médecin à 0 tour");});
 });
 t("écart d'heures ≤12,5h",()=>{
