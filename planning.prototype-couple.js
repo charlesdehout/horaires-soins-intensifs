@@ -290,6 +290,7 @@ function plDispoIndependant(m, date, dispoSet) {
 /* Médecin planifiable ce jour-là ? (disponibilité — contraintes dures). */
 function plDispo(m, date, etat) {
   if (!plSousContrat(m, date)) return false;
+  if (m.cap_fromager && plJourSemaine(date) === 1) return false;   // CAP fromager : jamais le lundi
   if (!plDispoIndependant(m, date, etat.dispoDeclaree[m.id])) return false;
   const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
   if (!jt.includes(plJourSemaine(date))) return false;
@@ -1281,8 +1282,20 @@ function plEmettreRecupsWeekend(sortie, medecins, etat, dates, aggressif) {
       recupSemaine.add(cleSem);
     };
 
-    // 1) CONSERVATEUR : un jour ouvré déjà libre la semaine suivante.
     let pose = false;
+    // CAP fromager : sa récup de SAMEDI va le LUNDI (jour fromage). Si ce lundi porte
+    // déjà le repos couplé (jeu+sam), on le RELABELLE en récup (visible) ; sinon on
+    // pose une récup sur ce lundi libre.
+    if (m.cap_fromager && plJourSemaine(g.date) === 6) {
+      const lun = plAdd(g.date, 2);
+      if (within.has(lun) && !plEstWeekendOuFerie(lun)) {
+        const rg = (parDD[g.doctor_id + "|" + lun] || []).find((x) => x.shift_type === "repos_garde");
+        if (rg) { rg.shift_type = "recup"; rg.recup_origine = "samedi"; rg.note = "récup (samedi)"; recupSemaine.add(cleSem); pose = true; }
+        else if (!occupeJour(g.doctor_id, lun)) { poserRecup(lun); pose = true; }
+      }
+    }
+
+    // 1) CONSERVATEUR : un jour ouvré déjà libre la semaine suivante.
     for (let k = 0; k < 5 && !pose; k++) {
       const d = plAdd(lundi, k);
       if (!within.has(d)) continue;
@@ -3386,7 +3399,10 @@ function plCoupleChoisir(pool, etat, dateRef, n, exigerResident, preTri) {
 function genererTrimestreCouple(opts) {
   const annee = opts.annee;
   const moisTrim = (opts.trimestre ? [ (opts.trimestre-1)*3+1, (opts.trimestre-1)*3+2, (opts.trimestre-1)*3+3 ] : opts.mois);
-  const medecins = (opts.medecins || []).filter((m) => m.grade !== "pg");
+  // CAP fromager : on retire le LUNDI de jours_travailles (clone, sans muter l'entrée)
+  // → tous les contrôles (plDispo, rééquilibrage, plancher…) le respectent uniformément.
+  const medecins = (opts.medecins || []).filter((m) => m.grade !== "pg").map((m) =>
+    m.cap_fromager ? Object.assign({}, m, { jours_travailles: ((m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1,2,3,4,5,6,7]).filter((j) => j !== 1) }) : m);
   const preferences = opts.preferences || [];
   if (opts.feriesAdmin) plDefinirFeriesAdmin(opts.feriesAdmin.ajouts, opts.feriesAdmin.retraits);
 

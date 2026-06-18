@@ -57,7 +57,10 @@ function plCoupleChoisir(pool, etat, dateRef, n, exigerResident, preTri) {
 function genererTrimestreCouple(opts) {
   const annee = opts.annee;
   const moisTrim = (opts.trimestre ? [ (opts.trimestre-1)*3+1, (opts.trimestre-1)*3+2, (opts.trimestre-1)*3+3 ] : opts.mois);
-  const medecins = (opts.medecins || []).filter((m) => m.grade !== "pg");
+  // CAP fromager : on retire le LUNDI de jours_travailles (clone, sans muter l'entrée)
+  // → tous les contrôles (plDispo, rééquilibrage, plancher…) le respectent uniformément.
+  const medecins = (opts.medecins || []).filter((m) => m.grade !== "pg").map((m) =>
+    m.cap_fromager ? Object.assign({}, m, { jours_travailles: ((m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1,2,3,4,5,6,7]).filter((j) => j !== 1) }) : m);
   const preferences = opts.preferences || [];
   if (opts.feriesAdmin) plDefinirFeriesAdmin(opts.feriesAdmin.ajouts, opts.feriesAdmin.retraits);
 
