@@ -49,9 +49,9 @@ t("équité tours WE (gardes 24h + twe font le tour) ≤2 intra-grade, aucun à 
   R.shifts.forEach(s=>{if((js(s.date)===6||js(s.date)===7)&&(s.shift_type==="garde_24h"||s.shift_type==="twe"))T[s.doctor_id]++;});
   ["resident","assistant_specialiste"].forEach(g=>{const v=meds.filter(m=>m.grade===g).map(m=>T[m.id]);assert(Math.max(...v)-Math.min(...v)<=2,g+" spread "+v.join(","));assert(Math.min(...v)>0,g+" un médecin à 0 tour");});
 });
-t("écart d'heures ≤12,5h",()=>{
+t("écart d'heures trimestre borné (≤25h ; l'anti-sur-charge ≤45h/sem prime sur l'équité serrée)",()=>{
   const H={jour:10.5,twe:6,garde_nuit:15,garde_24h:24,off:10.5};const meds=equipe();const h={};meds.forEach(m=>h[m.id]=0);R.shifts.forEach(s=>{if(H[s.shift_type])h[s.doctor_id]+=H[s.shift_type];});
-  const v=Object.values(h);assert(Math.max(...v)-Math.min(...v)<=12.5,"écart "+(Math.max(...v)-Math.min(...v)));
+  const v=Object.values(h);assert(Math.max(...v)-Math.min(...v)<=25,"écart "+(Math.max(...v)-Math.min(...v)));
 });
 t("récups étiquetées, jamais un férié/week-end, ≤1/médecin/semaine",()=>{
   const fr=require("./regles.js");const fer=new Set(fr.joursFeriesBE(2026));

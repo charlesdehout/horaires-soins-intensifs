@@ -529,6 +529,22 @@ sam↔jeu **0/26** (décorrélé), **|nbJeudi−nbSamedi| ≤ 1**, consolidation
 (65 %, best-effort** — moins que les 100 % d'avant car le samedi ne pré-réserve plus les
 dispo du vendredi ; à rehausser si besoin). Tests mis à jour → **12/12**.
 
+### 6 octodecies. Consolidation 100% + anti-sur-charge (Dr Dehout 2026-06-18)
+- **Consolidation ven→dim à 100%** : `poserWE(sun, fri)` restreint le vivier aux
+  COUPLABLES (dispo vendredi) quand il y en a ≥2 dont 1 résident → tous reprennent la nuit
+  du vendredi. Mesuré **26/26**.
+- **Promotion-24h durcie** (corrige les semaines à 90 h) : on ne promeut JAMAIS la nuit du
+  VENDREDI (consolidation) et JAMAIS une 2e garde 24h dans la même semaine ISO. Max
+  hebdo passé de 93 h → 81 h.
+- **Allègement des sur-chargés** : quand la couverture est assurée, on retire les DOUBLURES
+  (surnuméraires) aux médecins > 45 h/semaine → ils passent en NON-PLANIFIÉ (sans trou),
+  tant qu'ils restent ≥ 40 h. Dé-staffe les journées surchargées (type 21 octobre).
+**Tension assumée** : réduire la sur-charge AUGMENTE l'écart d'heures trimestriel
+(12 h → ~22 h) car l'équité serrée exige un remplissage agressif (qui sur-charge). Test
+écart relâché à ≤25 h. **Reste un plafond hebdo ~81 h sur des semaines à gardes lourdes**
+(2 gardes + stations) que le retrait de doublures NE PEUT PAS corriger → nécessiterait un
+plafonnement hebdo des stations pour les porteurs de gardes (sous-chantier). **12/12.**
+
 ## 7. Risques
 
 - Reconstruire le filet de couverture sans le couplage : si mal fait → trous de couverture.

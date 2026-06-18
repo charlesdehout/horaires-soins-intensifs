@@ -3463,9 +3463,16 @@ function genererTrimestreCouple(opts) {
         pool = base;
       }
       // Couplables (dispo aussi la nuit couplée) = PRÉFÉRENCE, pas filtre dur.
-      const coupkable = (m) => within.has(nightDay) && !plEstWeekendOuFerie(nightDay) && plDispo(m, nightDay, etat) &&
+      const coupkable = (m) => nightDay && within.has(nightDay) && !plEstWeekendOuFerie(nightDay) && plDispo(m, nightDay, etat) &&
         plPeutGarde(m, nightDay) && plGardesSemaine(m.id, nightDay, etat) < PL_MAX_GARDES_SEMAINE;
-      const filtre = plFiltrerPlafond(pool, weDay, etat, PL_HEURES.garde_24h);
+      let filtre = plFiltrerPlafond(pool, weDay, etat, PL_HEURES.garde_24h);
+      // CONSOLIDATION ven→dim à 100% : si la nuit couplée est demandée et qu'il y a assez
+      // de couplables (dont ≥1 résident), on ne retient QUE des couplables → tous
+      // reprennent la nuit couplée (repli sur le pool complet sinon).
+      if (nightDay) {
+        const coup = filtre.filter(coupkable);
+        if (coup.length >= couv.gardes_weekend && coup.some((m) => m.grade === "resident")) filtre = coup;
+      }
       // Tri : couplables d'abord, puis équité week-end → ≥1 résident garanti sur TOUT le pool.
       const triEq = plTrier(filtre.slice(), "weekend", etat, weDay, null);
       let ordre = triEq.slice().sort((a, b) => (coupkable(b) ? 1 : 0) - (coupkable(a) ? 1 : 0));
@@ -3626,8 +3633,11 @@ function genererTrimestreCouple(opts) {
       sortie.filter((s)=>s.date===date && (s.shift_type==="jour"||s.shift_type==="garde_24h") && s.poste).forEach((s)=>{plan[s.poste]=s.doctor_id;});
       const cle = plLundiDe(date);
       const m0 = moy();
+      if (jr === 5) return; // VENDREDI = nuit de consolidation (ven→dim) : ne JAMAIS promouvoir en 24h (sinon la personne travaille ven jour+nuit + dim 24h)
       sortie.filter((s)=>s.date===date && s.shift_type==="garde_nuit").forEach((s)=>{
-        if (etat.heures[s.doctor_id] / fteOf(s.doctor_id) >= m0 - 10) return;  // sous-chargés (déficit normalisé ETP > 8h)
+        if (etat.heures[s.doctor_id] / fteOf(s.doctor_id) >= m0 - 10) return;  // sous-chargés (déficit normalisé ETP)
+        // jamais 2 gardes 24h la même semaine ISO (évite les semaines à 70-90 h)
+        if (sortie.some((x)=>x.doctor_id===s.doctor_id && x.shift_type==="garde_24h" && plLundiDe(x.date)===cle)) return;
         const med = medecins.find((x)=>x.id===s.doctor_id); if (!med) return;
         const st = plChoisirStation(med, postes.filter((c)=>!plSansContinuite(c)), plan, etat, cle);
         if (!st || (st in plan)) return;
@@ -3688,6 +3698,30 @@ function genererTrimestreCouple(opts) {
   plCompleterMinimumHeures(sortie, medecins, etat, datesTrim);  // plancher 40h/sem (doublures)
   plEquilibrerTours(sortie, medecins, etat);
   plReequilibrerHeures(sortie, medecins, etat);                // resserre l'écart d'heures
+  // ALLÈGEMENT DES SUR-CHARGÉS (Dr Dehout) : quand la couverture est assurée, on évite
+  // les journées surchargées. Une DOUBLURE (2e personne sur une unité) est surnuméraire :
+  // on la retire au médecin le plus chargé tant qu'il dépasse ~45 h/SEMAINE → il passe en
+  // NON-PLANIFIÉ, sans trou (l'unité garde son titulaire).
+  {
+    const Hh = (t) => (t === "off" ? PL_HEURES_OFFCLINIC : (PL_HEURES[t] || 0));
+    const SEUIL_HEBDO = 45;
+    let guard = 0;
+    while (guard++ < 600) {
+      const hSem = {};
+      sortie.forEach((s) => { if (Hh(s.shift_type)) { const k = s.doctor_id + "|" + plLundiDe(s.date); hSem[k] = (hSem[k] || 0) + Hh(s.shift_type); } });
+      // on ne retire une doublure que si la personne RESTE ≥ 40 h cette semaine
+      // (cap autour de 40–45 h, pas de chute brutale qui creuserait l'écart).
+      const cands = sortie.filter((s) => {
+        const hw = hSem[s.doctor_id + "|" + plLundiDe(s.date)] || 0;
+        return s.doublure && hw > SEUIL_HEBDO + PL_EPS && (hw - Hh(s.shift_type)) >= 40 - PL_EPS;
+      });
+      if (!cands.length) break;
+      cands.sort((a, b) => (hSem[b.doctor_id + "|" + plLundiDe(b.date)] || 0) - (hSem[a.doctor_id + "|" + plLundiDe(a.date)] || 0));
+      const sh = cands[0];
+      etat.heures[sh.doctor_id] -= Hh(sh.shift_type);
+      sortie.splice(sortie.indexOf(sh), 1);                       // retire la doublure → non-planifié
+    }
+  }
   plEmettreCongesFerie(sortie, etat, datesTrim);
   plEmettreRecupsWeekend(sortie, medecins, etat, datesTrim, false);  // récups conservatrices (jour libre) — dial agressif = +récups mais casse heures
 
