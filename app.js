@@ -80,6 +80,7 @@ const dAddPeriode     = document.getElementById("d-add-periode");
 const dQuotaAnnuel    = document.getElementById("d-quota-annuel");
 const dQuotaExtra     = document.getElementById("d-quota-extra");
 const dQuotaScient    = document.getElementById("d-quota-scientifique");
+const dCapFromager    = document.getElementById("d-cap-fromager");
 const cancelDoctorBtn = document.getElementById("cancel-doctor-btn");
 const doctorFormMsg   = document.getElementById("doctor-form-msg");
 const doctorsTbody    = document.getElementById("doctors-tbody");
@@ -563,6 +564,7 @@ function ouvrirEdition(med) {
   dQuotaExtra.value = med.quota_conge_extralegal ?? "";
   dQuotaScient.value = med.quota_conge_scientifique ?? "";
   setJoursTravailles(med.jours_travailles);
+  if (dCapFromager) dCapFromager.checked = !!med.cap_fromager;
   messageFormMedecin("");
   doctorForm.classList.remove("hidden");
   doctorForm.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -726,6 +728,8 @@ doctorForm.addEventListener("submit", async (e) => {
     quota_conge_scientifique: estAdminPur ? null : (dQuotaScient.value === "" ? null : parseInt(dQuotaScient.value, 10)),
     // Jours travaillables (non pertinent pour un admin pur).
     jours_travailles: estAdminPur ? [1,2,3,4,5,6,7] : getJoursTravailles(),
+    // Statut « CAP fromager » (résident à part entière, contraintes spéciales).
+    cap_fromager: estAdminPur ? false : !!(dCapFromager && dCapFromager.checked),
   };
 
   let error;
@@ -2035,7 +2039,7 @@ async function genererPlanningPourMoisAffiche() {
   // 1) Médecins planifiables (l'admin / chef de service n'est pas dans le planning).
   const { data: medecins, error: e1 } = await sb
     .from("doctors")
-    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference, nouvel_engage")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference, nouvel_engage, cap_fromager")
     .neq("role", "admin");
   if (e1) { genererBtn.disabled = false; return messageGeneration("Erreur lecture médecins : " + e1.message, "error"); }
 
@@ -2165,7 +2169,7 @@ async function genererTrimestrePourMoisAffiche() {
   // 3) Médecins planifiables (hors admin / chef de service).
   const { data: medecins, error: e1 } = await sb
     .from("doctors")
-    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference, nouvel_engage")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference, nouvel_engage, cap_fromager")
     .neq("role", "admin");
   if (e1) { genererTrimBtn.disabled = false; return messageGeneration("Erreur lecture médecins : " + e1.message, "error"); }
 
@@ -2518,7 +2522,7 @@ async function rbGenerer() {
 
   // Charger médecins et préférences
   const { data: medecins, error: eMed } = await sb.from("doctors")
-    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference, nouvel_engage")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference, nouvel_engage, cap_fromager")
     .neq("role", "admin");
   if (eMed) { rbMsg("Erreur médecins : " + eMed.message, "error"); return; }
 
@@ -3726,7 +3730,7 @@ async function rafraichirPanneauAdmin() {
 
   // 3) Médecins planifiables (hors admin) + 4) préférences du mois.
   const { data: meds } = await sb.from("doctors")
-    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference, nouvel_engage")
+    .select("id, name, grade, fte, contract_start, contract_end, weekly_hours_target, jours_travailles, statut, contract_periods, admin_level, unite_reference, nouvel_engage, cap_fromager")
     .neq("role", "admin").order("name", { ascending: true });
   planningMois.medecins = meds || [];
 

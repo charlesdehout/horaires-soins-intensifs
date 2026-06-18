@@ -1233,6 +1233,20 @@ function plEmettreRecupsWeekend(sortie, medecins, etat, dates) {
     const cleSem = g.doctor_id + "|" + lundi;
     if (recupSemaine.has(cleSem)) return;
     let pose = false;
+    // CAP fromager : sa récup de SAMEDI va le LUNDI (jour fromage). Si ce lundi porte
+    // déjà le repos couplé (jeu+sam), on le RELABELLE en récup (visible) ; sinon on
+    // pose une récup sur ce lundi libre.
+    if (m.cap_fromager && plJourSemaine(g.date) === 6) {
+      const lun = plAdd(g.date, 2);
+      if (within.has(lun) && !plEstWeekendOuFerie(lun)) {
+        const rg = sortie.find((s) => s.doctor_id === g.doctor_id && s.date === lun && s.shift_type === "repos_garde");
+        if (rg) { rg.shift_type = "recup"; rg.recup_origine = "samedi"; rg.note = "récup (samedi)"; recupSemaine.add(cleSem); pose = true; }
+        else if (!occupe.has(g.doctor_id + "|" + lun)) {
+          sortie.push({ date: lun, shift_type: "recup", poste: null, doctor_id: g.doctor_id, recup_origine: "samedi", note: "récup (samedi)" });
+          occupe.add(g.doctor_id + "|" + lun); recupSemaine.add(cleSem); pose = true;
+        }
+      }
+    }
     for (let k = 0; k < 5 && !pose; k++) {                 // lundi → vendredi
       const d = plAdd(lundi, k);
       if (!within.has(d)) continue;

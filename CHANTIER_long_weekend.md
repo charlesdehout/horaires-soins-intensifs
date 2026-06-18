@@ -494,6 +494,23 @@ sam/dim ; les fériés-semaine tombaient en Phase 2 (nuits) + Phase 3 (stations)
 le couplage jeu/ven ne se pose plus sur un jeu/ven férié (traité en 1b). Vérifié Q4 :
 11/11 (mer) et 25/12 (ven) → 2 G24 + 1 twe + 0 nuit + 0 station. Test ajouté. **10/10.**
 
+### 6 sexdecies. Statut « CAP fromager » (case à cocher) — Dr Dehout 2026-06-18
+Un résident à statut spécial (fait un CAP de fromager, cours tous les lundis). **Case à
+cocher `cap_fromager`** sur la fiche médecin (index.html + app.js), colonne DB
+`doctors.cap_fromager` (sql/module33_cap_fromager.sql). Résident à part entière (gardes
+seul, compté résident) MAIS :
+- jamais le LUNDI (le moteur retire le lundi de `jours_travailles`, clone, à l'entrée de
+  genererTrimestreCouple → respecté partout) ;
+- jamais de GARDE le dimanche (`plPeutGarde` ; tours dimanche autorisés) ;
+- PRIORITAIRE sur les gardes du SAMEDI (compense → même nb de gardes, mesuré 14 vs 15,6) ;
+- PAS d'off-clinic (filtre Phase 4) ;
+- sa récup de samedi posée le LUNDI : `plEmettreRecupsWeekend` relabelle son repos couplé
+  du lundi en « récup (samedi) » (ou pose une récup si lundi libre).
+Câblé : planning-couple.js (clone, plPeutGarde, favori, off) + planning.js (récup-lundi) ;
+le navigateur charge les deux. Test dédié ajouté → **11/11**. Vérifié : le clone seul
+suffit (pas besoin de toucher plDispo/plDispoStatique en prod). SELECT médecins MAJ
+(+cap_fromager). **À faire : exécuter sql/module33_cap_fromager.sql sur la base.**
+
 ## 7. Risques
 
 - Reconstruire le filet de couverture sans le couplage : si mal fait → trous de couverture.
