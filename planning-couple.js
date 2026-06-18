@@ -145,7 +145,7 @@ function genererTrimestreCouple(opts) {
       if (choisis.length < couv.gardes_weekend) conflits.push({ date: weDay, message: lib + " : " + choisis.length + "/" + couv.gardes_weekend + " gardes 24h (effectif insuffisant)." });
       else if (!choisis.some((m) => m.grade === "resident")) conflits.push({ date: weDay, message: lib + " : aucun résident disponible → 2 A/S (à arbitrer)." });
     };
-    poserWE(sat, thu);   // samedi couplé jeudi
+    poserWE(sat, null);  // samedi NON couplé au jeudi (long week-end : le jeudi libère le WE)
     poserWE(sun, fri);   // dimanche couplé vendredi
 
     // Tour : les 2 gardes 24h font DÉJÀ le tour (présentes). On ne fixe donc que
@@ -194,9 +194,32 @@ function genererTrimestreCouple(opts) {
     if (twF.length < nbTourF) conflits.push({ date: ferie, message: "Férié : tour manquant (effectif insuffisant)." });
   });
 
-  // ---- PHASE 2 : autres gardes de nuit (lun/mar/mer + complément jeu/ven) ----
+  // ---- PHASE 2 : autres gardes de nuit (lun/mar/mer + JEUDI/vendredi) ----
   // Compléter CHAQUE nuit de semaine à min_nuit gardes, ≥1 résident, jamais 2 A/S.
   const minNuit = plCouv().min_nuit;
+  // LONG WEEK-END (étape 5) : une garde le JEUDI libère le week-end → pour le jeudi,
+  // on DÉPRIORISE les médecins déjà de garde/tour CE week-end (sam+dim suivants), et
+  // COUPLAGE TEMPOREL : qui a fait plus de samedis que de jeudis prend le jeudi
+  // (mêmes personnes sur jeudis ET samedis, mais à des semaines différentes).
+  const weWorkers = {};
+  samedis.forEach((sat) => {
+    const sun = plAdd(sat, 1); const set = new Set();
+    sortie.forEach((s) => { if ((s.date === sat || s.date === sun) && (s.shift_type === "garde_24h" || s.shift_type === "twe")) set.add(s.doctor_id); });
+    weWorkers[sat] = set;
+  });
+  const estWeWorker = (id, jeudi) => { const set = weWorkers[plAdd(jeudi, 2)]; return !!(set && set.has(id)); };
+  const choisirNuit = (pool, date) => {
+    if (plJourSemaine(date) !== 4) return plTrierGardeNuit(pool, date, etat)[0] || null;
+    const base = plTrierGardeNuit(pool, date, etat);
+    return base.slice().sort((a, b) => {
+      const wa = estWeWorker(a.id, date) ? 1 : 0, wb = estWeWorker(b.id, date) ? 1 : 0;
+      if (wa !== wb) return wa - wb;                                       // long week-end : non-travailleurs du WE d'abord
+      const ta = (etat.nbSamedi[a.id] || 0) - (etat.nbJeudi[a.id] || 0);
+      const tb = (etat.nbSamedi[b.id] || 0) - (etat.nbJeudi[b.id] || 0);
+      if (tb !== ta) return tb - ta;                                      // couplage temporel : doit un jeudi → prioritaire
+      return base.indexOf(a) - base.indexOf(b);                           // sinon équité
+    })[0] || null;
+  };
   datesTrim.forEach((date) => {
     const jr = plJourSemaine(date);
     if (jr === 6 || jr === 7 || plEstWeekendOuFerie(date)) return; // week-end/férié traité en Phase 1/1b
@@ -211,7 +234,7 @@ function genererTrimestreCouple(opts) {
       !plEstNouvelEngage(m, date, etat.debutPeriode));
     // ≥1 résident d'abord si aucun encore.
     if (!dejaResident) {
-      const res = plTrierGardeNuit(plFiltrerPlafond(libres.filter((m) => m.grade === "resident"), date, etat, PL_HEURES.garde_nuit), date, etat)[0];
+      const res = choisirNuit(plFiltrerPlafond(libres.filter((m) => m.grade === "resident"), date, etat, PL_HEURES.garde_nuit), date);
       if (res) { plAffecter(sortie, etat, date, "garde_nuit", res.id, null); manque--; }
       else conflits.push({ date, message: "Nuit : aucun résident dispo (≥1 obligatoire)." });
     }
@@ -221,7 +244,7 @@ function genererTrimestreCouple(opts) {
     while (manque > 0) {
       let pool = plFiltrerPlafond(libres.filter((m) => !pris.has(m.id)), date, etat, PL_HEURES.garde_nuit);
       if (nAS >= 1) pool = pool.filter((m) => m.grade !== "assistant_specialiste"); // jamais 2 A/S
-      const pick = plTrierGardeNuit(pool, date, etat)[0];
+      const pick = choisirNuit(pool, date);
       if (!pick) { conflits.push({ date, message: "Nuit : " + (minNuit - manque) + "/" + minNuit + " gardes." }); break; }
       plAffecter(sortie, etat, date, "garde_nuit", pick.id, null);
       pris.add(pick.id); if (pick.grade === "assistant_specialiste") nAS++;
@@ -262,7 +285,7 @@ function genererTrimestreCouple(opts) {
       const cle = plLundiDe(date);
       const m0 = moy();
       sortie.filter((s)=>s.date===date && s.shift_type==="garde_nuit").forEach((s)=>{
-        if (etat.heures[s.doctor_id] / fteOf(s.doctor_id) >= m0 - 8) return;  // sous-chargés (déficit normalisé ETP > 8h)
+        if (etat.heures[s.doctor_id] / fteOf(s.doctor_id) >= m0 - 10) return;  // sous-chargés (déficit normalisé ETP > 8h)
         const med = medecins.find((x)=>x.id===s.doctor_id); if (!med) return;
         const st = plChoisirStation(med, postes.filter((c)=>!plSansContinuite(c)), plan, etat, cle);
         if (!st || (st in plan)) return;

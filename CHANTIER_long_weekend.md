@@ -511,6 +511,24 @@ le navigateur charge les deux. Test dédié ajouté → **11/11**. Vérifié : l
 suffit (pas besoin de toucher plDispo/plDispoStatique en prod). SELECT médecins MAJ
 (+cap_fromager). **À faire : exécuter sql/module33_cap_fromager.sql sur la base.**
 
+### 6 septdecies. CORRECTION majeure — long week-end rétabli (Dr Dehout 2026-06-18)
+**Erreur signalée** : en reconstruisant le moteur « week-ends d'abord », j'avais couplé
+jeudi+samedi sur la MÊME personne la même semaine (combo) → l'INVERSE du long week-end.
+**Le but (rappel)** : faire une garde le JEUDI **libère** le week-end. Donc jeudi ≠ samedi
+même semaine ; sur le trimestre les mêmes font jeudis ET samedis (équilibre), semaines ≠.
+**Décision Dr Dehout (confirmée)** : long week-end (étape 5) + GARDER la consolidation ven→dim.
+**Fix (planning-couple.js + prototype)** :
+- `poserWE(sat, null)` : le samedi n'est PLUS couplé au jeudi.
+- Phase 2 : sélection du JEUDI via `choisirNuit` = (1) déprioriser les médecins déjà de
+  garde/tour CE week-end (sam+dim suivants) → long week-end ; (2) couplage TEMPOREL :
+  qui a fait plus de samedis que de jeudis (nbSamedi−nbJeudi) prend le jeudi.
+- `poserWE(sun, fri)` conservé : consolidation ven→dim.
+- 24h-promotion re-tunée (déficit > 10h au lieu de 8) → écart heures 12,0 h.
+Mesures (trimestre propre) : **long week-end 96 %** (jeudi de garde → WE libre), couple
+sam↔jeu **0/26** (décorrélé), **|nbJeudi−nbSamedi| ≤ 1**, consolidation ven→dim **17/26
+(65 %, best-effort** — moins que les 100 % d'avant car le samedi ne pré-réserve plus les
+dispo du vendredi ; à rehausser si besoin). Tests mis à jour → **12/12**.
+
 ## 7. Risques
 
 - Reconstruire le filet de couverture sans le couplage : si mal fait → trous de couverture.

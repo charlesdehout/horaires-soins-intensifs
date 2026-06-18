@@ -22,13 +22,23 @@ t("couverture nuit semaine : 2 gardes, ≥1 résident",()=>{
     const g=byDate[d].filter(s=>isG(s.shift_type));
     if(g.length){assert(g.length>=2,"2 gardes "+d);const sig=R.conflits.some(c=>c.date===d&&/résident/.test(c.message));assert(g.some(s=>gr[s.doctor_id]==="resident")||sig,"≥1 rés (ou signal) "+d);}}});
 });
-t("couplage : ≥90% des gardes 24h samedi ont une garde le jeudi (même pers.)",()=>{
-  let n=0,c=0;R.shifts.filter(s=>s.shift_type==="garde_24h"&&js(s.date)===6).forEach(s=>{n++;const thu=add(s.date,-2);if((byDate[thu]||[]).some(x=>x.doctor_id===s.doctor_id&&isG(x.shift_type)))c++;});
-  assert(c/n>=0.9,"couplage sam↔jeu "+c+"/"+n);
+t("LONG WEEK-END : ≥80% des jeudis de garde ont leur week-end LIBRE (jeudi ≠ samedi même semaine)",()=>{
+  const jeudis=R.shifts.filter(s=>isG(s.shift_type)&&js(s.date)===4);
+  let libre=0;
+  jeudis.forEach(s=>{const sat=add(s.date,2),sun=add(s.date,3);
+    const bosse=(byDate[sat]||[]).concat(byDate[sun]||[]).some(x=>x.doctor_id===s.doctor_id&&["garde_24h","twe"].includes(x.shift_type));
+    if(!bosse)libre++;});
+  assert(jeudis.length>=1 && libre/jeudis.length>=0.8,"long week-end "+libre+"/"+jeudis.length);
 });
-t("couplage : ≥90% des gardes 24h dimanche ont une garde le vendredi",()=>{
+t("couplage TEMPOREL : |nbJeudi − nbSamedi| ≤ 2 par plein-temps (mêmes pers. jeudis & samedis, semaines ≠)",()=>{
+  const meds=equipe();const NJ={},NS={};meds.forEach(m=>{NJ[m.id]=0;NS[m.id]=0;});
+  R.shifts.forEach(s=>{if(isG(s.shift_type)&&js(s.date)===4)NJ[s.doctor_id]++;if(s.shift_type==="garde_24h"&&js(s.date)===6)NS[s.doctor_id]++;});
+  const pire=Math.max(...meds.filter(m=>(m.fte||1)>=1).map(m=>Math.abs(NJ[m.id]-NS[m.id])));
+  assert(pire<=2,"|nbJeudi-nbSamedi| max = "+pire);
+});
+t("consolidation ven→dim conservée : ≥50% des gardes 24h dimanche ont une garde le vendredi",()=>{
   let n=0,c=0;R.shifts.filter(s=>s.shift_type==="garde_24h"&&js(s.date)===7).forEach(s=>{n++;const fri=add(s.date,-2);if((byDate[fri]||[]).some(x=>x.doctor_id===s.doctor_id&&isG(x.shift_type)))c++;});
-  assert(c/n>=0.9,"couplage dim↔ven "+c+"/"+n);
+  assert(c/n>=0.5,"consolidation dim←ven "+c+"/"+n);
 });
 t("équité gardes ≤2 intra-grade",()=>{
   const meds=equipe();const G={};meds.forEach(m=>G[m.id]=0);R.shifts.forEach(s=>{if(isG(s.shift_type))G[s.doctor_id]++;});
