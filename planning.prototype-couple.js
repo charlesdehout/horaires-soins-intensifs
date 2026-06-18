@@ -1420,6 +1420,7 @@ function genererPlanning(opts) {
 function plDispoStatique(m, date, indispoSet, dispoSet) {
   if (!plSousContrat(m, date)) return false;
   if (!plDispoIndependant(m, date, dispoSet)) return false;
+  if (m.cap_fromager && plJourSemaine(date) === 1) return false;   // CAP fromager : jamais le lundi (cours de fromagerie)
   const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
   if (!jt.includes(plJourSemaine(date))) return false;
   if (indispoSet && indispoSet.has(date)) return false;
@@ -3346,6 +3347,17 @@ function genererRebouchage(opts) {
    Le "long week-end" n'est plus obtenu en évitant le week-end mais en
    compensant par off/récup en fin de course.
    ===================================================================== */
+/* Statut spécial (ex. « CAP fromager ») : un médecin peut être interdit de GARDE
+   certains jours de semaine (m.jours_sans_garde = [n° ISO]), tout en pouvant faire
+   les TOURS et stations. (Les jours NON travaillés sont gérés par jours_travailles.) */
+function plPeutGarde(m, date) {
+  if (!m) return true;
+  const jr = plJourSemaine(date);
+  if (m.cap_fromager && jr === 7) return false;          // CAP fromager : jamais de garde le dimanche
+  const jsg = m.jours_sans_garde;
+  return !(Array.isArray(jsg) && jsg.indexOf(jr) !== -1);
+}
+
 function plCoupleChoisir(pool, etat, dateRef, n, exigerResident, preTri) {
   // Garantit ≥1 résident si demandé et jamais 2 A/S. Trie par équité week-end
   // (sauf si preTri : la liste est déjà ordonnée par préférence). Renvoie ≤ n.
@@ -3426,7 +3438,7 @@ function genererTrimestreCouple(opts) {
     // jamais au prix d'un trou). nightDay = jeu/ven, weDay = sam/dim.
     const poserWE = (weDay, nightDay) => {
       const base = medecins.filter((m) =>
-        within.has(weDay) && plDispo(m, weDay, etat) &&
+        within.has(weDay) && plDispo(m, weDay, etat) && plPeutGarde(m, weDay) &&
         plGardesSemaine(m.id, weDay, etat) < PL_MAX_GARDES_SEMAINE &&
         !plEstNouvelEngage(m, weDay, etat.debutPeriode));
       let pool = base.filter((m) => plPeutWeekend(m.id, sat, etat));
@@ -3435,12 +3447,15 @@ function genererTrimestreCouple(opts) {
         pool = base;
       }
       // Couplables (dispo aussi la nuit couplée) = PRÉFÉRENCE, pas filtre dur.
-      const coupkable = (m) => within.has(nightDay) && plDispo(m, nightDay, etat) &&
-        plGardesSemaine(m.id, nightDay, etat) < PL_MAX_GARDES_SEMAINE;
+      const coupkable = (m) => within.has(nightDay) && !plEstWeekendOuFerie(nightDay) && plDispo(m, nightDay, etat) &&
+        plPeutGarde(m, nightDay) && plGardesSemaine(m.id, nightDay, etat) < PL_MAX_GARDES_SEMAINE;
       const filtre = plFiltrerPlafond(pool, weDay, etat, PL_HEURES.garde_24h);
       // Tri : couplables d'abord, puis équité week-end → ≥1 résident garanti sur TOUT le pool.
       const triEq = plTrier(filtre.slice(), "weekend", etat, weDay, null);
-      const ordre = triEq.slice().sort((a, b) => (coupkable(b) ? 1 : 0) - (coupkable(a) ? 1 : 0));
+      let ordre = triEq.slice().sort((a, b) => (coupkable(b) ? 1 : 0) - (coupkable(a) ? 1 : 0));
+      // FAVORI SAMEDI (statut spécial) : prioritaire pour la garde 24h du samedi
+      // (compense l'impossibilité de garde le dimanche → garde le même nb de gardes).
+      if (plJourSemaine(weDay) === 6) ordre.sort((a, b) => ((b.favori_garde_samedi||b.cap_fromager) ? 1 : 0) - ((a.favori_garde_samedi||a.cap_fromager) ? 1 : 0));
       const choisis = plCoupleChoisir(ordre, etat, weDay, couv.gardes_weekend, true, true);
       // FILET COUVERTURE : si < 2 gardes faute de résident, compléter (2 A/S toléré
       // en dernier recours) plutôt qu'un trou — et SIGNALER.
@@ -3480,19 +3495,44 @@ function genererTrimestreCouple(opts) {
   });
 
 
+  // ---- PHASE 1b : FÉRIÉS en semaine = jours « type WEEK-END » : 2 gardes 24h
+  //     + 1 tour, PAS de station. Les gardes 24h FONT le tour (comme le week-end). ----
+  const couvF = plCouv();
+  datesTrim.filter((d) => plJourSemaine(d) <= 5 && plEstWeekendOuFerie(d)).forEach((ferie) => {
+    plCrediterAbsences(ferie, medecins, etat);
+    const poolG = plFiltrerPlafond(medecins.filter((m) =>
+      plDispo(m, ferie, etat) && plPeutGarde(m, ferie) &&
+      plGardesSemaine(m.id, ferie, etat) < PL_MAX_GARDES_SEMAINE &&
+      !plEstNouvelEngage(m, ferie, etat.debutPeriode)), ferie, etat, PL_HEURES.garde_24h);
+    const triG = plTrier(poolG.slice(), "weekend", etat, ferie, null);
+    const gardes = plCoupleChoisir(triG, etat, ferie, couvF.gardes_weekend, true, true);
+    if (gardes.length < couvF.gardes_weekend) {            // filet couverture
+      for (const m of triG) { if (gardes.length >= couvF.gardes_weekend) break; if (!gardes.includes(m)) gardes.push(m); }
+    }
+    gardes.forEach((m) => plAffecter(sortie, etat, ferie, "garde_24h", m.id, null)); // 24h (tient une station + nuit)
+    if (gardes.length < couvF.gardes_weekend) conflits.push({ date: ferie, message: "Férié : " + gardes.length + "/" + couvF.gardes_weekend + " gardes 24h (effectif insuffisant)." });
+    else if (!gardes.some((m) => m.grade === "resident")) conflits.push({ date: ferie, message: "Férié : aucun résident de garde (≥1 obligatoire, à arbitrer)." });
+    // 1 tour seul (en plus des 2 gardes qui font déjà le tour).
+    const nbTourF = Math.max(0, couvF.twe_weekend - couvF.gardes_weekend);
+    const poolT = medecins.filter((m) => plDispo(m, ferie, etat) && !plEstNouvelEngage(m, ferie, etat.debutPeriode));
+    const twF = poolT.sort((a, b) => (etat._nbTours[a.id] - etat._nbTours[b.id])).slice(0, nbTourF);
+    twF.forEach((m) => { plAffecter(sortie, etat, ferie, "twe", m.id, null); etat._nbTours[m.id] += 1; });
+    if (twF.length < nbTourF) conflits.push({ date: ferie, message: "Férié : tour manquant (effectif insuffisant)." });
+  });
+
   // ---- PHASE 2 : autres gardes de nuit (lun/mar/mer + complément jeu/ven) ----
   // Compléter CHAQUE nuit de semaine à min_nuit gardes, ≥1 résident, jamais 2 A/S.
   const minNuit = plCouv().min_nuit;
   datesTrim.forEach((date) => {
     const jr = plJourSemaine(date);
-    if (jr === 6 || jr === 7) return;                 // week-end traité en Phase 1
+    if (jr === 6 || jr === 7 || plEstWeekendOuFerie(date)) return; // week-end/férié traité en Phase 1/1b
     plCrediterAbsences(date, medecins, etat);
     const dejaG = sortie.filter((s) => s.date === date && (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h"));
     let manque = minNuit - dejaG.length;
     if (manque <= 0) return;
     const dejaResident = dejaG.some((s) => { const m = medecins.find((x) => x.id === s.doctor_id); return m && m.grade === "resident"; });
     const dejaAS = dejaG.filter((s) => { const m = medecins.find((x) => x.id === s.doctor_id); return m && m.grade === "assistant_specialiste"; }).length;
-    const libres = medecins.filter((m) => plDispo(m, date, etat) &&
+    const libres = medecins.filter((m) => plDispo(m, date, etat) && plPeutGarde(m, date) &&
       plGardesSemaine(m.id, date, etat) < PL_MAX_GARDES_SEMAINE &&
       !plEstNouvelEngage(m, date, etat.debutPeriode));
     // ≥1 résident d'abord si aucun encore.
@@ -3601,7 +3641,8 @@ function genererTrimestreCouple(opts) {
 
   // ---- PHASE 4 : off-clinic, plancher heures (doublures), équité tours/heures ----
   moisTrim.forEach((mois) => {
-    const offs = genererOffClinic({ annee, mois, medecins, shifts: sortie, preferences });
+    const offs = genererOffClinic({ annee, mois, medecins, shifts: sortie, preferences })
+      .filter((o) => { const m = medecins.find((x) => x.id === o.doctor_id); return !(m && (m.sans_off || m.cap_fromager)); }); // statut spécial / CAP fromager : pas d'off
     offs.forEach((o) => { sortie.push(o); etat.heures[o.doctor_id] += PL_HEURES_OFFCLINIC; });
   });
   plResorberOff24h(sortie, medecins, etat);

@@ -57,5 +57,35 @@ t("congés respectés + mi-temps fait moins de week-ends (pas de crash)",()=>{
   const trav=s=>["jour","garde_nuit","garde_24h","twe"].includes(s.shift_type);
   assert(!r.shifts.some(s=>trav(s)&&s.doctor_id==="assistant_specialiste1"&&s.date>="2026-07-06"&&s.date<="2026-07-17"),"congé violé");
 });
+t("férié en semaine = jour type week-end (2 gardes 24h + 1 tour, 0 nuit, 0 station)",()=>{
+  const fr=require("./regles.js");
+  const R4=P.genererTrimestreCouple({annee:2026,trimestre:4,medecins:equipe(),preferences:[]});
+  const bd={};R4.shifts.forEach(s=>{(bd[s.date]=bd[s.date]||[]).push(s);});
+  const feries=[...fr.joursFeriesBE(2026)].filter(d=>d>="2026-10-01"&&d<="2026-12-31"&&js(d)<=5);
+  assert(feries.length>=1,"pas de férié semaine en Q4 ?");
+  feries.forEach(d=>{const a=bd[d]||[];
+    assert(a.filter(s=>s.shift_type==="garde_24h").length>=2,"férié "+d+" : <2 gardes 24h");
+    assert(a.filter(s=>s.shift_type==="twe").length>=1,"férié "+d+" : pas de tour");
+    assert(a.filter(s=>s.shift_type==="garde_nuit").length===0,"férié "+d+" : garde de nuit (devrait être 24h)");
+    assert(a.filter(s=>s.shift_type==="jour").length===0,"férié "+d+" : station ouverte (devrait être fermée)");
+  });
+});
+t("statut spécial « CAP fromager » : 0 lundi, 0 garde dimanche, 0 off, gardes ≈ moyenne",()=>{
+  const meds=equipe();
+  const F=meds.find(m=>m.id==="resident1");
+  F.cap_fromager=true;   // une seule case : pas de lundi, pas de garde dimanche, favori samedi, pas d'off, récup le lundi
+  const r=P.genererTrimestreCouple({annee:2026,trimestre:3,medecins:meds,preferences:[]});
+  const sh=r.shifts.filter(s=>s.doctor_id==="resident1");
+  const trav=s=>["jour","garde_nuit","garde_24h","twe"].includes(s.shift_type);
+  assert(sh.filter(s=>js(s.date)===1&&trav(s)).length===0,"travaille un lundi");
+  assert(sh.filter(s=>js(s.date)===7&&(s.shift_type==="garde_24h"||s.shift_type==="garde_nuit")).length===0,"garde un dimanche");
+  assert(sh.filter(s=>s.shift_type==="off").length===0,"a un off-clinic");
+  // récup placée le LUNDI (son jour fromage) au moins une fois
+  assert(sh.some(s=>s.shift_type==="recup"&&js(s.date)===1),"aucune récup posée le lundi");
+  const g={};meds.forEach(m=>g[m.id]=0);r.shifts.forEach(s=>{if(s.shift_type==="garde_nuit"||s.shift_type==="garde_24h")g[s.doctor_id]++;});
+  const others=["resident2","resident3","resident4","resident5","resident6"];
+  const avg=others.reduce((a,id)=>a+g[id],0)/others.length;
+  assert(Math.abs(g["resident1"]-avg)<=2.5,"gardes trop loin de la moyenne : "+g["resident1"]+" vs "+avg.toFixed(1));
+});
 console.log("\n--- "+ok+"/"+tot+" tests (moteur couplé) ---\n");
 process.exi

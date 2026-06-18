@@ -485,6 +485,15 @@ comptent comme faisant le tour) → spread ≤2, aucun à 0. **9/9.**
 > si Dr Dehout veut que les gardes 24h apparaissent aussi dans la colonne Tours, c'est un
 > petit ajustement d'affichage (app.js), non fait ici.
 
+### 6 quindecies. BUG fériés corrigé (Dr Dehout 2026-06-18)
+**Signalé** : sur un FÉRIÉ en semaine, le moteur couplé (1) ne posait PAS de tour et
+(2) mettait des gardes de NUIT (15h) au lieu de 24h. Cause : Phase 1 ne traitait que
+sam/dim ; les fériés-semaine tombaient en Phase 2 (nuits) + Phase 3 (stations).
+**Fix** : **Phase 1b** — un férié en semaine = jour « type week-end » : **2 gardes 24h
++ 1 tour, 0 station** (les gardes 24h font le tour). Phase 2 saute désormais les fériés ;
+le couplage jeu/ven ne se pose plus sur un jeu/ven férié (traité en 1b). Vérifié Q4 :
+11/11 (mer) et 25/12 (ven) → 2 G24 + 1 twe + 0 nuit + 0 station. Test ajouté. **10/10.**
+
 ## 7. Risques
 
 - Reconstruire le filet de couverture sans le couplage : si mal fait → trous de couverture.
