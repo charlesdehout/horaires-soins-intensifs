@@ -2251,11 +2251,18 @@ async function genererTrimestrePourMoisAffiche() {
     ? validerEquite(res.shifts, (medecins || []).filter((m) => m.grade !== "pg"), prefs || []) : [];
   const nbConf = res.conflits.length;
   const nbDoublures = res.shifts.filter((s) => s.doublure).length;
+  // Étape 6 — récups de week-end non plaçables automatiquement (semaine suivante
+  // saturée). Note SOUPLE (pas un conflit) : l'admin les pose à la main.
+  const nbRecupNP = (res.recupsNonPosees || []).length;
+  const recupNote = nbRecupNP > 0
+    ? "<br><br>ℹ️ <strong>" + nbRecupNP + " récup(s) de week-end</strong> non plaçable(s) automatiquement " +
+      "(semaine suivante saturée) — à poser manuellement."
+    : "";
   const base = "Trimestre " + libelleTrim + " généré : " + res.shifts.length + " shifts (" +
     nbDoublures + " doublure" + (nbDoublures > 1 ? "s" : "") + ") · algo " +
     (typeof PL_VERSION !== "undefined" ? PL_VERSION : "ANCIENNE VERSION (cache ?)") + ". ";
   if (nbConf === 0 && alertesEquite.length === 0) {
-    messageGeneration(base + "Aucun conflit. ✅", "info");
+    messageGeneration(base + "Aucun conflit. ✅" + recupNote, "info");
   } else {
     const apercu = res.conflits.slice(0, 8).map((c) => c.date + " — " + c.message).join("<br>");
     const apEq = alertesEquite.slice(0, 6).map((c) => "⚖️ " + c.message).join("<br>");
@@ -2268,6 +2275,7 @@ async function genererTrimestrePourMoisAffiche() {
         "<strong>Équité trimestrielle (" + alertesEquite.length + ", indicatif) :</strong><br>" +
         apEq + (alertesEquite.length > 6 ? "<br>…" : "");
     }
+    html += recupNote;
     messageGeneration(html, nbConf > 0 ? "error" : "info");
   }
   calendrier.refetchEvents();
@@ -2710,7 +2718,11 @@ async function construireVueSemaine() {
     { label: "Off-clinic",             cls: "semaine-row-off",
       get: function(d) { return nomsS(d, P(["off_clinic"])); } },
     { label: "Récupération",           cls: "semaine-row-repos",
-      get: function(d) { return nomsS(d, P(["recuperation"])); } },
+      get: function(d) {
+        // Récup posée (shift_type 'recup'), avec l'étiquette d'origine WE (samedi / V/D).
+        return shiftsList.filter(function(s) { return s.date === d && s.shift_type === "recup"; })
+          .map(function(s) { return { nom: nomFn(s.doctor_id) + (s.recup_origine ? " (" + s.recup_origine + ")" : ""), id: s.id }; });
+      } },
     { label: "Repos de garde",         cls: "semaine-row-reposg",
       get: function(d) { return nomsS(d, P(["repos_garde"])); } },
     { label: "Congé annuel",           cls: "semaine-row-conge",

@@ -315,6 +315,50 @@ vendredi→dimanche (le vendredi soir, lui, entame légitimement le week-end →
 + étiquetée, réévaluation du seuil « écart heures », affichage vue semaine. (La proration
 mi-temps est désormais saine ; renfort seulement si un cas limite réel réapparaît.)
 
+### 6 novies. Étape 6 (récup flexible week-end) — IMPLÉMENTÉE, 109/109 ✅
+**Décision produit (Dr Dehout)** : modèle **CONSERVATEUR** (pas de transfert de station)
++ **note souple admin** pour les récups non plaçables. Validé en session.
+
+**Réalisé (porté dans `planning.js`, `test_planning.js`, `app.js`)** :
+- **`plEmettreRecupsWeekend`** (passe en TOUTE FIN de génération, après tous les
+  rééquilibrages) : chaque **garde 24 h de week-end** (samedi → « récup (samedi) » ;
+  dimanche → « récup (V/D) ») ouvre droit à **1 récup la semaine suivante**, posée sur
+  un jour **ouvré (lun→ven) où le médecin serait sinon « non planifié »** (aucun shift,
+  statiquement disponible). Shift `recup` (0 h, VISIBLE) + `recup_origine` + `note`.
+- **≤ 1 récup / médecin / semaine** cible. **ADDITIF** : ne touche ni le repos
+  post-garde (lendemain) ni le repos couplé lundi/mardi (test couplage conservé).
+- **Pose uniquement sur jour libre** → 0 h, **aucun trou de couverture**, **aucune
+  station déplacée**.
+- **Récups non posées** (semaine suivante saturée) : pas de conflit dur →
+  `etat.recupsNonPosees` (renvoyé par `genererPlanning`/`genererTrimestre`) + **note
+  souple** dans le message de génération admin (app.js) : « ℹ️ N récup(s) non
+  plaçable(s) — à poser manuellement ».
+- **Affichage vue semaine** (app.js) : la ligne « Récupération » lit désormais le
+  shift_type `recup` (avant : mapping mort sur `recuperation`) et affiche l'étiquette
+  d'origine, ex. « Dr X (samedi) ».
+- **Test ajouté** : « récup flexible : chaque garde 24h de WE → ≤1 récup étiquetée la
+  semaine suivante, sans trou » (étiquetage, jour ouvré, ≤1/sem, jour libre, garde WE
+  la semaine précédente).
+
+**Réévaluation du seuil « écart heures » (demandé § 2/§5)** : la récup conservatrice
+est posée **sur des jours déjà libres → 0 h** ⇒ **n'affecte PAS** l'écart d'heures
+(mesuré identique avec/sans : 39,0 h max-min brut trimestre ; le rééquilibreur
+`plReequilibrerHeures` ne voit pas les `recup`). **Décision : seuil `ecart_heures_max`
+maintenu à 12 h** (aucune modification). *(Une réévaluation à la hausse ne serait
+nécessaire qu'avec le modèle agressif « transfert de station », écarté.)*
+
+**Mesures (trimestre pleine dispo, 14 médecins) — 109/109** :
+- Gardes 24 h de WE : **52** ; récups posées : **32 (62 %)** (22 samedi, 10 V/D).
+- Récups non posées (semaine suivante saturée → note admin) : **20**.
+- 0 récup le week-end, 0 sur un jour occupé, max 1/médecin/semaine.
+
+> ⚠️ **Environnement (session Cowork)** : le shell sandbox sert toujours une vue
+> **tronquée** du working-tree → `node`/`git` y voient des fichiers coupés. Validation
+> faite sur **copie fiable reconstruite** `git show HEAD: → /tmp` (= base committée) +
+> réapplication des mêmes edits → **109/109**. Les vrais fichiers sont édités via les
+> outils fichier (corrects sur disque). **Lancer `node test_planning.js` en local puis
+> committer depuis la machine.**
+
 ## 7. Risques
 
 - Reconstruire le filet de couverture sans le couplage : si mal fait → trous de couverture.

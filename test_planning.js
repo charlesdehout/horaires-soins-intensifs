@@ -897,6 +897,44 @@ test("équilibre jeudi/samedi : |nbJeudi − nbSamedi| ≤ 2 par plein-temps (co
     " (" + ecarts.map((e) => e.id + ":" + e.d).join(", ") + ")");
 });
 
+test("récup flexible : chaque garde 24h de WE → ≤1 récup étiquetée la semaine suivante, sans trou", () => {
+  // Chantier long week-end (étape 6) : toute garde 24h de WEEK-END ouvre droit à
+  // UNE journée de récup la SEMAINE SUIVANTE, posée souplement sur un jour ouvré
+  // libre, matérialisée en 'recup' et ÉTIQUETÉE « récup (samedi) » / « récup (V/D) ».
+  const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: equipe(), preferences: [] });
+  const dow = (d) => { const j = new Date(d + "T00:00:00Z").getUTCDay(); return j === 0 ? 7 : j; };
+  const add = (s, n) => { const d = new Date(s + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  const isoLundi = (d) => { let x = d; while (dow(x) !== 1) x = add(x, -1); return x; };
+  const recups = r.shifts.filter((s) => s.shift_type === "recup");
+  assert(recups.length >= 1, "aucune récup générée sur le trimestre");
+  // étiquetage + jour ouvré
+  recups.forEach((s) => {
+    assert(s.recup_origine === "samedi" || s.recup_origine === "V/D", "récup non étiquetée : " + JSON.stringify(s));
+    assert(/^récup \((samedi|V\/D)\)$/.test(s.note || ""), "libellé récup manquant : " + JSON.stringify(s));
+    assert(dow(s.date) <= 5, "récup posée un week-end : " + s.date);
+  });
+  // ≤ 1 récup / médecin / semaine ISO
+  const perWeek = {};
+  recups.forEach((s) => { const k = s.doctor_id + "|" + isoLundi(s.date); perWeek[k] = (perWeek[k] || 0) + 1; });
+  assert(Math.max(0, ...Object.values(perWeek)) <= 1, "plus d'une récup/médecin/semaine");
+  // pas de trou : la récup ne tombe QUE sur un jour libre (seule occupation ce jour)
+  const parDD = {};
+  r.shifts.forEach((s) => { (parDD[s.doctor_id + "|" + s.date] = parDD[s.doctor_id + "|" + s.date] || []).push(s); });
+  recups.forEach((s) => {
+    assert((parDD[s.doctor_id + "|" + s.date] || []).length === 1,
+      "récup sur un jour déjà occupé (trou potentiel) : " + s.doctor_id + " " + s.date);
+  });
+  // la récup suit bien une garde 24h de WE du même médecin la semaine précédente
+  const gardeWE = new Set(r.shifts
+    .filter((s) => s.shift_type === "garde_24h" && (dow(s.date) === 6 || dow(s.date) === 7))
+    .map((s) => s.doctor_id + "|" + isoLundi(s.date)));
+  recups.forEach((s) => {
+    const semPrec = isoLundi(add(isoLundi(s.date), -1));
+    assert(gardeWE.has(s.doctor_id + "|" + semPrec),
+      "récup sans garde 24h WE la semaine précédente : " + s.doctor_id + " " + s.date);
+  });
+});
+
 test("échange : céder sa garde du JEUDI fait perdre la récup couplée du lundi", () => {
   // X a jeudi (nuit) + samedi (24h) → lundi de récup couplée. S'il échange sa
   // garde du JEUDI, le couplage est rompu : son lundi doit être SUPPRIMÉ

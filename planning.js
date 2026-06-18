@@ -1197,6 +1197,59 @@ function plEmettreCongesFerie(sortie, etat, dates) {
   });
 }
 
+/* ÉTAPE 6 — RÉCUP FLEXIBLE des gardes 24 h de WEEK-END.
+   Chaque garde 24 h de week-end (samedi OU dimanche) ouvre droit à UNE journée
+   de récup la SEMAINE SUIVANTE, posée souplement sur un jour OUVRÉ (lun→ven) où
+   le médecin n'est PAS indispensable : il serait sinon « non planifié » ce jour
+   (aucun shift posé) et il est statiquement disponible. Le shift est matérialisé
+   en 'recup' (0 h, absence VISIBLE au calendrier) et ÉTIQUETÉ « récup (samedi) »
+   ou « récup (V/D) » via shift.recup_origine / shift.note.
+     - Au plus 1 récup par médecin et par semaine cible (≤ 1).
+     - Si aucun jour ne convient (semaine saturée) : AUCUNE pose, AUCUN conflit
+       dur — note souple dans etat.recupsNonPosees (l'admin la pose à la main).
+     - ADDITIF : ne remplace ni le repos post-garde (lendemain) ni le repos
+       couplé lundi/mardi (materialiserReposCouples) ; ne déplace aucune station
+       (on ne pose que sur des jours déjà libres → 0 h, aucun trou de couverture,
+       aucun impact sur l'écart d'heures → seuil ecart_heures_max inchangé).
+   À appeler en TOUTE FIN de génération (après tous les rééquilibrages). */
+function plEmettreRecupsWeekend(sortie, medecins, etat, dates) {
+  const within = new Set(dates);
+  const medById = {};
+  medecins.forEach((m) => { medById[m.id] = m; });
+  const occupe = new Set(sortie.map((s) => s.doctor_id + "|" + s.date));
+  const gardesWE = sortie
+    .filter((s) => s.shift_type === "garde_24h" &&
+                   (plJourSemaine(s.date) === 6 || plJourSemaine(s.date) === 7))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1
+                     : (a.doctor_id < b.doctor_id ? -1 : 1)));
+  etat.recupsNonPosees = etat.recupsNonPosees || [];
+  const recupSemaine = new Set(); // doctor_id|lundiCible : ≤ 1 récup / médecin / semaine
+  gardesWE.forEach((g) => {
+    const m = medById[g.doctor_id];
+    if (!m) return;
+    const origine = (plJourSemaine(g.date) === 6) ? "samedi" : "V/D";
+    // Lundi de la semaine SUIVANTE : samedi(6)+2, dimanche(7)+1.
+    const lundi = (plJourSemaine(g.date) === 6) ? plAdd(g.date, 2) : plAdd(g.date, 1);
+    const cleSem = g.doctor_id + "|" + lundi;
+    if (recupSemaine.has(cleSem)) return;
+    let pose = false;
+    for (let k = 0; k < 5 && !pose; k++) {                 // lundi → vendredi
+      const d = plAdd(lundi, k);
+      if (!within.has(d)) continue;
+      const cle = g.doctor_id + "|" + d;
+      if (occupe.has(cle)) continue;                       // déjà un shift → pas « non planifié »
+      if (etat.bloque[m.id] && etat.bloque[m.id].has(d)) continue;   // repos de garde déjà dû
+      if (!plDispoStatique(m, d, etat.indispo[m.id], etat.dispoDeclaree[m.id])) continue; // congé / jour non travaillé
+      sortie.push({ date: d, shift_type: "recup", poste: null, doctor_id: g.doctor_id,
+                    recup_origine: origine, note: "récup (" + origine + ")" });
+      occupe.add(cle);
+      recupSemaine.add(cleSem);
+      pose = true;
+    }
+    if (!pose) etat.recupsNonPosees.push({ doctor_id: g.doctor_id, garde: g.date, origine });
+  });
+}
+
 function genererPlanning(opts) {
   const annee = opts.annee;
   const mois = opts.mois;
@@ -1247,6 +1300,7 @@ function genererPlanning(opts) {
   plReequilibrerHeures(sortie, medecins, etat);
 
   plEmettreCongesFerie(sortie, etat, plDatesDuMois(annee, mois)); // M26 — jours de récup visibles
+  plEmettreRecupsWeekend(sortie, medecins, etat, plDatesDuMois(annee, mois)); // Étape 6 — récup flexible WE
 
   // RÈGLE « slack bloque la 24 h de semaine » : alerte si une 24 h coexiste
   // avec de l'off-clinic ou un médecin disponible non posté le même jour.
@@ -1260,7 +1314,7 @@ function genererPlanning(opts) {
     weekends: etat.nbWeekend[m.id],
   }));
 
-  return { shifts: sortie, conflits, stats };
+  return { shifts: sortie, conflits, stats, recupsNonPosees: etat.recupsNonPosees || [] };
 }
 
 
@@ -1856,6 +1910,7 @@ function genererTrimestre(opts) {
 
   // M26 — jours de récup (congé férié) visibles sur tout le trimestre.
   plEmettreCongesFerie(sortie, etat, moisTrim.reduce((a, mo) => a.concat(plDatesDuMois(annee, mo)), []));
+  plEmettreRecupsWeekend(sortie, medecins, etat, moisTrim.reduce((a, mo) => a.concat(plDatesDuMois(annee, mo)), [])); // Étape 6 — récup flexible WE
 
   // RÈGLE « slack bloque la 24 h de semaine » : alerte si une 24 h coexiste
   // avec de l'off-clinic ou un médecin disponible non posté le même jour.
@@ -1869,7 +1924,7 @@ function genererTrimestre(opts) {
     weekends: etat.nbWeekendTotal[m.id],
   }));
 
-  return { shifts: sortie, conflits, stats, mois: moisTrim };
+  return { shifts: sortie, conflits, stats, mois: moisTrim, recupsNonPosees: etat.recupsNonPosees || [] };
 }
 
 
