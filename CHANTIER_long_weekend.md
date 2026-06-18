@@ -359,6 +359,89 @@ nécessaire qu'avec le modèle agressif « transfert de station », écarté.)*
 > outils fichier (corrects sur disque). **Lancer `node test_planning.js` en local puis
 > committer depuis la machine.**
 
+### 6 decies. Correctif férié + expérience récup AGRESSIVE (2026-06-18)
+**BUG corrigé (signalé Dr Dehout, photo calendrier)** : une récup pouvait tomber un
+**jour férié** (ex. 11/11 un mercredi). La boucle ne testait que lun→ven sans exclure
+les fériés. **Fix porté (conservateur, vrais fichiers)** : `if (plEstWeekendOuFerie(d))
+continue;` dans `plEmettreRecupsWeekend` → plus jamais de récup un férié/week-end.
+Vérifié T4 (contient fériés) : 0 récup sur férié. **109/109 conservé.**
+
+**Expérience récup AGRESSIVE (sandbox uniquement, NON portée)** : si la semaine suivante
+est saturée, transférer UNE journée de station du médecin vers un collègue **non planifié**
+(même grade, dispo, continuité, plafond). Résultat mesuré (trimestre pleine dispo) :
+- Récups : **32 → 35 (62 % → 67 %)**, soit **+3 seulement** (5 transferts tentés).
+- **Plafond atteint par les contraintes** : sur 17 non-posées, ~15 ont bien un jour de
+  station transférable mais **aucun repreneur dispo** (même grade + continuité clinique).
+  En relâchant grade+continuité on monterait à 83 % mais écart heures **48 h** (inacceptable).
+- **Casse l'équité heures** : écart cumulé **12 → 21 h** → test « ≤ 12 h » échoue (108/109).
+**Verdict** : l'agressif apporte peu (+3) et **dégrade l'équilibre des heures** — à l'opposé
+de l'objectif d'équité. **Recommandation : garder le modèle CONSERVATEUR.**
+
+### 6 undecies. Déséquilibres signalés (photo compteurs) — diagnostic
+Mesure sur données PROPRES (trimestre pleine dispo, sans congé) :
+- Gardes : intra-grade **spread ≤ 2** (résidents ET A/S) ✅.
+- Week-ends : intra-grade **spread ≤ 2** ✅.
+- Tours : résidents **0** ✅, mais **A/S spread 3** (un A/S à 0 tour) ⚠️ — faiblesse RÉELLE.
+Les grands écarts de la capture (week-ends 2→7, gardes Garin 10, Calabro 7/355 h/32 non-plan)
+= cette faiblesse **amplifiée par les congés/temps partiels réels** (Dehout & Taleb en congé,
+Calabro partiel/nouvel-engagé). **La récup (conservatrice, 0 h) ne cause AUCUN de ces écarts.**
+Cause `plEquilibrerTours` : équilibrage **global** (pas intra-grade), borné par
+`plTourPossible` → peut laisser un A/S à 0. **À traiter en sous-chantier équité dédié**
+(machinerie fragile — cf. avertissements §6 quinquies). Non touché ici.
+
+### 6 duodecies. NOUVEAU MOTEUR « week-ends d'abord, couplé » (décision Dr Dehout 2026-06-18)
+**Changement de paradigme demandé** : abandonner l'ordre chronologique. Le moteur doit
+traiter **TOUS les week-ends du trimestre d'abord** (week-end 1 → N), de façon **couplée** :
+- ven (nuit) + dim (24h) = mêmes personnes (consolidation V/D) ;
+- sam (24h) + jeu (nuit) = mêmes personnes (couple S/J) — le jeudi est posé PROACTIVEMENT
+  depuis le samedi (inversion du contrôle, au lieu de lire les nuits déjà posées) ;
+- puis tours (binôme sam+dim) ; puis autres nuits (lun/mar/mer) ; puis unités (continuité) ;
+- puis **off + récups en DERNIER, la continuité PEUT être cassée** pour donner off/récups.
+Le « long week-end » n'est plus obtenu en évitant le week-end mais **compensé par off/récup**.
+→ Ceci REMPLACE la philosophie de décorrélation jeudi/samedi de l'étape 5 (assumé).
+
+**Prototype sandbox** : `genererTrimestreCouple` (dans planning.js sandbox, NON porté).
+**Phase 1 (week-ends couplés) — VALIDÉE** sur trimestre propre (14 médecins) :
+- Couplage **100 %** (26/26 sam↔jeu, 26/26 dim↔ven).
+- **Équité week-ends spread 0–1** par grade (vs dérive forte de l'ancien moteur).
+- **0 trou de couverture** ; filet « mois à 5 WE » : dépasse le plafond 2 WE/mois avec signal
+  (sinon trou) — cas 29-30 août.
+- Gardes/tours encore en spread 2–4 à ce stade (seulement WE + jeu/ven ; à resserrer en
+  Phase 2 + passe d'équité).
+**Phases 2-4 bâties (prototype complet, sandbox)** — mesure trimestre propre 14 médecins :
+- Couplage **100 %**, **gardes spread 1**, **tours spread 2 (aucun à 0)**, week-ends 1-2,
+  **0 trou / 0 station vide**. MEILLEUR que l'ancien sur gardes/tours/couplage.
+- PRIX : **écart d'heures 18 h** (ancien ~10,5) ; **59/196 semaines < 40 h** ; **récups
+  seulement 7** (semaines plus chargées → moins de jours libres). Le **24h-promotion**
+  (combler les heures via garde 24h station+nuit) N'EST PAS encore branché — piste n°1
+  pour récupérer les heures/plancher.
+- Passes réutilisées branchées : materialiserRepos(+Couples), plReequilibrerGardes,
+  genererOffClinic, plResorberOff24h, plCompleterMinimumHeures, plEquilibrerTours,
+  plReequilibrerHeures, plEmettreCongesFerie, plEmettreRecupsWeekend.
+
+**PROTOTYPE COMPLET — 9/9 tests dédiés ✅** (fichiers persistés dans le repo) :
+`planning.prototype-couple.js` (moteur complet) + `test_couple.prototype.js`
+(`node test_couple.prototype.js` → 9/9). NE touche PAS la production `planning.js`.
+
+Mesures finales (trimestre propre, 14 médecins) :
+- Couplage **100 %**, **gardes spread 1**, **tours spread 2 (aucun à 0 — corrige le défaut signalé)**,
+  week-ends 1-2, **0 trou de couverture / 0 station vide**, **écart heures 12,0 h** ✅, off 20.
+- Promotion-24h (déficit > 8 h) branchée → plancher/heures OK.
+- 8 conflits SIGNALÉS et légitimes : 3 week-ends sans résident dispo (2 A/S à arbitrer,
+  mois saturés) + 2 dépassements plafond WE (août 5 WE) + 3 nuits sans résident (mêmes
+  semaines). = pénurie réelle de résidents sur mois tendus (l'ancien moteur avait le même
+  souci, en pire/silencieux).
+- Récup : conservatrice par défaut (9, heures intactes) ; **dial agressif** (transfert
+  station) dispo → ~24 récups MAIS écart heures ~75 h (tradeoff inhérent).
+- mi-temps fte 0,5 → moins de week-ends (5 vs 7,3) ; congés respectés ; pas de crash.
+
+**Reste à faire (pistes)** : (1) mieux RÉPARTIR les résidents sur les week-ends du mois
+(l'ordre chrono des WE épuise les résidents tôt → 3 WE sans résident en fin de mois) ;
+(2) comparer sur DONNÉES RÉELLES (vrais médecins/congés) vs ancien moteur ; (3) décider du
+dial récup ; (4) si validé : remplacer `genererTrimestre` par le moteur couplé (portage +
+adapter/retirer les tests d'étape 5 qui encodent la décorrélation). **Sandbox/prototype
+tant que non validé sur données réelles.**
+
 ## 7. Risques
 
 - Reconstruire le filet de couverture sans le couplage : si mal fait → trous de couverture.

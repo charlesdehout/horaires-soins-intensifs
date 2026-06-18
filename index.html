@@ -172,6 +172,7 @@
             <span class="pa-label">Génération</span>
             <button id="generer-planning-btn">⚙️ Générer le mois (brouillon)</button>
             <button id="generer-trimestre-btn" class="secondary">📅 Générer le trimestre (équité)</button>
+            <button id="generer-trimestre-couple-btn" class="secondary">🧪 Générer — moteur couplé (test)</button>
             <button id="generer-pg-btn" class="secondary">🩺 Générer le planning PG (trimestre)</button>
           </div>
           <div class="pa-group">
@@ -1069,6 +1070,9 @@
   <script src="regles.js"></script>
   <!-- Algorithme de génération du planning (Module 5) -->
   <script src="planning.js"></script>
+
+  <!-- TEST : moteur couplé « week-ends d'abord » (étend les fonctions de planning.js) -->
+  <script src="planning-couple.js"></script>
   <!-- FullCalendar (Module 4) — bundle global (vues mois + liste) -->
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
   <!-- ExcelJS (Module 14) — génération de classeurs .xlsx stylés côté navigateur -->
