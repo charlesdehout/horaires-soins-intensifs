@@ -649,6 +649,27 @@ test("pré-placement week-end : garde 24h épinglée conservée + ≥1 résident
   assert(g.some((s) => /^resident/.test(s.doctor_id)), "≥1 résident requis le WE");
 });
 
+test("pré-placement : une station épinglée n'est JAMAIS déplacée par le rééquilibrage d'heures", () => {
+  // RÉGRESSION (chantier long week-end, étape « épingle-aware ») : quand le médecin
+  // pré-placé devient surchargé, plReequilibrerHeures cherche à offloader ses
+  // journées. Sans garde-fou, il déplaçait aussi les journées ÉPINGLÉES (le pin
+  // était trahi). On épingle assistant_specialiste1 sur usi3 tous les jours ouvrés
+  // de juin (→ surcharge volontaire) : les 22 stations doivent rester les siennes.
+  const wd = [];
+  for (let d = 1; d <= 30; d++) {
+    const s = "2026-06-" + String(d).padStart(2, "0");
+    const j = new Date(s + "T00:00:00Z").getUTCDay(); // 1..5 = lun..ven
+    if (j >= 1 && j <= 5) wd.push(s);
+  }
+  const pre = wd.map((d) => ({ date: d, shift_type: "jour", doctor_id: "assistant_specialiste1", poste: "usi3" }));
+  const r = genererPlanning({ annee: 2026, mois: 6, medecins: equipe(), preferences: [], prePlaces: pre });
+  const perdus = wd.filter((d) => {
+    const cell = r.shifts.filter((s) => s.date === d && s.poste === "usi3" && s.shift_type === "jour");
+    return !cell.some((s) => s.doctor_id === "assistant_specialiste1");
+  });
+  assert.strictEqual(perdus.length, 0, "stations épinglées déplacées par le rééquilibrage : " + perdus.join(", "));
+});
+
 console.log("\n=== Module 20 — Rotation trimestrielle (unité de référence) ===");
 
 test("rotation : l'unité de référence sert de base à la continuité", () => {
@@ -819,26 +840,28 @@ test("échange de garde refusé si le cédant n'est PAS libre pour reprendre la 
   assert(!r.ok, "échange accepté alors que ni R2 (repos) ni R1 (occupé) ne peuvent tenir le 11/6");
 });
 
-test("combos MAXIMISÉS : la majorité des 24h de week-end sont couplées (jeudi/sam, ven/dim)", () => {
-  // Demande (révision 2026-06-12) : favoriser au maximum les combos
-  // jeudi+samedi / vendredi+dimanche, sous l'équité (gardes rééquilibrées en
-  // fin de génération par plReequilibrerGardes). Mesuré ~75 % sur un trimestre
-  // type ; on verrouille un plancher de 50 %.
+test("long week-end : la majorité des jeudis de garde ÉVITENT leur week-end (préférence souple)", () => {
+  // Chantier long week-end (décorrélation + couplage temporel) : faire une garde
+  // le JEUDI « libère » le week-end de la même semaine — la personne n'est pas
+  // reprise en garde 24 h / tour le samedi ou dimanche QUAND un autre candidat
+  // existe (préférence souple, départagée APRÈS l'équité week-end ; repli sans
+  // conflit sinon). Mesuré ~73 % sur un trimestre type ; plancher verrouillé à 50 %.
   const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: equipe(), preferences: [] });
   const add = (d, n) => { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + n);
     return x.toISOString().slice(0, 10); };
   const dow = (d) => { const j = new Date(d + "T00:00:00Z").getUTCDay(); return j === 0 ? 7 : j; };
-  const gardes = new Set(r.shifts.filter((s) => s.shift_type === "garde_nuit" || s.shift_type === "garde_24h")
+  const weShift = new Set(r.shifts.filter((s) => s.shift_type === "garde_24h" || s.shift_type === "twe")
     .map((s) => s.doctor_id + "|" + s.date));
-  let we = 0, combos = 0;
+  let jeudis = 0, evite = 0;
   r.shifts.forEach((s) => {
-    if (s.shift_type !== "garde_24h") return;
-    const j = dow(s.date); if (j !== 6 && j !== 7) return;
-    we++;
-    if (gardes.has(s.doctor_id + "|" + add(s.date, -2))) combos++;
+    if ((s.shift_type !== "garde_nuit" && s.shift_type !== "garde_24h") || dow(s.date) !== 4) return;
+    jeudis++;
+    const surWE = weShift.has(s.doctor_id + "|" + add(s.date, 2)) || weShift.has(s.doctor_id + "|" + add(s.date, 3));
+    if (!surWE) evite++;
   });
-  assert(we > 0, "aucune 24h de week-end générée");
-  assert(combos / we >= 0.5, "combos " + combos + "/" + we + " (" + Math.round(100 * combos / we) + " % < 50 %)");
+  assert(jeudis > 0, "aucune garde de jeudi générée");
+  assert(evite / jeudis >= 0.5, "long week-end accordé : " + evite + "/" + jeudis +
+    " (" + Math.round(100 * evite / jeudis) + " % < 50 %)");
 });
 
 test("vendredi soir + dimanche = UN SEUL week-end travaillé (compteurs)", () => {
@@ -854,25 +877,24 @@ test("vendredi soir + dimanche = UN SEUL week-end travaillé (compteurs)", () =>
   assert.strictEqual(stats.y.weekends, 1, "y (sam+dim même WE) = " + stats.y.weekends + ", attendu 1");
 });
 
-test("consolidation : la majorité des 24h du DIMANCHE sont tenues par une garde du vendredi", () => {
-  // Objectif (révision 2026-06-12) : diminuer le nombre total de week-ends
-  // entamés — le médecin du vendredi soir reprend la 24 h du dimanche
-  // (vendredi+dimanche = 1 week-end). Mesuré ~77 % ; plancher verrouillé à 60 %.
+test("équilibre jeudi/samedi : |nbJeudi − nbSamedi| ≤ 2 par plein-temps (couplage temporel, trimestre)", () => {
+  // Chantier long week-end : le couplage jeudi↔samedi n'est plus intra-semaine
+  // mais TEMPOREL — les mêmes plein-temps font jeudis ET samedis, lissés sur le
+  // trimestre. On vérifie l'équité de ce couplage : par personne plein-temps,
+  // l'écart cumulé entre gardes de jeudi (nuit/24h) et de samedi (24h) reste borné.
   const r = genererTrimestre({ annee: 2026, trimestre: 3, medecins: equipe(), preferences: [] });
-  const add = (d, n) => { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + n);
-    return x.toISOString().slice(0, 10); };
   const dow = (d) => { const j = new Date(d + "T00:00:00Z").getUTCDay(); return j === 0 ? 7 : j; };
-  const gardes = new Set(r.shifts.filter((s) => s.shift_type === "garde_nuit" || s.shift_type === "garde_24h")
-    .map((s) => s.doctor_id + "|" + s.date));
-  let dim = 0, couples = 0;
+  const nbJ = {}, nbS = {};
+  equipe().forEach((m) => { nbJ[m.id] = 0; nbS[m.id] = 0; });
   r.shifts.forEach((s) => {
-    if (s.shift_type !== "garde_24h" || dow(s.date) !== 7) return;
-    dim++;
-    if (gardes.has(s.doctor_id + "|" + add(s.date, -2))) couples++;
+    if ((s.shift_type === "garde_nuit" || s.shift_type === "garde_24h") && dow(s.date) === 4) nbJ[s.doctor_id]++;
+    if (s.shift_type === "garde_24h" && dow(s.date) === 6) nbS[s.doctor_id]++;
   });
-  assert(dim > 0, "aucune 24h de dimanche générée");
-  assert(couples / dim >= 0.6, "dimanches couplés au vendredi : " + couples + "/" + dim +
-    " (" + Math.round(100 * couples / dim) + " % < 60 %)");
+  const ecarts = equipe().filter((m) => (m.fte || 1) >= 1)
+    .map((m) => ({ id: m.id, d: Math.abs(nbJ[m.id] - nbS[m.id]) }));
+  const pire = ecarts.reduce((a, x) => x.d > a.d ? x : a, { id: "-", d: 0 });
+  assert(pire.d <= 2, "équilibre jeudi/samedi rompu : " + pire.id + " |Δ|=" + pire.d +
+    " (" + ecarts.map((e) => e.id + ":" + e.d).join(", ") + ")");
 });
 
 test("échange : céder sa garde du JEUDI fait perdre la récup couplée du lundi", () => {

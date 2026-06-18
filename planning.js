@@ -151,6 +151,9 @@ function plNouvelEtat(medecins) {
     // sont REMIS À ZÉRO à chaque mois (équilibrage MENSUEL des gardes, demandé
     // par la révision). Les cumuls pour les statistiques sont *Total ci-dessous.
     nbGardes: {}, nbWeekend: {}, nbGardesTotal: {}, nbWeekendTotal: {},
+    // Couplage TEMPOREL (chantier long week-end) : compteurs cumulés des gardes
+    // de JEUDI (nuit/24h) et de SAMEDI (24h) — base de l'équilibre jeudi/samedi.
+    nbJeudi: {}, nbSamedi: {},
     heures: {}, station: {},
     // CRÉDIT D'ÉQUITÉ pour les jours de CONGÉ (préférences bloquantes) : un
     // jour ouvré de congé est crédité PL_HEURES.jour dans ce compteur, utilisé
@@ -211,6 +214,7 @@ function plNouvelEtat(medecins) {
     e.nbWeekend[m.id] = 0;
     e.nbGardesTotal[m.id] = 0;
     e.nbWeekendTotal[m.id] = 0;
+    e.nbJeudi[m.id] = 0; e.nbSamedi[m.id] = 0; // couplage temporel
     e.heures[m.id] = 0;
     e.heuresEquite[m.id] = 0; // crédit congés (équité uniquement)
     e.attenduMin[m.id] = 0;   // minimum cumulé attendu (40 h/sem proratisé)
@@ -488,6 +492,23 @@ function plTrier(liste, critere, etat, date, favoriId) {
       };
       const sa = cout(a.id), sb = cout(b.id);
       if (sa !== sb) return sa - sb;                            // équité week-ends d'abord
+      // LONG WEEK-END : à équité week-end égale, celui qui est de garde le JEUDI
+      // de cette semaine passe DERRIÈRE (son week-end est « libéré »).
+      if (etat._jeudiWE) {
+        const ja = etat._jeudiWE.has(a.id) ? 1 : 0, jb = etat._jeudiWE.has(b.id) ? 1 : 0;
+        if (ja !== jb) return ja - jb;                          // sans-jeudi devant
+      }
+      // COUPLAGE TEMPOREL (samedi) : entre PLEIN-TEMPS, préférer qui « doit » un
+      // samedi (a fait des jeudis sans contrepartie : nbJeudi − nbSamedi élevé).
+      if (date && plJourSemaine(date) === 6) {
+        const ftA = (typeof a.fte === "number" ? a.fte : 1) >= 1;
+        const ftB = (typeof b.fte === "number" ? b.fte : 1) >= 1;
+        if (ftA && ftB) {
+          const da = (etat.nbJeudi[a.id] || 0) - (etat.nbSamedi[a.id] || 0);
+          const db = (etat.nbJeudi[b.id] || 0) - (etat.nbSamedi[b.id] || 0);
+          if (da !== db) return db - da;                        // plus gros déficit samedi devant
+        }
+      }
     }
     // Souhait(+) / indisponibilité(−) de GARDE — DÉPARTAGE souple (n'écrase pas
     // l'équité ci-dessus) et UNIQUEMENT pour les gardes. À souhait égal positif,
@@ -675,8 +696,12 @@ function plChoisirWE(liste, date, etat, favoriId, conflits) {
 }
 
 /* Enregistre un shift et met à jour l'état (heures, gardes, repos 12 h). */
-function plAffecter(sortie, etat, date, type, doctorId, poste) {
-  sortie.push({ date, shift_type: type, poste: poste || null, doctor_id: doctorId });
+function plAffecter(sortie, etat, date, type, doctorId, poste, epingle) {
+  const shift = { date, shift_type: type, poste: poste || null, doctor_id: doctorId };
+  // Module 19 : un shift PRÉ-PLACÉ (épinglé par l'admin) est marqué `epingle`
+  // → il ne sera jamais déplacé par les passes de rééquilibrage (heures, etc.).
+  if (epingle) shift.epingle = true;
+  sortie.push(shift);
   plMarquerAssigne(date, doctorId, etat);
   etat.heures[doctorId] += PL_HEURES[type];
   // Heures de la semaine ISO (plafond 60 h souple, Module 12).
@@ -688,6 +713,10 @@ function plAffecter(sortie, etat, date, type, doctorId, poste) {
     const lk = plLundiDe(date);
     etat.gardesSemaine[doctorId][lk] = (etat.gardesSemaine[doctorId][lk] || 0) + 1;
     etat.bloque[doctorId].add(plAdd(date, 1)); // repos 12 h → lendemain off
+    // Couplage TEMPOREL : compter les gardes de jeudi (nuit/24h) et de samedi (24h).
+    const _jr = plJourSemaine(date);
+    if (_jr === 4) etat.nbJeudi[doctorId] = (etat.nbJeudi[doctorId] || 0) + 1;
+    if (_jr === 6 && type === "garde_24h") etat.nbSamedi[doctorId] = (etat.nbSamedi[doctorId] || 0) + 1;
     // Module 12c : mémorise la dernière garde (jours traités dans l'ordre
     // chronologique → simple écrasement) pour le biais de concentration.
     etat.derniereGarde[doctorId] = date;
@@ -729,7 +758,7 @@ function plGenererSemaine(date, medecins, etat, sortie, conflits, pp) {
   const plan = {}; // codeStation -> doctorId (inclut les stations pré-placées)
   pp.forEach((s) => {
     if (PL_HEURES[s.shift_type] !== undefined) {
-      plAffecter(sortie, etat, date, s.shift_type, s.doctor_id, s.poste || null);
+      plAffecter(sortie, etat, date, s.shift_type, s.doctor_id, s.poste || null, true); // épinglé
       if ((s.shift_type === "jour" || s.shift_type === "garde_24h") && s.poste) {
         plan[s.poste] = s.doctor_id;
         // Pas d'ancrage de continuité pour les stations sans continuité (Labo).
@@ -1022,12 +1051,25 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits, pp) {
   // cf. tiebreaker dans plTrier). À défaut d'ex æquo, l'équité prime.
   // (les gardes du jeudi/vendredi d'un médecin couplé sont par construction
   //  des 17h–9h : seuls les shifts garde_nuit alimentent le couplage)
+  // DÉCORRÉLATION CIBLÉE (chantier long week-end) : on décorrèle SEULEMENT
+  // jeudi→samedi (le « long week-end » : la garde du jeudi libère le samedi).
+  // On CONSERVE la consolidation vendredi→dimanche : la garde du vendredi soir
+  // entame DÉJÀ le week-end (jusqu'au samedi 9h) → lui faire reprendre le dimanche
+  // = UN SEUL week-end entamé au lieu de deux. Sinon le nombre de week-ends
+  // travaillés gonfle sans raison (le jeudi, lui, n'est PAS un week-end). Le lien
+  // jeudi/samedi est remplacé par un couplage TEMPOREL (compteurs nbJeudi/nbSamedi).
   let coupleId = null;
-  if (j === 6 || j === 7) {
-    const ids = sortie.filter((s) => s.shift_type === "garde_nuit" && s.date === plAdd(date, -2))
-      .map((s) => s.doctor_id);
-    if (ids.length) coupleId = ids; // favoris multiples (les 2 gardes de J-2)
+  if (j === 7) { // dimanche : favoris = gardes de nuit du vendredi (J-2) → consolidation
+    const ids = sortie.filter((sx) => sx.shift_type === "garde_nuit" && sx.date === plAdd(date, -2))
+      .map((sx) => sx.doctor_id);
+    if (ids.length) coupleId = ids;
   }
+  // LONG WEEK-END : qui est de garde le JEUDI de CETTE semaine ? Faire un jeudi
+  // libère le week-end → on dépriorise ces médecins pour les gardes/tour de ce
+  // week-end (préférence souple ; repli automatique via le filet de couverture).
+  const _jeudiWE = plAdd(plLundiDe(date), 3); // jeudi ISO de la semaine
+  etat._jeudiWE = new Set(sortie.filter((s) => s.date === _jeudiWE &&
+    (s.shift_type === "garde_nuit" || s.shift_type === "garde_24h")).map((s) => s.doctor_id));
 
   // Gardes 24 h : on complète jusqu'à 2 en tenant compte de celles ÉPINGLÉES,
   // en garantissant ≥1 résident (jamais 2 A/S via le résident garanti).
@@ -1040,11 +1082,16 @@ function plGenererWeekend(date, medecins, etat, sortie, conflits, pp) {
   // jeudi+samedi / vendredi+dimanche ne se réalisait jamais. Le repos couplé du
   // lundi/mardi compense la semaine suivante.
   const garderFavoris = (pool, source) => {
-    if (!coupleId) return pool;
-    const favs = Array.isArray(coupleId) ? coupleId : [coupleId];
-    const dedans = new Set(pool.map((m) => m.id));
-    source.forEach((m) => { if (favs.indexOf(m.id) !== -1 && !dedans.has(m.id)) pool.push(m); });
-    return pool;
+    if (coupleId) {
+      const favs = Array.isArray(coupleId) ? coupleId : [coupleId];
+      const dedans = new Set(pool.map((m) => m.id));
+      source.forEach((m) => { if (favs.indexOf(m.id) !== -1 && !dedans.has(m.id)) pool.push(m); });
+    }
+    // FILET DE COUVERTURE (chantier long week-end, étape 1) : si le vivier filtré est
+    // vide, on autorise la source complète (dépassement de plafond souple) plutôt que
+    // de laisser une garde de week-end non pourvue. N'agit QUE sur un vivier vide →
+    // aucun effet tant que des candidats sous plafond existent (tests inchangés).
+    return pool.length ? pool : source.slice();
   };
   if (manqueG > 0) {
     if (residentDejaGarde) {
@@ -1135,12 +1182,18 @@ function plIndexerPrePlaces(prePlaces) {
 function plEmettreCongesFerie(sortie, etat, dates) {
   if (!etat.congesFerie || !etat.congesFerie.length) return;
   const within = dates ? new Set(dates) : null;
-  const dejaPose = new Set(sortie.map((s) => s.date + "|" + s.doctor_id));
   etat.congesFerie.forEach((c) => {
     if (within && !within.has(c.date)) return;             // hors période générée
-    if (dejaPose.has(c.date + "|" + c.doctor_id)) return;  // déjà un shift ce jour
+    const existant = sortie.find((s) => s.date === c.date && s.doctor_id === c.doctor_id);
+    if (existant) {
+      // Le jour de récup férié coïncide avec un shift existant. S'il s'agit d'un
+      // simple REPOS (repos_garde, 0 h — p. ex. lendemain de garde voisine), on le
+      // RELABEL en conge_ferie pour rendre la récup VISIBLE au calendrier. Sur un
+      // jour TRAVAILLÉ on ne touche à rien (la compensation ne tombe pas un jour travaillé).
+      if (existant.shift_type === "repos_garde") existant.shift_type = "conge_ferie";
+      return;
+    }
     sortie.push({ date: c.date, shift_type: "conge_ferie", poste: null, doctor_id: c.doctor_id });
-    dejaPose.add(c.date + "|" + c.doctor_id);
   });
 }
 
@@ -1568,6 +1621,7 @@ function plReequilibrerHeures(sortie, medecins, etat) {
         // Journées de station transférables du plus chargé (semaine, hors WE).
         for (const s of sortie) {
           if (s.doctor_id !== haut.id || s.shift_type !== "jour") continue;
+          if (s.epingle || s.doublure) continue; // pré-placement (M19) / doublure : jamais déplacés
           // le donneur doit rester au-dessus de son minimum cumulé
           if (etat.attenduMin && heures[haut.id] - PL_HEURES.jour < (etat.attenduMin[haut.id] || 0)) break;
           if (!peutRecevoirJour(bas, s)) continue;
@@ -1609,6 +1663,7 @@ function plReequilibrerHeures(sortie, medecins, etat) {
         if (hNorm(haut.id) - hNorm(bas.id) <= seuil) break;
         for (const s of sortie) {
           if (s.doctor_id !== haut.id || s.shift_type !== "jour") continue;
+          if (s.epingle || s.doublure) continue; // pré-placement (M19) / doublure : jamais déplacés
           if (etat.attenduMin && heures[haut.id] - PL_HEURES.jour < (etat.attenduMin[haut.id] || 0)) break;
           if (!peutRecevoirJour(bas, s, true)) continue; // continuité ASSOUPLIE
           const avant = ecartGlobal();
