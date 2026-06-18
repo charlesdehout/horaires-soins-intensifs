@@ -3531,7 +3531,11 @@ function genererTrimestreCouple(opts) {
   //     pour combler les heures/plancher et réduire l'écart. Tient compte des
   //     stations déjà prises ce jour. ----
   {
-    const moy = () => { let s=0,n=0; medecins.forEach((m)=>{s+=etat.heures[m.id];n++;}); return n?s/n:0; };
+    const _mb = {}; medecins.forEach((m) => { _mb[m.id] = m; });
+    const fteOf = (id) => { const m = _mb[id]; return (m && typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1; };
+    // Charge NORMALISÉE par l'ETP (heures/fte) : un mi-temps n'est pas "sous-chargé"
+    // juste parce que ses heures absolues sont basses → pas de sur-promotion 24h.
+    const moy = () => { let s=0,n=0; medecins.forEach((m)=>{s+=etat.heures[m.id]/fteOf(m.id);n++;}); return n?s/n:0; };
     datesTrim.forEach((date) => {
       const jr = plJourSemaine(date);
       if (jr === 6 || jr === 7 || plEstWeekendOuFerie(date)) return;
@@ -3541,7 +3545,7 @@ function genererTrimestreCouple(opts) {
       const cle = plLundiDe(date);
       const m0 = moy();
       sortie.filter((s)=>s.date===date && s.shift_type==="garde_nuit").forEach((s)=>{
-        if (etat.heures[s.doctor_id] >= m0 - 8) return;            // seulement les sous-chargés (deficit > 8h)
+        if (etat.heures[s.doctor_id] / fteOf(s.doctor_id) >= m0 - 8) return;  // sous-chargés (déficit normalisé ETP > 8h)
         const med = medecins.find((x)=>x.id===s.doctor_id); if (!med) return;
         const st = plChoisirStation(med, postes.filter((c)=>!plSansContinuite(c)), plan, etat, cle);
         if (!st || (st in plan)) return;

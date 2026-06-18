@@ -442,6 +442,37 @@ dial récup ; (4) si validé : remplacer `genererTrimestre` par le moteur coupl�
 adapter/retirer les tests d'étape 5 qui encodent la décorrélation). **Sandbox/prototype
 tant que non validé sur données réelles.**
 
+### 6 terdecies. Retours test données réelles (Dr Dehout 2026-06-18)
+**Test réel : « ça marche plutôt pas mal ».** Deux retours :
+1. **Mi-temps (Lorenzo) surchargé** → FIX appliqué (planning-couple.js + prototype, 9/9) :
+   la **promotion-24h (Phase 2b) est désormais normalisée à l'ETP** (`heures/fte` au lieu
+   d'heures absolues) — un mi-temps n'est plus vu comme « sous-chargé » à tort. Mesure :
+   gardes mi-temps ratio **0,50** (déjà bon), heures **543 → 437** (cible ~338) — amélioré.
+   Le plancher 40h EST déjà proratisé (`minH*fte`). Reste un léger sur-quota horaire
+   résiduel (gardes lourdes en heures) → dépend du lissage mensuel (point 2).
+2. **Lissage MENSUEL demandé** (heures + gardes semaine) + plus de non-planifiés début de mois.
+   DIAGNOSTIC : trimestre équilibré (écart 12h) MAIS **chaque mois reste très inégal
+   (écart 36–45h/mois)**. Cause : l'imbalance mensuelle est portée par les **GARDES**
+   (24h=24h, nuit=15h), que `plReequilibrerHeures` NE PEUT PAS déplacer (il ne bouge que
+   les stations `jour`). Tentative « rééquilibrage heures par mois » = inefficace (les
+   stations ne compensent pas les gardes) → annulée.
+   **Vrai correctif (à faire) : équilibrer les GARDES (semaine + charge week-end) PAR MOIS**,
+   pas seulement sur le trimestre. ⚠️ Tension produit : l'équité **week-ends** voulue au
+   TRIMESTRE peut entrer en conflit avec l'équité **heures/gardes** au MOIS — à arbitrer.
+
+**Idée Dr Dehout testée — « dé-doublure des sur-chargés »** : une doublure = couverture
+EN TROP → la retirer pour un médecin au-dessus de sa cible mensuelle (normalisée ETP) le
+met en NON-PLANIFIÉ sans trou. Mesuré (sandbox, NON porté) :
+- SANS garde-fou trimestre : mois **juil 36→15h, sept 40→31h**, non-planifiés ↑ (5,7→7,0)
+  — MAIS **écart TRIMESTRE 12→39h** (sur-correction). **AOÛT reste 45h** (sur-charge =
+  GARDES pures, 0 doublure à retirer → non corrigeable par ce levier).
+- AVEC garde-fou trimestre (ne retirer que si sur-chargé mois ET trim) : ne fait quasi
+  RIEN (les sur-chargés du mois sont équilibrés sur le trim) → mois inchangés.
+**Conclusion : TRADEOFF FONDAMENTAL** mois vs trimestre, non contournable par les doublures.
+La dé-doublure n'aide que les mois dont la sur-charge vient des doublures (pas des gardes,
+ex. août). → décision produit + équilibrage des GARDES par mois nécessaires. NON porté ;
+état déployé = **fix mi-temps uniquement** (9/9). À re-tester sur données réelles.
+
 ## 7. Risques
 
 - Reconstruire le filet de couverture sans le couplage : si mal fait → trous de couverture.
