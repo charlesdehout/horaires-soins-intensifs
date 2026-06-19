@@ -136,7 +136,15 @@ function genererTrimestreCouple(opts) {
       let ordre = triEq.slice().sort((a, b) => (coupkable(b) ? 1 : 0) - (coupkable(a) ? 1 : 0));
       // FAVORI SAMEDI (statut spécial) : prioritaire pour la garde 24h du samedi
       // (compense l'impossibilité de garde le dimanche → garde le même nb de gardes).
-      if (plJourSemaine(weDay) === 6) ordre.sort((a, b) => ((b.favori_garde_samedi||b.cap_fromager) ? 1 : 0) - ((a.favori_garde_samedi||a.cap_fromager) ? 1 : 0));
+      // FAVORI SAMEDI : le drapeau explicite favori_garde_samedi, ET le CAP fromager
+      // EN RATTRAPAGE SEULEMENT (priorité samedi tant que SON nb de week-ends est
+      // SOUS la moyenne d'équipe) → il atteint le MÊME nombre de week-ends que les
+      // autres sans dépasser (il ne peut les faire que le samedi, pas le dimanche).
+      if (plJourSemaine(weDay) === 6) {
+        let avgW = 0; medecins.forEach((m) => { avgW += (etat.nbWeekend[m.id] || 0); }); avgW /= Math.max(medecins.length, 1);
+        const boost = (m) => (m.favori_garde_samedi || (m.cap_fromager && (etat.nbWeekend[m.id] || 0) < avgW - PL_EPS)) ? 1 : 0;
+        ordre.sort((a, b) => boost(b) - boost(a));
+      }
       const choisis = plCoupleChoisir(ordre, etat, weDay, couv.gardes_weekend, true, true);
       // FILET COUVERTURE : si < 2 gardes faute de résident, compléter (2 A/S toléré
       // en dernier recours) plutôt qu'un trou — et SIGNALER.

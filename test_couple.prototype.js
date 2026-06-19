@@ -96,6 +96,12 @@ t("statut spécial « CAP fromager » : 0 lundi, 0 garde dimanche, 0 off, gardes
   const others=["resident2","resident3","resident4","resident5","resident6"];
   const avg=others.reduce((a,id)=>a+g[id],0)/others.length;
   assert(Math.abs(g["resident1"]-avg)<=2.5,"gardes trop loin de la moyenne : "+g["resident1"]+" vs "+avg.toFixed(1));
+  // MÊME nombre de week-ends que les autres (pas plus) — rattrapage par samedi, pas de dépassement
+  const wkey=d=>{let x=d;while(js(x)!==6)x=add(x,-1);return x;};
+  const W={};meds.forEach(m=>W[m.id]=new Set());
+  r.shifts.forEach(s=>{if((js(s.date)===6||js(s.date)===7)&&["garde_24h","twe"].includes(s.shift_type))W[s.doctor_id].add(wkey(s.date));});
+  const avgW=others.reduce((a,id)=>a+W[id].size,0)/others.length;
+  assert(Math.abs(W["resident1"].size-avgW)<=1.5,"week-ends CAP trop loin de la moyenne : "+W["resident1"].size+" vs "+avgW.toFixed(1));
 });
 console.log("\n--- "+ok+"/"+tot+" tests (moteur couplé) ---\n");
 process.exi
