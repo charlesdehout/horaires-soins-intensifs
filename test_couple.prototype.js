@@ -1,5 +1,19 @@
 const assert=require("assert");
-const P=require("./planning.prototype-couple.js");
+// SOURCE UNIQUE (fusion 2026-06-19) : plus de copie planning.prototype-couple.js.
+// On charge planning.js + planning-couple.js dans UN SEUL scope CommonJS (équivalent
+// exact de l'ancienne concaténation manuelle). Toute modif du moteur se fait désormais
+// dans CES DEUX fichiers seulement (browser + Node partagent la même source).
+const fs=require("fs"), path=require("path"), Module=require("module");
+const P=(function(){
+  const code=fs.readFileSync(path.join(__dirname,"planning.js"),"utf8")+"\n"
+            +fs.readFileSync(path.join(__dirname,"planning-couple.js"),"utf8")
+            +"\nif(typeof genererTrimestreCouple!=='undefined')module.exports.genererTrimestreCouple=genererTrimestreCouple;";
+  const m=new Module(path.join(__dirname,"_couple_bundle.js"));
+  m.filename=path.join(__dirname,"_couple_bundle.js");
+  m.paths=Module._nodeModulePaths(__dirname);
+  m._compile(code,m.filename);
+  return m.exports;
+})();
 let ok=0,tot=0;
 function t(n,f){tot++;try{f();ok++;console.log("  ✅ "+n);}catch(e){console.log("  ❌ "+n+" → "+e.message);}}
 function equipe(){const m=[];const a=(n,g)=>{for(let i=1;i<=n;i++)m.push({id:g+i,name:g+i,grade:g,fte:1,weekly_hours_target:52,jours_travailles:[1,2,3,4,5,6,7]});};a(6,"resident");a(8,"assistant_specialiste");return m;}

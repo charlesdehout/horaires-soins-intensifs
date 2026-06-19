@@ -379,7 +379,31 @@ function genererTrimestreCouple(opts) {
     });
   }
 
-  // ---- PHASE 3 : unités (jour), continuité au mieux ----
+  // ---- Équité des gardes AVANT repos / récups / stations (tout ce qui suit doit
+  //      suivre les gardes FINALES — y compris le repos couplé ven→dim). ----
+  plReequilibrerGardes(sortie, medecins, etat);
+  // Équilibrage des heures-de-garde PAR MOIS (lisse les gardes mois par mois).
+  moisTrim.forEach((mois) => plEquilibrerGardesMois(sortie, medecins, etat, annee, mois));
+
+  // ---- Repos de garde + repos couplés (lendemain, lundi/mardi) ----
+  // Posés AVANT la Phase 3 : on les MARQUE assignés (plMarquerAssigne) pour que le
+  // staffing des stations ne pose rien par-dessus (plDispo lit etat.assigneJour).
+  const bDeb = plBornesMois(annee, moisTrim[0]).debut, bFin = plBornesMois(annee, moisTrim[2]).fin;
+  const dansTrim = (d) => d >= bDeb && d <= bFin;
+  materialiserRepos(sortie, dansTrim).forEach((r) => { sortie.push(r); plMarquerAssigne(r.date, r.doctor_id, etat); });
+  materialiserReposCouples(sortie, dansTrim).forEach((r) => { sortie.push(r); plMarquerAssigne(r.date, r.doctor_id, etat); });
+
+  // ---- RÉCUPS D'OFFICE (AVANT le staffing des stations) ----
+  // Cause du bug « la récup V/D saute » : les récups tournaient en DERNIER, quand la
+  // semaine était déjà saturée (plus de jour libre). On les pose ICI, d'office, juste
+  // après les repos, puis on BLOQUE leurs jours (plMarquerAssigne) → la Phase 3 ne
+  // staffe plus par-dessus. La récup V/D tombe typiquement le mardi (repos couplé ven→dim).
+  plEmettreCongesFerie(sortie, etat, datesTrim);
+  plEmettreRecupsWeekend(sortie, medecins, etat, datesTrim);
+  sortie.forEach((s) => { if (s.shift_type === "recup" || s.shift_type === "conge_ferie") plMarquerAssigne(s.date, s.doctor_id, etat); });
+
+  // ---- PHASE 3 : unités (jour), continuité au mieux — APRÈS repos/récups (ne vole
+  //      plus les jours de récup : plDispo respecte etat.assigneJour & etat.bloque). ----
   datesTrim.forEach((date) => {
     const jr = plJourSemaine(date);
     if (jr === 6 || jr === 7) return;                 // pas de station le week-end
@@ -408,18 +432,6 @@ function genererTrimestreCouple(opts) {
     const vide = postes.filter((c) => !(c in plan));
     if (vide.length) conflits.push({ date, message: "Stations vides : " + vide.join(",") });
   });
-
-  // ---- Équité des gardes AVANT la matérialisation des repos (pour que les repos
-  //      — y compris le couplé ven→dim — suivent les gardes FINALES). ----
-  plReequilibrerGardes(sortie, medecins, etat);
-  // Équilibrage des heures-de-garde PAR MOIS (lisse les gardes mois par mois).
-  moisTrim.forEach((mois) => plEquilibrerGardesMois(sortie, medecins, etat, annee, mois));
-
-  // ---- Repos de garde + repos couplés (lendemain, lundi/mardi) ----
-  const bDeb = plBornesMois(annee, moisTrim[0]).debut, bFin = plBornesMois(annee, moisTrim[2]).fin;
-  const dansTrim = (d) => d >= bDeb && d <= bFin;
-  materialiserRepos(sortie, dansTrim).forEach((r) => sortie.push(r));
-  materialiserReposCouples(sortie, dansTrim).forEach((r) => sortie.push(r));
 
   // ---- PHASE 4 : off-clinic, plancher heures (doublures), équité tours/heures ----
   moisTrim.forEach((mois) => {
@@ -455,8 +467,7 @@ function genererTrimestreCouple(opts) {
       sortie.splice(sortie.indexOf(sh), 1);                       // retire la doublure → non-planifié
     }
   }
-  plEmettreCongesFerie(sortie, etat, datesTrim);
-  plEmettreRecupsWeekend(sortie, medecins, etat, datesTrim, false);  // récups conservatrices (jour libre) — dial agressif = +récups mais casse heures
+  // (Récups/congés fériés déjà émis AVANT la Phase 3 — voir « RÉCUPS D'OFFICE » plus haut.)
 
   return { shifts: sortie, conflits, etat, medecins, datesTrim, within, moisTrim, annee, recupsNonPosees: etat.recupsNonPosees || [] };
 }

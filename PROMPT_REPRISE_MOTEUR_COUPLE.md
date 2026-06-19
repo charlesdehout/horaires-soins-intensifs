@@ -1,31 +1,35 @@
 # Reprise — Moteur de planning « couplé, week-ends d'abord »
 
-> Document de référence pour repartir à neuf. Explique **exactement** comment
-> l'algorithme fonctionne, l'état actuel, et les 2 changements en cours.
-> Dernière mise à jour : 2026-06-18.
+> Document de référence unique pour reprendre le moteur. Décrit l'architecture,
+> l'algorithme et l'état actuel. Dernière mise à jour : 2026-06-19.
 
 ---
 
-## 0. Où est le code
+## 0. Où est le code (base simplifiée 2026-06-19)
 
-- **`planning.js`** — moteur HISTORIQUE (génération chronologique). Toujours utilisé
-  par le bouton « 📅 Générer le trimestre (équité) ». Contient les fonctions de base
-  (sélection, affectation, repos, off-clinic, rééquilibrages) **réutilisées** par le
-  moteur couplé.
-- **`planning-couple.js`** — moteur COUPLÉ « week-ends d'abord » (NOUVEAU). Chargé par
-  `index.html` APRÈS `planning.js` (il étend ses fonctions globales). Définit
-  `genererTrimestreCouple()` + helpers (`plCoupleChoisir`, `plPeutGarde`,
-  `plEquilibrerGardesMois`). Branché au bouton **« 🧪 Générer — moteur couplé (test) »**.
-- **`planning.prototype-couple.js`** — COPIE AUTONOME du moteur couplé (planning.js
-  complet + les fonctions couplées), pour tests Node hors navigateur.
-- **`test_couple.prototype.js`** — tests du moteur couplé : `node test_couple.prototype.js`.
-- **`sql/module33_cap_fromager.sql`** — colonne `doctors.cap_fromager`.
-- **`CHANTIER_long_weekend.md`** — journal détaillé de tout le chantier.
+**Une seule source de vérité pour le moteur** — il n'y a plus de copie prototype.
 
-⚠️ **Toute modif du moteur couplé doit être faite dans `planning-couple.js` ET
-`planning.prototype-couple.js`** (les deux ont les mêmes fonctions couplées).
+- **`planning.js`** — moteur de base + fonctions communes (sélection, affectation,
+  repos, off-clinic, rééquilibrages, récups…). Exporte sous Node (`module.exports`).
+  Toujours utilisé par le bouton « 📅 Générer le trimestre (équité) » (moteur historique).
+- **`planning-couple.js`** — moteur COUPLÉ « week-ends d'abord ». Étend `planning.js`
+  (réutilise ses fonctions). Définit `genererTrimestreCouple()` + helpers
+  (`plPeutGarde`, `plCoupleChoisir`, `plEquilibrerGardesMois`). Chargé par `index.html`
+  APRÈS `planning.js`. Branché au bouton « 🧪 Générer — moteur couplé (test) ».
+- **`regles.js`** — règles métier (fériés BE, etc.). Chargé en premier.
+- **`app.js`**, **`index.html`**, **`style.css`** — l'application.
+- **`test-couple.js`** — tests Node du moteur couplé. Charge `planning.js` +
+  `planning-couple.js` dans **un seul scope CommonJS** (loader en tête de fichier) :
+  `node test-couple.js`.
+- **`SPECIFICATIONS.md`** — spécification métier (grades, contrats, couverture, règles dures).
+- **`sql/`** — migrations Supabase (dont `module33_cap_fromager.sql`).
+
+✅ **Plus de double-maintenance** : toute modif du moteur se fait dans `planning.js`
+et/ou `planning-couple.js`. Le navigateur les charge via `<script>` ; Node les charge
+via le loader en tête de `test-couple.js`. Même source pour les deux.
+
 ⚠️ **Environnement Cowork** : le shell sandbox sert parfois une vue tronquée/stale des
-fichiers. Valider via `node test_couple.prototype.js`. Committer depuis la machine.
+fichiers. Toujours valider en RÉEL avec `node test-couple.js`, puis committer depuis la machine.
 
 ---
 
@@ -35,7 +39,7 @@ fichiers. Valider via `node test_couple.prototype.js`. Committer depuis la machi
   + **2 gardes de nuit** (17h–9h), dont **≥1 résident**, **jamais 2 A/S**.
 - **WEEK-END (sam & dim) et FÉRIÉ en semaine** : **2 gardes 24h** (≥1 résident, jamais
   2 A/S) + **1 tour (TWE)**. **Pas de stations de jour.** Les 2 gardes 24h FONT le tour
-  (donc 3 présents = 2 gardes + 1 tour, pas 5).
+  (donc 3 présents = 2 gardes + 1 tour).
 - Repos post-garde : lendemain de toute garde. Repos couplé : combo de week-end →
   repos en début de semaine suivante (lundi/mardi, `materialiserReposCouples`).
 - Cibles horaires : **48–52 h/semaine** (plein temps), proratisé à l'ETP (mi-temps).
@@ -48,16 +52,16 @@ fichiers. Valider via `node test_couple.prototype.js`. Committer depuis la machi
   garde jeudi n'est PAS de garde/tour ce sam/dim). Jeudi ≠ samedi la même semaine.
 - **Couplage TEMPOREL jeudi↔samedi** : sur le trimestre, les MÊMES personnes font des
   jeudis ET des samedis (équilibre `|nbJeudi − nbSamedi| ≤ 2`), mais à des semaines
-  DIFFÉRENTES (sinon pas de long week-end).
+  DIFFÉRENTES.
 - **Consolidation VENDREDI→DIMANCHE** : la garde de nuit du vendredi entame déjà le
   week-end → la MÊME personne reprend la garde 24h du dimanche (= 1 seul week-end
   « amené » au lieu de 2). Donne un repos couplé le mardi. **À 100 %.**
 - **Récup de week-end** : chaque garde 24h de week-end ouvre droit à une journée de
   **récup** la semaine suivante, étiquetée « récup (samedi) » ou « récup (V/D) ».
-- **CAP fromager** (case à cocher fiche médecin, `cap_fromager`) : résident à part
-  entière (gardes seul, compté résident) MAIS : jamais le lundi (cours), jamais de garde
-  le dimanche (tours OK), même nb de **week-ends** que les autres (rattrapage par samedi,
-  PAS de favori excessif), pas d'off-clinic, sa récup de samedi tombe le **lundi**.
+- **CAP fromager** (`cap_fromager`) : résident à part entière (gardes seul, compté
+  résident) MAIS : jamais le lundi, jamais de garde le dimanche (tours OK), même nb de
+  **week-ends** que les autres (rattrapage par samedi), pas d'off-clinic, récup de
+  samedi le **lundi**.
 
 ---
 
@@ -65,135 +69,108 @@ fichiers. Valider via `node test_couple.prototype.js`. Committer depuis la machi
 
 | Champ | Sens |
 |---|---|
-| `grade` | "resident" / "assistant_specialiste" / "pg" (les pg sont générés à part) |
+| `grade` | "resident" / "assistant_specialiste" / "pg" (pg générés à part) |
 | `fte` | quotité (1 = plein temps, 0.5 = mi-temps) |
 | `weekly_hours_target` | cible hebdo (52 plein temps) |
 | `jours_travailles` | jours travaillables [1..7] (1=lun … 7=dim) |
-| `statut` | "independant" (prioritaire, planifié sur ses jours déclarés) / "dependant" |
+| `statut` | "independant" (planifié sur ses jours déclarés) / "dependant" |
 | `unite_reference` | station de référence (rotation) |
-| `nouvel_engage` | exclu des viviers normaux pendant 14 j, posé en doublure |
+| `nouvel_engage` | exclu des viviers 14 j, posé en doublure |
 | `cap_fromager` | statut spécial (voir §2) |
 
 ---
 
-## 4. ALGORITHME du moteur couplé — `genererTrimestreCouple(opts)`
+## 4. ALGORITHME — `genererTrimestreCouple(opts)`
 
 opts = { annee, trimestre (1–4), medecins, preferences, periodes, prePlaces, feriesAdmin }
 
 ### Setup
-- Filtre les pg. **Clone** les médecins `cap_fromager` en retirant le lundi de
-  `jours_travailles` (→ tous les contrôles respectent « pas de lundi »).
-- État via `plNouvelEtat`. `poidsWeekend` et `poidsGarde` = présence × fte sur le
-  trimestre (proration mi-temps).
+Filtre les pg. **Clone** les `cap_fromager` en retirant le lundi de `jours_travailles`.
+État via `plNouvelEtat`. `poidsWeekend`/`poidsGarde` = présence × fte sur le trimestre.
 
-### PHASE 1 — Tous les WEEK-ENDS du trimestre (samedi par samedi)
-Pour chaque samedi `sat` (sun=+1, fri=−1, thu=−2) :
-1. **`poserWE(sat, null)`** : 2 gardes 24h le samedi. **NON couplé au jeudi** (long
-   week-end). Vivier = dispo samedi, ≤2 WE/mois (filet si mois saturé), ≥1 résident,
-   jamais 2 A/S. Rattrapage CAP fromager (priorité samedi seulement s'il est SOUS la
-   moyenne week-ends). Si pas de résident dispo → 2 A/S signalés (conflit doux).
-2. **`poserWE(sun, fri)`** : 2 gardes 24h le dimanche, **couplées au vendredi nuit**
-   (consolidation à 100 % : on restreint le vivier aux « couplables » dispo vendredi
-   tant qu'il y en a ≥2 dont 1 résident).
-3. **Tours** : `twe_weekend − gardes_weekend` (= 1) tour-seul, binôme sam+dim.
+### PHASE 1 — Tous les WEEK-ENDS (samedi par samedi)
+1. `poserWE(sat, null)` : 2 gardes 24h le samedi, **non couplé au jeudi** (long week-end).
+   Rattrapage CAP fromager (priorité samedi s'il est sous la moyenne). Filets couverture.
+2. `poserWE(sun, fri)` : 2 gardes 24h le dimanche, **couplées au vendredi nuit** (consolidation 100 %).
+3. **Tours** : 1 tour-seul, binôme sam+dim.
 
 ### PHASE 1b — FÉRIÉS en semaine
-Chaque férié lun→ven = jour « type week-end » : 2 gardes 24h + 1 tour, **0 station,
-0 garde de nuit**.
+Jour « type week-end » : 2 gardes 24h + 1 tour, **0 station, 0 garde de nuit**.
 
 ### PHASE 2 — Autres gardes de NUIT de semaine
-Pour chaque jour ouvré, compléter à 2 gardes de nuit (≥1 résident, jamais 2 A/S).
-- **JEUDI** (`choisirNuit`) : (a) **déprioriser** les médecins déjà de garde/tour CE
-  week-end (long week-end : le jeudi doit libérer le WE) ; (b) **couplage temporel** :
-  préférer qui a fait plus de samedis que de jeudis (`nbSamedi − nbJeudi` élevé).
-- Lun/mar/mer/ven : équité gardes (`plTrierGardeNuit`).
+Compléter à 2 gardes/nuit (≥1 résident, jamais 2 A/S).
+- **JEUDI** : déprioriser qui est déjà de garde/tour ce week-end (long week-end) ;
+  couplage temporel (préférer qui a fait plus de samedis que de jeudis).
+- Lun/mar/mer/ven : équité gardes.
 
-### PHASE 2b — PROMOTION 24h (combler les heures)
-Une garde de NUIT d'un médecin SOUS-chargé (heures/fte < moyenne − 10) devient une
-garde 24h (tient une station + la nuit). **JAMAIS le vendredi** (consolidation) ni une
-**2e 24h dans la même semaine** (évite les semaines à 90 h).
+### PHASE 2b — PROMOTION 24h
+Une garde de NUIT d'un médecin sous-chargé devient une garde 24h. **Jamais le vendredi**
+(consolidation) ni une 2e 24h dans la même semaine.
 
-### PHASE 3 — UNITÉS (stations de jour), continuité au mieux
-Pour chaque jour ouvré : 7 stations, par continuité puis heures. *(Cf. §6 : c'est cette
-phase qui doit passer APRÈS les récups — changement en cours.)*
-
-### Rééquilibrages des GARDES (AVANT matérialisation des repos)
-- **`plReequilibrerGardes`** : équité du NOMBRE de gardes intra-grade sur le trimestre
-  (déplace des nuits lun→mer, jamais jeu/ven).
-- **`plEquilibrerGardesMois`** (NOUVEAU, voir §6) : lisse les **heures-de-garde PAR MOIS**
-  intra-grade (déplace une nuit **lun/mar/mer uniquement** — jamais jeudi ni vendredi —
-  d'un médecin trop chargé en gardes ce mois vers un moins chargé).
+### Rééquilibrage des GARDES
+- `plReequilibrerGardes` : équité du nombre de gardes intra-grade (nuits lun→mer).
+- `plEquilibrerGardesMois` : lisse les **heures-de-garde PAR MOIS** intra-grade
+  (déplace une nuit **lun/mar/mer uniquement** — jamais jeu/ven — d'un médecin trop
+  chargé ce mois vers un moins chargé). *(§6.1 — implémenté.)*
 
 ### Repos
 `materialiserRepos` (lendemain) + `materialiserReposCouples` (lundi/mardi des combos).
+**Chaque repos est marqué `plMarquerAssigne`** → la Phase 3 ne staffe pas par-dessus.
+
+### RÉCUPS D'OFFICE (AVANT le staffing) — *(§6.2 — implémenté)*
+`plEmettreCongesFerie` + `plEmettreRecupsWeekend` posés **juste après les repos**, puis
+**jours bloqués** (`plMarquerAssigne`). Pose les récups tant que les jours sont encore
+libres → la récup **V/D** ne « saute » plus. Elle tombe typiquement le mardi (repos couplé ven→dim).
+
+### PHASE 3 — UNITÉS (stations de jour)
+7 stations par continuité puis heures. **Placée APRÈS les récups** → ne vole plus les
+jours de récup (`plDispo` respecte `etat.assigneJour` & `etat.bloque`).
 
 ### PHASE 4 — Off-clinic, plancher, équités finales
-- Off-clinic par mois (résidents dépendants ; **exclut `cap_fromager`/`sans_off`**).
-- `plCompleterMinimumHeures` (doublures pour le plancher), `plEquilibrerTours`,
-  `plReequilibrerHeures` (resserre l'écart d'heures).
-- **Allègement des sur-chargés** : retire les DOUBLURES (surnuméraires) aux médecins
-  > 45 h/sem → non-planifié, sans trou (tant qu'ils restent ≥ 40 h).
-
-### RÉCUPS de week-end
-`plEmettreRecupsWeekend` : pour chaque garde 24h de WE, pose une `recup` étiquetée la
-semaine suivante (jour ouvré libre ; jamais férié/week-end ; ≤1/médecin/semaine). CAP
-fromager : récup de samedi posée/relabellée le lundi.
+Off-clinic par mois (exclut `cap_fromager`/`sans_off`), `plCompleterMinimumHeures`
+(plancher), `plEquilibrerTours`, `plReequilibrerHeures`, allègement des sur-chargés (>45 h/sem).
 
 ---
 
-## 5. État actuel — TESTS
+## 5. Ordre de génération (résumé)
 
-`node test_couple.prototype.js` → **12/12** sur l'état COMMITTÉ (commit « Fromager »).
-Couvre : couverture WE (2 gardes + 1 tour) ; couverture nuit (≥1 résident ou signal) ;
-long week-end (≥80 % des jeudis libèrent le WE) ; couplage temporel (|Δ|≤2) ;
-consolidation ven→dim (≥50 %, en pratique 100 %) ; équité gardes/tours intra-grade ;
-écart d'heures trimestre borné ; récups étiquetées (pas un férié, ≤1/sem) ; congés +
-mi-temps ; férié = jour type week-end ; statut CAP fromager (0 lundi, 0 garde dimanche,
-0 off, même nb de week-ends, récup le lundi).
+1. Gardes (Phases 1, 1b, 2, 2b)
+2. Rééquilibrage gardes (`plReequilibrerGardes` + `plEquilibrerGardesMois`)
+3. Repos (`materialiserRepos` + `materialiserReposCouples`) — **marqués bloqués**
+4. **RÉCUPS D'OFFICE** (`plEmettreCongesFerie` + `plEmettreRecupsWeekend`) — **marqués bloqués**
+5. **PHASE 3** (stations)
+6. Phase 4 (off, plancher, tours, resserrement heures, allègement)
 
-Limite connue : équilibré sur le TRIMESTRE mais **écart d'heures MENSUEL encore élevé**
-(porté par les GARDES, voir §6).
+⚠️ Ne jamais déplacer les gardes du **jeudi** ni du **vendredi** au rééquilibrage
+(sinon couplage cassé) — `plEquilibrerGardesMois` ne touche que lun→mer.
 
 ---
 
-## 6. CHANGEMENTS EN COURS (non committés, à tester quand la sandbox revient)
+## 6. État & validation
 
-### 6.1 `plEquilibrerGardesMois` (AJOUTÉ, non testé)
-Cause racine du déséquilibre mensuel : les **heures-de-garde par mois** varient
-énormément (mesuré : 69–84 h d'écart/mois, 2 à 8 gardes/mois par personne). La fonction
-lisse ces heures-garde mois par mois (nuits **lun/mar/mer** seulement, pour préserver les
-couplages jeudi et vendredi). Appelée une fois par mois après `plReequilibrerGardes`,
-**avant** `materialiserRepos`. **À VALIDER** : relancer les tests + mesurer l'écart
-mensuel avant/après ; vérifier que les couplages jeu/ven et les repos couplés tiennent.
+`node test-couple.js` → cible **12/12**. Couvre : couverture WE (2 gardes + 1 tour) ;
+couverture nuit (≥1 résident ou signal) ; long week-end (≥80 % des jeudis libèrent le WE) ;
+couplage temporel (|Δ|≤2) ; consolidation ven→dim ; équité gardes/tours intra-grade ;
+écart d'heures trimestre borné ; récups étiquetées (≤1/sem, jamais férié) ; congés +
+mi-temps ; férié = jour type week-end ; statut CAP fromager.
 
-### 6.2 RÉCUPS « d'office » AVANT le staffing (DEMANDÉ, à implémenter)
-**Problème signalé** : la récup **V/D** (vendredi/dimanche) « saute » — parce que
-`plEmettreRecupsWeekend` tourne en DERNIER, quand la semaine est déjà remplie (plus de
-jour libre).
-**Correctif demandé** : poser les récups **en tout premier, d'office**, AVANT tout
-rééquilibrage/staffing. Ordre cible de `genererTrimestreCouple` :
-1. Gardes (Phases 1, 1b, 2, 2b).
-2. Rééquilibrage des gardes (`plReequilibrerGardes` + `plEquilibrerGardesMois`).
-3. Repos (`materialiserRepos` + `materialiserReposCouples`).
-4. **RÉCUPS D'OFFICE** (`plEmettreCongesFerie` + `plEmettreRecupsWeekend`), en
-   **marquant les jours bloqués** (`plMarquerAssigne`) pour que le staffing les respecte.
-   → La récup V/D tombera typiquement le mardi (jour du repos couplé ven→dim), ce qui est
-   correct (c'est son jour de repos compensatoire).
-5. **PHASE 3** (stations) — à déplacer ICI (après les récups) pour qu'elle ne vole plus
-   les jours de récup.
-6. Phase 4 (off, plancher, tours, resserrement heures, allègement).
+**À VALIDER en réel après les changements 2026-06-19** (§6.1 + §6.2 + fusion source unique) :
+1. `node test-couple.js` = 12/12.
+2. Mesurer l'écart d'heures **mensuel** avant/après (objectif §6.1 : le réduire).
+3. Vérifier que la récup **V/D** est bien posée (objectif §6.2 : ne saute plus) et
+   coïncide avec le repos couplé du mardi.
+4. Vérifier que les couplages jeu/ven et les repos couplés tiennent toujours.
 
-⚠️ Attention V/D : ne jamais déplacer les gardes du **jeudi** ni du **vendredi** au
-rééquilibrage (sinon couplage cassé) — déjà géré dans `plEquilibrerGardesMois` (lun→mer
-seulement). Vérifier que la récup V/D coïncide bien avec le repos couplé du mardi.
+Si un test casse : le réordonnancement §6.2 (récups avant Phase 3) ou le loader de
+`test-couple.js` sont les premiers suspects. Le loader bundle `planning.js` +
+`planning-couple.js` dans un scope CJS — il doit être strictement équivalent à
+l'ancienne copie concaténée.
 
 ---
 
 ## 7. Câblage app / déploiement
 
-- `index.html` charge `planning.js` puis `planning-couple.js` ; bouton « 🧪 Générer —
-  moteur couplé (test) ».
-- `app.js` : `window._useMoteurCouple = true` → `genererTrimestreCouple` (sinon ancien
-  moteur). Même brouillon (non publié), réversible (re-générer avec le bouton normal).
+- `index.html` charge `regles.js` → `planning.js` → `planning-couple.js` → `app.js`.
+- `app.js` : `window._useMoteurCouple = true` → `genererTrimestreCouple`.
 - DB : exécuter `sql/module33_cap_fromager.sql`.
-- Toujours `node test_couple.prototype.js` (12/12) avant de committer.
+- Toujours `node test-couple.js` (12/12) avant de committer.
