@@ -120,7 +120,12 @@ Une garde de NUIT d'un médecin sous-chargé devient une garde 24h. **Jamais le 
 ### RÉCUPS D'OFFICE (AVANT le staffing) — *(§6.2 — implémenté)*
 `plEmettreCongesFerie` + `plEmettreRecupsWeekend` posés **juste après les repos**, puis
 **jours bloqués** (`plMarquerAssigne`). Pose les récups tant que les jours sont encore
-libres → la récup **V/D** ne « saute » plus. Elle tombe typiquement le mardi (repos couplé ven→dim).
+libres → la récup **V/D** ne « saute » plus.
+
+Pas de **double récup** : quand un combo de consolidation existe (vendredi nuit→dimanche,
+ou jeudi→samedi), le **repos couplé** posé à J+2 (mardi pour V/D, lundi pour samedi) EST
+la récup → il est **relabellé** en récup (visible) au lieu d'émettre une récup déplaçable
+en plus. Sinon (pas de combo) : récup flexible sur un jour ouvré libre.
 
 ### PHASE 3 — UNITÉS (stations de jour)
 7 stations par continuité puis heures. **Placée APRÈS les récups** → ne vole plus les
@@ -171,6 +176,8 @@ l'ancienne copie concaténée.
 ## 7. Câblage app / déploiement
 
 - `index.html` charge `regles.js` → `planning.js` → `planning-couple.js` → `app.js`.
-- `app.js` : `window._useMoteurCouple = true` → `genererTrimestreCouple`.
+- `app.js` : le bouton « 📅 Générer le trimestre » appelle `genererTrimestreCouple` **par
+  défaut** (repli sur l'ancien `genererTrimestre` seulement s'il n'est pas chargé). Le
+  bouton « moteur couplé (test) » et le flag `_useMoteurCouple` ont été retirés (2026-06-19).
 - DB : exécuter `sql/module33_cap_fromager.sql`.
 - Toujours `node test-couple.js` (12/12) avant de committer.

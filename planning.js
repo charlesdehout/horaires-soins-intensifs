@@ -1247,6 +1247,22 @@ function plEmettreRecupsWeekend(sortie, medecins, etat, dates) {
         }
       }
     }
+    // CONSOLIDATION (ven→dim, et jeu+sam) : le REPOS COUPLÉ posé à J+2 (mardi pour la
+    // garde du dimanche, lundi pour celle du samedi) EST DÉJÀ la récup de ce week-end.
+    // On le RELABELLE en récup (visible au calendrier) au lieu d'émettre une récup
+    // déplaçable EN PLUS (sinon DOUBLE récup : repos couplé + un autre jour). Garde-fou :
+    // seulement si la garde « partenaire » du combo existe (vendredi nuit pour le dimanche,
+    // jeudi pour le samedi) → on est sûr que ce J+2 est le repos couplé de CE week-end.
+    if (!pose) {
+      const partner = plAdd(g.date, -2);   // vendredi (pour dim) / jeudi (pour sam)
+      const jCouple = plAdd(g.date, 2);    // mardi (V/D) / lundi (samedi) = repos couplé
+      const aCombo = sortie.some((s) => s.doctor_id === g.doctor_id && s.date === partner &&
+                                        (s.shift_type === "garde_24h" || s.shift_type === "garde_nuit"));
+      if (aCombo && within.has(jCouple) && !plEstWeekendOuFerie(jCouple)) {
+        const rc = sortie.find((s) => s.doctor_id === g.doctor_id && s.date === jCouple && s.shift_type === "repos_garde");
+        if (rc) { rc.shift_type = "recup"; rc.recup_origine = origine; rc.note = "récup (" + origine + ")"; recupSemaine.add(cleSem); pose = true; }
+      }
+    }
     for (let k = 0; k < 5 && !pose; k++) {                 // lundi → vendredi
       const d = plAdd(lundi, k);
       if (!within.has(d)) continue;

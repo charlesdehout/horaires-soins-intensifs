@@ -2216,11 +2216,10 @@ async function genererTrimestrePourMoisAffiche() {
   const prePlaces = epinglesT || [];
   const cleEp = new Set(prePlaces.map((s) => s.date + "|" + s.doctor_id + "|" + s.shift_type + "|" + (s.poste || "")));
 
-  // 5) Génération (algorithme pur, planning.js).
-  //    TEST : si le bouton « moteur couplé » a été utilisé, on génère avec le
-  //    nouveau moteur week-ends-d'abord (planning-couple.js) au lieu de l'ancien.
-  const _useCouple = !!window._useMoteurCouple;
-  const _gen = (_useCouple && typeof genererTrimestreCouple === "function") ? genererTrimestreCouple : genererTrimestre;
+  // 5) Génération (algorithme pur). Moteur COUPLÉ « week-ends d'abord »
+  //    (planning-couple.js) par DÉFAUT ; repli sur l'ancien moteur seulement s'il
+  //    n'est pas chargé. (Bascule 2026-06-19 : perf équivalente, validé 12/12.)
+  const _gen = (typeof genererTrimestreCouple === "function") ? genererTrimestreCouple : genererTrimestre;
   const res = _gen({ annee, trimestre, medecins: medecins || [], preferences: prefs || [], periodes, prePlaces, feriesAdmin: feriesAdminPourGeneration() });
 
   // 6) Écriture mois par mois : on remplace chaque brouillon (shifts + schedule),
@@ -2266,10 +2265,8 @@ async function genererTrimestrePourMoisAffiche() {
     ? "<br><br>ℹ️ <strong>" + nbRecupNP + " récup(s) de week-end</strong> non plaçable(s) automatiquement " +
       "(semaine suivante saturée) — à poser manuellement."
     : "";
-  const base = (_useCouple ? "🧪 [MOTEUR COUPLÉ — TEST] " : "") +
-    "Trimestre " + libelleTrim + " généré : " + res.shifts.length + " shifts (" +
-    nbDoublures + " doublure" + (nbDoublures > 1 ? "s" : "") + ") · algo " +
-    (_useCouple ? "week-ends-d'abord (couplé)" : (typeof PL_VERSION !== "undefined" ? PL_VERSION : "ANCIENNE VERSION (cache ?)")) + ". ";
+  const base = "Trimestre " + libelleTrim + " généré : " + res.shifts.length + " shifts (" +
+    nbDoublures + " doublure" + (nbDoublures > 1 ? "s" : "") + ") · algo week-ends-d'abord (couplé). ";
   if (nbConf === 0 && alertesEquite.length === 0) {
     messageGeneration(base + "Aucun conflit. ✅" + recupNote, "info");
   } else {
@@ -2289,22 +2286,9 @@ async function genererTrimestrePourMoisAffiche() {
   }
   calendrier.refetchEvents();
   rafraichirPanneauAdmin();
-  window._useMoteurCouple = false; // reset après chaque génération (mode test ponctuel)
 }
 
 if (genererTrimBtn) genererTrimBtn.addEventListener("click", genererTrimestrePourMoisAffiche);
-
-// TEST : bouton « moteur couplé (week-ends d'abord) ». Génère le même brouillon
-// mais avec le nouveau moteur, pour comparaison sur données réelles. Non publié.
-const genererTrimCoupleBtn = document.getElementById("generer-trimestre-couple-btn");
-if (genererTrimCoupleBtn) genererTrimCoupleBtn.addEventListener("click", function () {
-  if (typeof genererTrimestreCouple !== "function") {
-    return messageGeneration("Moteur couplé non chargé (planning-couple.js manquant ?).", "error");
-  }
-  if (!window.confirm("Générer le trimestre avec le MOTEUR COUPLÉ (test) ? Cela remplace le brouillon du trimestre affiché (non publié). Tu pourras régénérer avec le bouton normal ensuite.")) return;
-  window._useMoteurCouple = true;
-  genererTrimestrePourMoisAffiche();
-});
 
 /* ===================================================================== */
 /* GÉNÉRATION DU PLANNING PG (trimestre) — APRÈS les résidents.           */
