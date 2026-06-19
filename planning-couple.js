@@ -93,6 +93,124 @@ function plEquilibrerGardesMois(sortie, medecins, etat, annee, mois) {
   }
 }
 
+/* ÉQUILIBRAGE DES HEURES *PAR MOIS* (Dr Dehout 2026-06-19) : le trimestre est déjà
+   équilibré (plReequilibrerHeures), mais un mois peut rester lourd et le suivant léger.
+   On lisse les HEURES MENSUELLES en transférant des journées de STATION (jour) d'un
+   médecin AU-DESSUS de sa cible CE MOIS vers un médecin EN DESSOUS CE MOIS.
+   STRICTEMENT SANS RÉGRESSION : un transfert n'est appliqué que s'il RÉDUIT l'écart
+   MENSUEL ET n'aggrave PAS l'écart TRIMESTRIEL (préserve l'équité trimestre + ses tests).
+   Mêmes garde-fous que plReequilibrerHeures : receveur libre ce jour, continuité clinique,
+   plafond mi-temps, jamais d'épinglé/doublure. Appelé une fois par mois après
+   plReequilibrerHeures. Dans le pire cas (continuité bloquante) : aucun transfert. */
+function plEquilibrerHeuresMois(sortie, medecins, etat, annee, mois) {
+  const eq = plEquite();
+  const seuil = (typeof eq.ecart_heures_max === "number") ? eq.ecart_heures_max : 12;
+  if (!seuil) return;
+  const H = (t) => (t === "off" ? PL_HEURES_OFFCLINIC : (PL_HEURES[t] || 0));
+  const fteR = {}; medecins.forEach((m) => { fteR[m.id] = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1; });
+  const cibleHebdoDe = (m) => (typeof m.weekly_hours_target === "number" && m.weekly_hours_target > 0) ? m.weekly_hours_target : (PL_REF_HEBDO * fteR[m.id]);
+  const jtSemDe = (m) => (((m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1,2,3,4,5,6,7]).filter((j) => j >= 1 && j <= 5).length || 5);
+  // ---- Cibles + heures TRIMESTRE (garde-fou anti-régression trimestre) ----
+  let _mn = null, _mx = null;
+  sortie.forEach((s) => { if (_mn === null || s.date < _mn) _mn = s.date; if (_mx === null || s.date > _mx) _mx = s.date; });
+  const semTrim = _mn ? ((Date.parse(_mx) - Date.parse(_mn)) / 86400000 / 7 + 1/7) : 13;
+  const cibleTrim = {}, hTrim = {};
+  medecins.forEach((m) => {
+    const jtLen = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles.length : 7;
+    const jConge = ((etat.heuresEquite && etat.heuresEquite[m.id]) || 0) / PL_HEURES.jour;
+    const sEff = Math.max(semTrim - jConge / jtLen, 0.2);
+    cibleTrim[m.id] = cibleHebdoDe(m) * sEff;
+    hTrim[m.id] = 0;
+  });
+  sortie.forEach((s) => { if (hTrim[s.doctor_id] !== undefined) hTrim[s.doctor_id] += H(s.shift_type); });
+  const hNormTrim = (id) => hTrim[id] - (cibleTrim[id] || 0);
+  const ecartTrim = () => { let mx=-Infinity, mn=Infinity; medecins.forEach((m)=>{const v=hNormTrim(m.id); if(v>mx)mx=v; if(v<mn)mn=v;}); return mx-mn; };
+  let plafondTrim = Math.max(ecartTrim(), seuil); // le trimestre ne dépassera jamais ce plafond
+  // ---- Cibles + heures du MOIS ----
+  const datesMois = plDatesDuMois(annee, mois);
+  const dm = new Set(datesMois);
+  const jOuvres = datesMois.filter((d) => !plEstWeekendOuFerie(d));
+  const cibleMois = {}, hMois = {}, occupe = {}, unitesSem = {}, hSem = {};
+  medecins.forEach((m) => {
+    hMois[m.id] = 0; occupe[m.id] = new Set(); unitesSem[m.id] = {}; hSem[m.id] = {};
+    let present = 0;
+    jOuvres.forEach((d) => { if (plDispoStatique(m, d, etat.indispo[m.id], etat.dispoDeclaree[m.id]) && !(etat.bloque[m.id] && etat.bloque[m.id].has(d))) present++; });
+    cibleMois[m.id] = cibleHebdoDe(m) * (present / jtSemDe(m));
+  });
+  sortie.forEach((s) => {
+    if (hMois[s.doctor_id] === undefined || !dm.has(s.date)) return;
+    hMois[s.doctor_id] += H(s.shift_type);
+    occupe[s.doctor_id].add(s.date);
+    const lk = plLundiDe(s.date);
+    hSem[s.doctor_id][lk] = (hSem[s.doctor_id][lk] || 0) + H(s.shift_type);
+    if (s.shift_type === "jour" && s.poste) (unitesSem[s.doctor_id][lk] = unitesSem[s.doctor_id][lk] || new Set()).add(s.poste);
+  });
+  const hNormMois = (id) => hMois[id] - (cibleMois[id] || 0);
+  const ecartMois = () => { let mx=-Infinity, mn=Infinity; medecins.forEach((m)=>{const v=hNormMois(m.id); if(v>mx)mx=v; if(v<mn)mn=v;}); return mx-mn; };
+  const peutRecevoir = (m, s, relax) => {
+    const d = s.date;
+    if (!dm.has(d) || plEstWeekendOuFerie(d)) return false;
+    if (etat.periodes && plEstCongres(d, etat.periodes)) return false;
+    if (!plSousContrat(m, d)) return false;
+    const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1,2,3,4,5,6,7];
+    if (!jt.includes(plJourSemaine(d))) return false;
+    if (occupe[m.id].has(d)) return false;
+    if (etat.bloque[m.id] && etat.bloque[m.id].has(d)) return false;
+    if (etat.indispo[m.id] && etat.indispo[m.id].has(d)) return false;
+    if (!plDispoIndependant(m, d, etat.dispoDeclaree[m.id])) return false;
+    if (plEstNouvelEngage(m, d, etat.debutPeriode)) return false;
+    const cap = plPlafondStation(m);
+    if (cap !== Infinity) { const cur = (hSem[m.id][plLundiDe(d)] || 0); if (cur + PL_HEURES.jour > cap + PL_EPS) return false; }
+    if (!plSansContinuite(s.poste)) {
+      const u = unitesSem[m.id][plLundiDe(d)];
+      if (u && u.size && !u.has(s.poste)) return false;
+      if (!relax && !(u && u.has(s.poste))) return false; // strict : déjà sur l'unité
+    }
+    return true;
+  };
+  const passe = (relax) => {
+    for (let iter = 0; iter < 120; iter++) {
+      const avant = ecartMois();
+      if (avant <= seuil) return;
+      const tri = medecins.slice().sort((a, b) => hNormMois(b.id) - hNormMois(a.id));
+      let bouge = false;
+      for (let hi = 0; hi < tri.length && !bouge; hi++) {
+        for (let bi = tri.length - 1; bi > hi && !bouge; bi--) {
+          const haut = tri[hi], bas = tri[bi];
+          if (hNormMois(haut.id) - hNormMois(bas.id) <= seuil) break;
+          for (const s of sortie) {
+            if (s.doctor_id !== haut.id || s.shift_type !== "jour" || !dm.has(s.date)) continue;
+            if (s.epingle || s.doublure) continue;
+            if (!peutRecevoir(bas, s, relax)) continue;
+            // Simulation : applique au mois ET au trimestre, on vérifie les 2 critères.
+            hMois[haut.id] -= PL_HEURES.jour; hMois[bas.id] += PL_HEURES.jour;
+            hTrim[haut.id] -= PL_HEURES.jour; hTrim[bas.id] += PL_HEURES.jour;
+            const okMois = ecartMois() < avant;          // l'écart MENSUEL diminue
+            const okTrim = ecartTrim() <= plafondTrim + PL_EPS; // le trimestre ne dépasse pas son plafond
+            if (!okMois || !okTrim) {                    // annule la simulation
+              hMois[haut.id] += PL_HEURES.jour; hMois[bas.id] -= PL_HEURES.jour;
+              hTrim[haut.id] += PL_HEURES.jour; hTrim[bas.id] -= PL_HEURES.jour;
+              continue;
+            }
+            // Applique réellement le transfert.
+            const lk = plLundiDe(s.date);
+            occupe[haut.id].delete(s.date); occupe[bas.id].add(s.date);
+            hSem[haut.id][lk] = (hSem[haut.id][lk] || 0) - PL_HEURES.jour;
+            hSem[bas.id][lk] = (hSem[bas.id][lk] || 0) + PL_HEURES.jour;
+            if (s.poste) { const uh = unitesSem[haut.id][lk]; if (uh) uh.delete(s.poste); (unitesSem[bas.id][lk] = unitesSem[bas.id][lk] || new Set()).add(s.poste); }
+            etat.heures[haut.id] -= PL_HEURES.jour; etat.heures[bas.id] += PL_HEURES.jour;
+            s.doctor_id = bas.id;
+            bouge = true; break;
+          }
+        }
+      }
+      if (!bouge) return;
+    }
+  };
+  passe(false);  // continuité STRICTE d'abord (transfert vers qui tient déjà l'unité)
+  passe(true);   // continuité assouplie ensuite (toujours gardé par les 2 critères)
+}
+
 function plCoupleChoisir(pool, etat, dateRef, n, exigerResident, preTri) {
   // Garantit ≥1 résident si demandé et jamais 2 A/S. Trie par équité week-end
   // (sauf si preTri : la liste est déjà ordonnée par préférence). Renvoie ≤ n.
@@ -447,7 +565,9 @@ function genererTrimestreCouple(opts) {
   plResorberOff24h(sortie, medecins, etat);
   plCompleterMinimumHeures(sortie, medecins, etat, datesTrim);  // plancher 40h/sem (doublures)
   plEquilibrerTours(sortie, medecins, etat);
-  plReequilibrerHeures(sortie, medecins, etat);                // resserre l'écart d'heures
+  plReequilibrerHeures(sortie, medecins, etat);                // resserre l'écart d'heures (trimestre)
+  // Lissage des heures PAR MOIS (sans régresser l'équité trimestre — voir fonction).
+  moisTrim.forEach((mois) => plEquilibrerHeuresMois(sortie, medecins, etat, annee, mois));
   // ALLÈGEMENT DES SUR-CHARGÉS (Dr Dehout) : quand la couverture est assurée, on évite
   // les journées surchargées. Une DOUBLURE (2e personne sur une unité) est surnuméraire :
   // on la retire au médecin le plus chargé tant qu'il dépasse ~45 h/SEMAINE → il passe en
