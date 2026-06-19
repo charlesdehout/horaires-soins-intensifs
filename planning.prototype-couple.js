@@ -1523,6 +1523,71 @@ function plReequilibrerGardes(sortie, medecins, etat) {
   }
 }
 
+/* ÉQUILIBRAGE DES GARDES *PAR MOIS* (Dr Dehout 2026-06-18) : le déséquilibre des
+   HEURES mensuelles vient des GARDES (un mois chargé en gardes dépasse la cible).
+   On lisse les HEURES-DE-GARDE par mois, intra-grade : on déplace une garde de NUIT
+   de semaine (lun→ven, jamais épinglée) d'un médecin trop chargé en gardes CE MOIS
+   vers un moins chargé CE MOIS (libre J et J+1, pas de garde la veille, ≤3/sem,
+   dispo, peut garder ce jour). À appeler AVANT materialiserRepos. */
+function plEquilibrerGardesMois(sortie, medecins, etat, annee, mois) {
+  const estG = (x) => x === "garde_nuit" || x === "garde_24h";
+  const GH = { garde_nuit: PL_HEURES.garde_nuit, garde_24h: PL_HEURES.garde_24h };
+  const dm = new Set(plDatesDuMois(annee, mois));
+  const fteG = {}; medecins.forEach((m) => { fteG[m.id] = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1; });
+  const parDoc = {}, gardesDates = {};
+  medecins.forEach((m) => { parDoc[m.id] = new Set(); gardesDates[m.id] = new Set(); });
+  sortie.forEach((s) => { if (!parDoc[s.doctor_id]) return; parDoc[s.doctor_id].add(s.date); if (estG(s.shift_type)) gardesDates[s.doctor_id].add(s.date); });
+  const ghMois = () => { const h = {}; medecins.forEach((m) => h[m.id] = 0); sortie.forEach((s) => { if (dm.has(s.date) && GH[s.shift_type]) h[s.doctor_id] += GH[s.shift_type]; }); return h; };
+  const peutRecevoir = (m, d) => {
+    if (!dm.has(d)) return false;
+    if (!plSousContrat(m, d)) return false;
+    if (!plPeutGarde(m, d)) return false;
+    const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7];
+    if (!jt.includes(plJourSemaine(d))) return false;
+    if (etat.bloque[m.id] && (etat.bloque[m.id].has(d) || etat.bloque[m.id].has(plAdd(d, 1)))) return false;
+    if (etat.indispo[m.id] && etat.indispo[m.id].has(d)) return false;
+    if (!plDispoIndependant(m, d, etat.dispoDeclaree[m.id])) return false;
+    if (parDoc[m.id].has(d) || parDoc[m.id].has(plAdd(d, 1))) return false;
+    if (gardesDates[m.id].has(plAdd(d, -1))) return false;
+    const lk = plLundiDe(d); let n = 0; gardesDates[m.id].forEach((g) => { if (plLundiDe(g) === lk) n++; });
+    return n < PL_MAX_GARDES_SEMAINE;
+  };
+  const grades = ["resident", "assistant_specialiste"];
+  for (let iter = 0; iter < 120; iter++) {
+    let bouge = false;
+    const gh = ghMois();
+    const norm = (id) => gh[id] / fteG[id];
+    for (const grade of grades) {
+      const pool = medecins.filter((m) => m.grade === grade);
+      if (pool.length < 2) continue;
+      const tri = pool.slice().sort((a, b) => norm(b.id) - norm(a.id));
+      let haut = null, bas = null, cand = null;
+      for (let hi = 0; hi < tri.length && !cand; hi++) {
+        for (let bi = tri.length - 1; bi > hi && !cand; bi--) {
+          if (norm(tri[hi].id) - norm(tri[bi].id) <= PL_HEURES.garde_nuit + PL_EPS) break; // écart < 1 nuit → stop
+          // Seulement lun/mar/mer (jr 1–3) : on ne touche JAMAIS au jeudi (long
+          // week-end) ni au vendredi (consolidation ven→dim) pour préserver les couplages.
+          const cands = sortie.filter((s) => s.doctor_id === tri[hi].id && s.shift_type === "garde_nuit" && dm.has(s.date) && plJourSemaine(s.date) <= 3 && !s.epingle);
+          for (const c of cands) { if (peutRecevoir(tri[bi], c.date)) { haut = tri[hi]; bas = tri[bi]; cand = c; break; } }
+        }
+      }
+      if (!cand) continue;
+      parDoc[haut.id].delete(cand.date); gardesDates[haut.id].delete(cand.date);
+      parDoc[bas.id].add(cand.date); gardesDates[bas.id].add(cand.date);
+      cand.doctor_id = bas.id;
+      etat.heures[haut.id] -= PL_HEURES.garde_nuit; etat.heures[bas.id] += PL_HEURES.garde_nuit;
+      etat.nbGardesTotal[haut.id]--; etat.nbGardesTotal[bas.id]++;
+      const lk = plLundiDe(cand.date);
+      etat.heuresSemaine[haut.id][lk] = (etat.heuresSemaine[haut.id][lk] || 0) - PL_HEURES.garde_nuit;
+      etat.heuresSemaine[bas.id][lk] = (etat.heuresSemaine[bas.id][lk] || 0) + PL_HEURES.garde_nuit;
+      etat.gardesSemaine[haut.id][lk] = (etat.gardesSemaine[haut.id][lk] || 1) - 1;
+      etat.gardesSemaine[bas.id][lk] = (etat.gardesSemaine[bas.id][lk] || 0) + 1;
+      bouge = true;
+    }
+    if (!bouge) break;
+  }
+}
+
 /* MINIMUM D'HEURES HEBDOMADAIRE (révision 2026-06-12) : chaque médecin doit
    atteindre l'équivalent de `EQUITE.minimum_hebdo_h` (défaut 40 h) par semaine,
    proratisé : minimum × fte × (jours ouvrés DISPONIBLES de la semaine / 5).
@@ -3687,14 +3752,17 @@ function genererTrimestreCouple(opts) {
     if (vide.length) conflits.push({ date, message: "Stations vides : " + vide.join(",") });
   });
 
+  // ---- Équité des gardes AVANT la matérialisation des repos (pour que les repos
+  //      — y compris le couplé ven→dim — suivent les gardes FINALES). ----
+  plReequilibrerGardes(sortie, medecins, etat);
+  // Équilibrage des heures-de-garde PAR MOIS (lisse les gardes mois par mois).
+  moisTrim.forEach((mois) => plEquilibrerGardesMois(sortie, medecins, etat, annee, mois));
+
   // ---- Repos de garde + repos couplés (lendemain, lundi/mardi) ----
   const bDeb = plBornesMois(annee, moisTrim[0]).debut, bFin = plBornesMois(annee, moisTrim[2]).fin;
   const dansTrim = (d) => d >= bDeb && d <= bFin;
   materialiserRepos(sortie, dansTrim).forEach((r) => sortie.push(r));
   materialiserReposCouples(sortie, dansTrim).forEach((r) => sortie.push(r));
-
-  // ---- Passes d'équité finales (réutilisées) ----
-  plReequilibrerGardes(sortie, medecins, etat);
 
   // ---- PHASE 4 : off-clinic, plancher heures (doublures), équité tours/heures ----
   moisTrim.forEach((mois) => {

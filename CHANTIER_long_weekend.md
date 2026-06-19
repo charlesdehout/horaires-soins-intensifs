@@ -545,6 +545,22 @@ dispo du vendredi ; à rehausser si besoin). Tests mis à jour → **12/12**.
 (2 gardes + stations) que le retrait de doublures NE PEUT PAS corriger → nécessiterait un
 plafonnement hebdo des stations pour les porteurs de gardes (sous-chantier). **12/12.**
 
+### 6 novodecies. Déséquilibre MENSUEL — diagnostic racine (2026-06-18)
+**Demande Dr Dehout** : nouvel ordre d'algo (cible mensuelle 48–52 h/sem, contraints
+d'abord, staffing jusqu'à cible, off/non-planifié pour le surplus). **Tentative
+`plStafferMois` → RÉGRESSION** (écart mensuel 37–64 h + trous) → **annulée** (revert à HEAD,
+12/12). 
+**CAUSE RACINE TROUVÉE** : le déséquilibre mensuel est porté par les **GARDES**, pas les
+stations. Les heures d'un mois sont dominées par les gardes (24 h / 15 h) ; un médecin
+avec beaucoup de gardes un mois dépasse déjà sa cible RIEN QU'avec les gardes, et on ne
+peut pas lui en retirer (couverture). Le staffing des stations (déplaçables) NE PEUT PAS
+compenser un déséquilibre de gardes → c'est pourquoi le staffing mensuel ne converge pas.
+**VRAI CORRECTIF (sous-chantier dédié)** : équilibrer les **GARDES par mois** (heures-garde
+similaires chaque mois par personne ; week-ends déjà ≤2/mois → ce sont surtout les **nuits
+de semaine** qui se concentrent). Rendre Phase 1/2 *mois-conscientes* (reset/équité des
+gardes par mois), PUIS le staffing des stations comble jusqu'à 48–52 h/sem. Refonte de la
+distribution des gardes, pas un patch.
+
 ## 7. Risques
 
 - Reconstruire le filet de couverture sans le couplage : si mal fait → trous de couverture.
