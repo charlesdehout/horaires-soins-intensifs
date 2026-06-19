@@ -2059,7 +2059,12 @@ function genererOffClinic(opts) {
     });
 
     const abs = absSet.size;
-    const droit = abs <= 4 ? 2 : abs <= 9 ? 1 : 0;
+    let droit = abs <= 4 ? 2 : abs <= 9 ? 1 : 0;
+    // PRORATA ETP : un mi-temps a droit à MOINS d'off-clinic — son temps de travail
+    // est déjà réduit (cible hebdo plus basse). On halve les off (2→1/mois). Plein
+    // temps inchangé. (Demande Dr Dehout : « le mi-temps doit avoir moitié moins d'off ».)
+    const fteOff = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1;
+    if (fteOff < 1) droit = Math.round(droit * fteOff);
     if (droit === 0) return;
     // ÉQUILIBRE TRIMESTRIEL (révision) : offs déjà posés dans les shifts reçus
     // (en génération trimestrielle, ils incluent les mois précédents).

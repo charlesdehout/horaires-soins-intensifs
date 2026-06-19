@@ -422,6 +422,11 @@ function genererTrimestreCouple(opts) {
     ordered.forEach((m) => {
       const restantes = postes.filter((c) => !(c in plan));
       if (!restantes.length) return;
+      // PLAFOND MI-TEMPS : ne pas sur-stationner un mi-temps au-delà de son quota
+      // hebdo (gardes comprises). Sans effet sur les pleins temps (cap = Infinity).
+      // On préfère laisser une station en sous-effectif (signalée) que de surcharger
+      // un mi-temps bien au-dessus de sa cible.
+      if (plStationPlafonnee(m, date, etat)) return;
       const st = plChoisirStation(m, postes, plan, etat, cle);
       if (st && !(st in plan)) {
         plan[st] = m.id;
