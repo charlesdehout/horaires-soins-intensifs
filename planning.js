@@ -1507,7 +1507,11 @@ function plCompleterMinimumHeures(sortie, medecins, etat, dates) {
   // RÈGLE (révision) : pas de doublure sur une unité tenue par une GARDE 24 H
   // (le médecin de 24 h couvre déjà jour + nuit ; règle valable pour toutes
   // les doublures SAUF celles du nouvel engagé, posées ailleurs).
-  const stationsDoublables = (d) => Object.keys(occupation[d] || {})
+  // CONGRÈS (M17) : AUCUNE doublure un jour de congrès (équipe minimale — le but
+  // est de libérer du monde, pas d'ajouter une 2e personne sur une unité). Les
+  // heures non posées ce jour-là le seront sur les jours ouvrés HORS congrès.
+  const stationsDoublables = (d) => (etat.periodes && plEstCongres(d, etat.periodes)) ? []
+    : Object.keys(occupation[d] || {})
     .filter((c) => !plSansContinuite(c) && occupation[d][c] === 1 && !tenuePar24h.has(d + "|" + c));
   // Jours de REPOS DE GARDE par médecin : ce ne sont PAS des jours
   // travaillables → ils sortent du prorata ET des jours doublables.

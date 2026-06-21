@@ -544,19 +544,20 @@ function genererTrimestreCouple(opts) {
     sortie.filter((s) => s.date === date && (s.shift_type === "jour" || s.shift_type === "garde_24h") && s.poste)
       .forEach((s) => { plan[s.poste] = s.doctor_id; });
 
-    // (a) CONGRÈS — ÉQUIPE MINIMALE : forcer les gardes de nuit du jour en 24h.
-    //     Jamais le vendredi (la garde ven→dim ne doit pas tenir une station le ven),
-    //     ni une 2e garde 24h la même semaine ISO.
-    if (congresJour && jr !== 5) {
+    // (a) CONGRÈS — ÉQUIPE MINIMALE : les DEUX gardes de nuit du jour passent en 24h
+    //     (chacune tient une station + la nuit) → personne ne « vient à 17h », ce qui
+    //     libère 2 médecins de plus pour le congrès. Appliqué AUSSI le vendredi : la
+    //     garde reste posée le vendredi (toujours couplée au dimanche → consolidation
+    //     ven→dim préservée). Le garde-fou « pas 2e 24h/semaine » est LEVÉ en congrès.
+    if (congresJour) {
       sortie.filter((s) => s.date === date && s.shift_type === "garde_nuit").forEach((g) => {
-        if (sortie.some((x) => x.doctor_id === g.doctor_id && x.shift_type === "garde_24h" && plLundiDe(x.date) === cle)) return;
         const med = medecins.find((x) => x.id === g.doctor_id); if (!med) return;
         const st = plChoisirStation(med, postes, plan, etat, cle);
         if (st && !(st in plan)) {
           g.shift_type = "garde_24h"; g.poste = st;
           plan[st] = g.doctor_id;
           etat.heures[g.doctor_id] += (PL_HEURES.garde_24h - PL_HEURES.garde_nuit);
-          if (etat._congresJour) etat.joursCongres[g.doctor_id] = (etat.joursCongres[g.doctor_id] || 0) + 1;
+          etat.joursCongres[g.doctor_id] = (etat.joursCongres[g.doctor_id] || 0) + 1;
           // pas d'ancrage de continuité en congrès (rotation quotidienne voulue).
         }
       });

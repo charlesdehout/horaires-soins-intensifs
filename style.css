@@ -725,3 +725,30 @@ button.danger:not(.mini):hover { background: #9e2b22; }
 }
 .semaine-chip.clickable { cursor: pointer; }
 .semaine-chip.clickable:hover { opacity: 0.85; }
+
+/* Compteur CONGRÈS (séparé) — affiché sous le calendrier le mois d'un congrès. */
+.congres-compteur {
+  margin: 12px 0 4px;
+  padding: 10px 14px;
+  background: #fff7e6;
+  border: 1px solid #ffd591;
+  border-radius: 8px;
+}
+.congres-compteur.hidden { display: none; }
+.congres-compteur .cc-titre {
+  font-weight: 600;
+  color: #ad6800;
+  margin-bottom: 8px;
+}
+.congres-compteur .cc-sous {
+  display: block;
+  font-weight: 400;
+  font-size: 0.82rem;
+  color: #8c6d3f;
+  margin-top: 2px;
+}
+.congres-compteur .cc-table { margin: 0; width: auto; min-width: 320px; }
+.congres-compteur .cc-table th,
+.congres-compteur .cc-table td { padding: 4px 10px; }
+.congres-compteur .cc-fort td { background: rgba(255, 77, 79, 0.12); }
+.congres-compteur .cc-faible td { background: rgba(82, 196, 26, 0.12); }

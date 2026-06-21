@@ -1925,6 +1925,7 @@ async function initCalendrier() {
       events: async (info, success, failure) => {
         try {
           success(await construireEvenements(info.startStr, info.endStr));
+          majCompteurCongres(); // compteur CONGRÈS séparé, sous le calendrier (nav + régénération)
         } catch (e) {
           console.error("Erreur construction des événements :", e);
           failure(e);
@@ -3691,6 +3692,64 @@ function bornesMoisAffiche() {
   };
 }
 
+/* COMPTEUR CONGRÈS (SÉPARÉ du compteur général) — affiché SOUS le calendrier
+   quand le mois affiché contient un congrès EN SEMAINE. Montre, par médecin, le
+   nombre de jours de congrès TRAVAILLÉS (plus bas = plus de jours AU congrès) →
+   permet de vérifier d'un coup d'œil que la répartition est juste pour tous. */
+async function majCompteurCongres() {
+  const box = document.getElementById("congres-compteur");
+  if (!box || !calendrier) return;
+  // Uniquement en vue calendrier (le compteur est « sous le mois »).
+  if (vueActive !== "calendrier") { box.classList.add("hidden"); box.innerHTML = ""; return; }
+  const b = bornesMoisAffiche();
+  let periodes = [];
+  try { periodes = await periodesSur(b.debut, b.fin); } catch (e) { periodes = []; }
+  const congres = (periodes || []).filter((p) => p.type === "congres");
+  if (!congres.length) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+  // Dates de congrès EN SEMAINE (lun-ven) à l'intérieur du mois affiché.
+  const datesCongres = new Set();
+  const labels = [];
+  congres.forEach((p) => {
+    labels.push(p.label || "Congrès");
+    let cur = p.start_date < b.debut ? b.debut : p.start_date;
+    const fin = p.end_date > b.fin ? b.fin : p.end_date;
+    while (cur <= fin) {
+      const jr = new Date(cur + "T00:00:00Z").getUTCDay(); // 0=dim … 6=sam
+      if (jr >= 1 && jr <= 5) datesCongres.add(cur);
+      cur = lendemainDe(cur);
+    }
+  });
+  if (!datesCongres.size) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+  // Shifts du mois → jours de congrès travaillés par médecin.
+  const { data: shifts } = await sb.from("shifts")
+    .select("date, shift_type, doctor_id").gte("date", b.debut).lte("date", b.fin);
+  const travaille = (t) => t === "jour" || t === "garde_nuit" || t === "garde_24h" || t === "twe";
+  const trav = {};
+  (shifts || []).forEach((s) => {
+    if (datesCongres.has(s.date) && travaille(s.shift_type))
+      (trav[s.doctor_id] = trav[s.doctor_id] || new Set()).add(s.date);
+  });
+  const N = datesCongres.size;
+  const meds = Object.values(carteMedecins).filter((m) => m.role !== "admin" && m.grade !== "pg");
+  const lignes = meds.map((m) => ({
+    nom: m.name || m.id,
+    grade: (typeof GRADE_LABELS !== "undefined" && GRADE_LABELS[m.grade]) || m.grade || "",
+    n: (trav[m.id] ? trav[m.id].size : 0),
+  })).sort((x, y) => y.n - x.n || x.nom.localeCompare(y.nom));
+  const moy = lignes.length ? (lignes.reduce((a, x) => a + x.n, 0) / lignes.length) : 0;
+  let html = '<div class="cc-titre">🎓 Compteur congrès — ' + labels.join(", ") +
+    ' (' + N + ' jour' + (N > 1 ? 's' : '') + ' de semaine ce mois)' +
+    '<span class="cc-sous">jours travaillés / médecin — plus bas = plus présent au congrès · moyenne ' + moy.toFixed(1) + '</span></div>';
+  html += '<table class="data-table cc-table"><thead><tr><th>Médecin</th><th>Grade</th><th>Jours travaillés (sur ' + N + ')</th></tr></thead><tbody>';
+  lignes.forEach((l) => {
+    const cls = (l.n - moy > 1.0) ? ' class="cc-fort"' : (moy - l.n > 1.0 ? ' class="cc-faible"' : '');
+    html += '<tr' + cls + '><td>' + l.nom + '</td><td>' + l.grade + '</td><td>' + l.n + '</td></tr>';
+  });
+  html += '</tbody></table>';
+  box.innerHTML = html;
+  box.classList.remove("hidden");
+}
+
 /* Recharge statut + données + compteurs + conflits du mois affiché. */
 async function rafraichirPanneauAdmin() {
   if (!medecinCourant || medecinCourant.role !== "admin" || !calendrier) return;
@@ -5148,6 +5207,7 @@ function basculerVuePlanning(vue) {
   } else if (calendrier) {
     calendrier.updateSize(); // recalcule la taille après réaffichage
   }
+  majCompteurCongres(); // affiche/masque le compteur congrès selon la vue active
 }
 if (vueCalendrierBtn) vueCalendrierBtn.addEventListener("click", () => basculerVuePlanning("calendrier"));
 if (vueGrilleBtn) vueGrilleBtn.addEventListener("click", () => basculerVuePlanning("grille"));
