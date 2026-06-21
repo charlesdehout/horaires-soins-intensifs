@@ -117,5 +117,25 @@ t("statut spécial « CAP fromager » : 0 lundi, 0 garde dimanche, 0 off, gardes
   const avgW=others.reduce((a,id)=>a+W[id].size,0)/others.length;
   assert(Math.abs(W["resident1"].size-avgW)<=1.5,"week-ends CAP trop loin de la moyenne : "+W["resident1"].size+" vs "+avgW.toFixed(1));
 });
+t("CONGRÈS (M17) : équipe minimale (gardes de nuit forcées en 24h sauf vendredi) + tolérance stations vides",()=>{
+  // ISICEM lun→ven : 2026-07-13 (lun) → 2026-07-17 (ven).
+  const periodes=[{type:"congres",label:"ISICEM",start_date:"2026-07-13",end_date:"2026-07-17"}];
+  const rc=P.genererTrimestreCouple({annee:2026,trimestre:3,medecins:equipe(),preferences:[],periodes});
+  const bd={};rc.shifts.forEach(s=>{(bd[s.date]=bd[s.date]||[]).push(s);});
+  // Lun→Jeu de congrès : les 2 gardes de NUIT deviennent des 24h (équipe minimale).
+  ["2026-07-13","2026-07-14","2026-07-15","2026-07-16"].forEach(d=>{
+    const a=bd[d]||[];
+    assert(a.filter(s=>s.shift_type==="garde_nuit").length===0,"garde de nuit non promue en 24h le "+d);
+    assert(a.filter(s=>s.shift_type==="garde_24h").length>=2,"<2 gardes 24h (équipe minimale) le "+d);
+  });
+  // Vendredi de congrès : consolidation préservée → on NE force PAS la garde en 24h.
+  assert((bd["2026-07-17"]||[]).filter(s=>s.shift_type==="garde_nuit").length>=1,"vendredi : garde de nuit forcée en 24h (consolidation cassée)");
+  // (c) Tolérance : aucune station vide signalée AU-DELÀ de congres_postes_vides (=2).
+  const tol=2;
+  ["2026-07-13","2026-07-14","2026-07-15","2026-07-16","2026-07-17"].forEach(d=>{
+    const c=rc.conflits.find(x=>x.date===d&&/Stations vides/.test(x.message||""));
+    if(c){const n=(c.message.split(":")[1]||"").split(",").filter(Boolean).length;assert(n>tol,"conflit stations vides sous tolérance le "+d+" ("+n+")");}
+  });
+});
 console.log("\n--- "+ok+"/"+tot+" tests (moteur couplé) ---\n");
 process.exi

@@ -521,22 +521,56 @@ function genererTrimestreCouple(opts) {
   sortie.forEach((s) => { if (s.shift_type === "recup" || s.shift_type === "conge_ferie") plMarquerAssigne(s.date, s.doctor_id, etat); });
 
   // ---- PHASE 3 : unités (jour), continuité au mieux — APRÈS repos/récups (ne vole
-  //      plus les jours de récup : plDispo respecte etat.assigneJour & etat.bloque). ----
+  //      plus les jours de récup : plDispo respecte etat.assigneJour & etat.bloque).
+  //      CONGRÈS (M17) restauré — règles perdues lors du passage au moteur couplé :
+  //        (a) ÉQUIPE MINIMALE : les 2 gardes de nuit du jour sont forcées en 24h
+  //            (elles tiennent une station + la nuit) → libère 2 médecins de plus
+  //            pour le congrès. SAUF le vendredi (consolidation ven→dim) ;
+  //        (b) CONTINUITÉ SUSPENDUE : on ne ré-ancre pas la station de la semaine,
+  //            on fait TOURNER les gens (tri par équité des jours de congrès) ;
+  //        (c) TOLÉRANCE : jusqu'à `congres_postes_vides` stations peuvent rester
+  //            vides sans que ce soit signalé comme un conflit (§3.2). ----
   datesTrim.forEach((date) => {
     const jr = plJourSemaine(date);
     if (jr === 6 || jr === 7) return;                 // pas de station le week-end
     if (plEstWeekendOuFerie(date)) return;            // férié : pas de stations
-    etat._congresJour = plEstCongres(date, etat.periodes);
+    const congresJour = plEstCongres(date, etat.periodes);
+    etat._congresJour = congresJour;                  // équité congrès (plAffecter / plTrier)
     const cle = plLundiDe(date);
     const postes = plPostesOuverts(date, etat.periodes);
     const plan = {};
-    sortie.filter((s) => s.date === date && s.shift_type === "jour" && s.poste).forEach((s) => { plan[s.poste] = s.doctor_id; });
+    // Réserve les stations DÉJÀ tenues ce jour — y compris par une garde 24h
+    // (promotion Phase 2b/congrès) — pour ne JAMAIS réattribuer une station occupée.
+    sortie.filter((s) => s.date === date && (s.shift_type === "jour" || s.shift_type === "garde_24h") && s.poste)
+      .forEach((s) => { plan[s.poste] = s.doctor_id; });
+
+    // (a) CONGRÈS — ÉQUIPE MINIMALE : forcer les gardes de nuit du jour en 24h.
+    //     Jamais le vendredi (la garde ven→dim ne doit pas tenir une station le ven),
+    //     ni une 2e garde 24h la même semaine ISO.
+    if (congresJour && jr !== 5) {
+      sortie.filter((s) => s.date === date && s.shift_type === "garde_nuit").forEach((g) => {
+        if (sortie.some((x) => x.doctor_id === g.doctor_id && x.shift_type === "garde_24h" && plLundiDe(x.date) === cle)) return;
+        const med = medecins.find((x) => x.id === g.doctor_id); if (!med) return;
+        const st = plChoisirStation(med, postes, plan, etat, cle);
+        if (st && !(st in plan)) {
+          g.shift_type = "garde_24h"; g.poste = st;
+          plan[st] = g.doctor_id;
+          etat.heures[g.doctor_id] += (PL_HEURES.garde_24h - PL_HEURES.garde_nuit);
+          if (etat._congresJour) etat.joursCongres[g.doctor_id] = (etat.joursCongres[g.doctor_id] || 0) + 1;
+          // pas d'ancrage de continuité en congrès (rotation quotidienne voulue).
+        }
+      });
+    }
+
     const libres = medecins.filter((m) => plDispo(m, date, etat) && !plEstNouvelEngage(m, date, etat.debutPeriode));
-    // Continuité : d'abord ceux qui ont une station de la semaine encore libre.
-    const ordered = libres.sort((a, b) => {
-      const pa = etat.station[a.id][cle] ? 0 : 1, pb = etat.station[b.id][cle] ? 0 : 1;
-      return pa - pb || (etat.heures[a.id] - etat.heures[b.id]);
-    });
+    // (b) Tri : hors congrès = continuité (station de la semaine) puis heures ;
+    //     en congrès = équité des jours de congrès d'abord (plTrier "jour"), rotation.
+    const ordered = congresJour
+      ? plTrier(libres.slice(), "jour", etat, date)
+      : libres.sort((a, b) => {
+          const pa = etat.station[a.id][cle] ? 0 : 1, pb = etat.station[b.id][cle] ? 0 : 1;
+          return pa - pb || (etat.heures[a.id] - etat.heures[b.id]);
+        });
     ordered.forEach((m) => {
       const restantes = postes.filter((c) => !(c in plan));
       if (!restantes.length) return;
@@ -549,11 +583,14 @@ function genererTrimestreCouple(opts) {
       if (st && !(st in plan)) {
         plan[st] = m.id;
         plAffecter(sortie, etat, date, "jour", m.id, st);
-        if (!plSansContinuite(st)) etat.station[m.id][cle] = st;
+        // Pas d'ancrage de continuité en congrès (les stations doivent tourner).
+        if (!congresJour && !plSansContinuite(st)) etat.station[m.id][cle] = st;
       }
     });
+    // (c) TOLÉRANCE congrès : on ne signale un conflit que SOUS le minimum assoupli.
     const vide = postes.filter((c) => !(c in plan));
-    if (vide.length) conflits.push({ date, message: "Stations vides : " + vide.join(",") });
+    const toleres = congresJour ? plToleranceVides(date, etat.periodes) : 0;
+    if (vide.length > toleres) conflits.push({ date, message: "Stations vides : " + vide.join(",") });
   });
 
   // ---- PHASE 4 : off-clinic, plancher heures (doublures), équité tours/heures ----

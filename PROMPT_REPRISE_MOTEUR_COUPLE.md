@@ -164,17 +164,50 @@ couplage temporel (|Δ|≤2) ; consolidation ven→dim ; équité gardes/tours i
 écart d'heures trimestre borné ; récups étiquetées (≤1/sem, jamais férié) ; congés +
 mi-temps ; férié = jour type week-end ; statut CAP fromager.
 
-**À VALIDER en réel après les changements 2026-06-19** (§6.1 + §6.2 + fusion source unique) :
-1. `node test-couple.js` = 12/12.
-2. Mesurer l'écart d'heures **mensuel** avant/après (objectif §6.1 : le réduire).
-3. Vérifier que la récup **V/D** est bien posée (objectif §6.2 : ne saute plus) et
-   coïncide avec le repos couplé du mardi.
-4. Vérifier que les couplages jeu/ven et les repos couplés tiennent toujours.
+### Changements de la session 2026-06-19 (IMPLÉMENTÉS, NON committés — sandbox Cowork down)
 
-Si un test casse : le réordonnancement §6.2 (récups avant Phase 3) ou le loader de
-`test-couple.js` sont les premiers suspects. Le loader bundle `planning.js` +
-`planning-couple.js` dans un scope CJS — il doit être strictement équivalent à
-l'ancienne copie concaténée.
+Tout est écrit sur disque mais **rien n'a été testé ni committé** (le shell Cowork est
+resté indisponible). À faire par Charles sur sa machine : `node test-couple.js` (12/12),
+régénérer un trimestre, vérifier les compteurs, puis `git add/commit/push`.
+
+1. **§6.1** `plEquilibrerGardesMois` — lisse les heures-de-garde par mois (lun→mer). *(déjà là)*
+2. **§6.2** Récups d'office AVANT le staffing (réordonnancement de `genererTrimestreCouple`).
+3. **Fusion source unique** — `planning.prototype-couple.js` supprimé ; `test-couple.js`
+   bundle `planning.js` + `planning-couple.js` dans un scope CJS.
+4. **Nettoyage repo** — 11 PROMPT_REPRISE_V*, sim*.js, .bak, docs redondantes, .docx/.pdf supprimés.
+5. **Moteur couplé = DÉFAUT** — bouton « 📅 Générer le trimestre » appelle
+   `genererTrimestreCouple` ; bouton test + flag `_useMoteurCouple` retirés (app.js + index.html).
+6. **Double récup V/D corrigée** (`plEmettreRecupsWeekend`) — relabel du repos couplé J+2
+   en récup au lieu d'une récup en plus.
+7. **Off-clinic proratisé à l'ETP** (`genererOffClinic`) — mi-temps = moitié des off.
+8. **Plafond station en Phase 3** (`plStationPlafonnee`) — un mi-temps n'est plus sur-stationné.
+9. **Lissage heures PAR MOIS** (`plEquilibrerHeuresMois`) — sans régresser le trimestre.
+
+Résultat mesuré (régénération réelle) avant le #9 : mi-temps 472→315 h (sous cible),
+pleins temps MOY H/SEM 47–50,6 (≈3,6 h/sem d'écart), gardes ≤2 / week-ends ≤1 intra-grade.
+
+**Points de vérification après régénération :**
+- `node test-couple.js` = 12/12 (le trimestre est protégé par construction).
+- Écart d'heures **par mois** resserré (bascule sélecteur Trimestre → Mois) sans bouger le trimestre.
+- Récup **V/D** posée, pas de double récup (mardi + autre jour) pour la même personne/semaine.
+- Mi-temps : moitié moins d'off, près de sa cible, jamais sur-stationné.
+- Couplages jeu/ven et repos couplés intacts.
+
+Premiers suspects si un test casse : le réordonnancement §6.2, le loader de
+`test-couple.js`, ou `plEquilibrerHeuresMois` (mais il est sans-régression : il ne peut
+que réduire l'écart mensuel sans dépasser le plafond trimestre).
+
+### Commit (PowerShell, depuis la machine de Charles)
+
+```powershell
+cd "$HOME\Documents\GitHub\horaires-soins-intensifs"
+node test-couple.js          # doit afficher 12/12
+git add -A
+git commit -m "Moteur couplé par défaut + équité (récups d'office, off proratisé ETP, plafond station, lissage heures/mois) + repo simplifié"
+git push
+```
+(Le nettoyage des fichiers a déjà été fait via `_nettoyage.bat` ; `git add -A` enregistre
+les suppressions + les éditions.)
 
 ---
 
