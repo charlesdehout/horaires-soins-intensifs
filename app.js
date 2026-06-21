@@ -3707,6 +3707,10 @@ async function majCompteurCongres() {
   const congres = (periodes || []).filter((p) => p.type === "congres");
   if (!congres.length) { box.classList.add("hidden"); box.innerHTML = ""; return; }
   // Dates de congrès EN SEMAINE (lun-ven) à l'intérieur du mois affiché.
+  // ⚠️ Avance de date en UTC STRICT (setUTCDate) — surtout PAS lendemainDe(),
+  // qui mélange heure locale et toISOString() et peut renvoyer le MÊME jour en
+  // fuseau positif (UTC+1/+2) → la boucle ne progresserait jamais (page figée).
+  const jourSuivant = (s) => { const d = new Date(s + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); };
   const datesCongres = new Set();
   const labels = [];
   congres.forEach((p) => {
@@ -3716,7 +3720,7 @@ async function majCompteurCongres() {
     while (cur <= fin) {
       const jr = new Date(cur + "T00:00:00Z").getUTCDay(); // 0=dim … 6=sam
       if (jr >= 1 && jr <= 5) datesCongres.add(cur);
-      cur = lendemainDe(cur);
+      cur = jourSuivant(cur);
     }
   });
   if (!datesCongres.size) { box.classList.add("hidden"); box.innerHTML = ""; return; }
