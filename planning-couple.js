@@ -80,6 +80,15 @@ function plEquilibrerGardesMois(sortie, medecins, etat, annee, mois) {
       parDoc[haut.id].delete(cand.date); gardesDates[haut.id].delete(cand.date);
       parDoc[bas.id].add(cand.date); gardesDates[bas.id].add(cand.date);
       cand.doctor_id = bas.id;
+      // SYNC OCCUPATION (corrige les « doubles affectations ») : le receveur est
+      // désormais OCCUPÉ ce jour (sinon la Phase 3 lui poserait une STATION
+      // par-dessus la garde) + repos le lendemain ; le donneur est LIBÉRÉ de ce
+      // jour et de son repos (sinon il resterait inutilement non planifié).
+      plMarquerAssigne(cand.date, bas.id, etat);
+      if (!etat.bloque[bas.id]) etat.bloque[bas.id] = new Set();
+      etat.bloque[bas.id].add(plAdd(cand.date, 1));
+      if (etat.assigneJour[cand.date]) etat.assigneJour[cand.date].delete(haut.id);
+      if (etat.bloque[haut.id]) etat.bloque[haut.id].delete(plAdd(cand.date, 1));
       etat.heures[haut.id] -= PL_HEURES.garde_nuit; etat.heures[bas.id] += PL_HEURES.garde_nuit;
       etat.nbGardesTotal[haut.id]--; etat.nbGardesTotal[bas.id]++;
       const lk = plLundiDe(cand.date);
@@ -209,6 +218,53 @@ function plEquilibrerHeuresMois(sortie, medecins, etat, annee, mois) {
   };
   passe(false);  // continuité STRICTE d'abord (transfert vers qui tient déjà l'unité)
   passe(true);   // continuité assouplie ensuite (toujours gardé par les 2 critères)
+}
+
+/* FILET ANTI « DOUBLE AFFECTATION » (Dr Dehout 2026-06-21) : en fin de génération,
+   un médecin ne doit jamais avoir 2 shifts de TRAVAIL le même jour. Résolution :
+   - station de jour + garde de NUIT le même jour = de fait une garde de 24h →
+     on FUSIONNE (la garde de nuit devient une garde 24h qui tient la station) →
+     c'est désormais COMPTÉ comme une 24h, plus comme deux entrées ;
+   - garde 24h (ou tour) déjà présents + station(s) de jour → on retire la/les
+     stations de jour en trop (la garde 24h tient déjà une unité) ;
+   - plusieurs stations de jour → on n'en garde qu'UNE (on retire d'abord celles
+     sur une unité déjà doublée, pour ne pas vider une unité). */
+function plResoudreDoublesAffectations(sortie, etat) {
+  const estTrav = (t) => t === "jour" || t === "garde_nuit" || t === "garde_24h" || t === "twe";
+  const occ = {}; // occ[date][poste] = nb d'unités tenues (jour + 24h)
+  sortie.forEach((s) => {
+    if ((s.shift_type === "jour" || s.shift_type === "garde_24h") && s.poste) {
+      (occ[s.date] = occ[s.date] || {}); occ[s.date][s.poste] = (occ[s.date][s.poste] || 0) + 1;
+    }
+  });
+  const occVal = (s) => (occ[s.date] && occ[s.date][s.poste]) || 1;
+  const retirer = (s) => {
+    const i = sortie.indexOf(s); if (i < 0) return;
+    sortie.splice(i, 1);
+    etat.heures[s.doctor_id] = (etat.heures[s.doctor_id] || 0) - (PL_HEURES[s.shift_type] || 0);
+    if (s.poste && occ[s.date] && occ[s.date][s.poste]) occ[s.date][s.poste]--;
+  };
+  const parCle = {};
+  sortie.forEach((s) => { if (estTrav(s.shift_type)) { const k = s.doctor_id + "|" + s.date; (parCle[k] = parCle[k] || []).push(s); } });
+  Object.keys(parCle).forEach((k) => {
+    const arr = parCle[k].filter((s) => sortie.indexOf(s) >= 0);
+    if (arr.length < 2) return;
+    const g24 = arr.find((s) => s.shift_type === "garde_24h");
+    const twe = arr.find((s) => s.shift_type === "twe");
+    const gn = arr.find((s) => s.shift_type === "garde_nuit");
+    let jours = arr.filter((s) => s.shift_type === "jour");
+    if ((g24 || twe) && jours.length) { jours.forEach(retirer); return; } // la 24h/le tour tient déjà la duty
+    if (gn && jours.length) {                                             // jour + nuit = 24h → FUSION
+      gn.shift_type = "garde_24h"; gn.poste = jours[0].poste;
+      etat.heures[gn.doctor_id] = (etat.heures[gn.doctor_id] || 0) + (PL_HEURES.garde_24h - PL_HEURES.garde_nuit);
+      jours.forEach(retirer);
+      return;
+    }
+    if (jours.length > 1) {                                               // plusieurs stations → en garder une
+      jours = jours.sort((a, b) => occVal(a) - occVal(b));               // garde la moins doublée (occ la plus basse)
+      for (let i = 1; i < jours.length; i++) retirer(jours[i]);
+    }
+  });
 }
 
 function plCoupleChoisir(pool, etat, dateRef, n, exigerResident, preTri) {
@@ -631,6 +687,10 @@ function genererTrimestreCouple(opts) {
     }
   }
   // (Récups/congés fériés déjà émis AVANT la Phase 3 — voir « RÉCUPS D'OFFICE » plus haut.)
+
+  // FILET final : résout toute « double affectation » résiduelle (jour + garde le
+  // même jour → fusion en 24h ; stations en double → on en garde une).
+  plResoudreDoublesAffectations(sortie, etat);
 
   return { shifts: sortie, conflits, etat, medecins, datesTrim, within, moisTrim, annee, recupsNonPosees: etat.recupsNonPosees || [] };
 }

@@ -6188,6 +6188,7 @@ function echResumeChanges(changes, ctx) {
     } else {
       const s = byId[String(c.id)];
       if (s && s.shift_type === "repos_garde") lignes.push("↪ Le repos de garde du " + fmt(s.date) + " passe à " + nom(c.doctor_id) + ".");
+      else if (s && s.shift_type === "recup") lignes.push("↪ La récup de week-end du " + fmt(s.date) + " passe à " + nom(c.doctor_id) + ".");
       else if (s && s.shift_type === "jour") lignes.push("↪ La journée du " + fmt(s.date) + " passe à " + nom(c.doctor_id) + " (le receveur de la garde est en repos ce jour-là).");
     }
   });

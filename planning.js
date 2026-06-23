@@ -2876,6 +2876,20 @@ function validerEchange(shifts, idA, idB, medecins) {
       }
     });
 
+    // 2ter) RÉCUP de WEEK-END (Dr Dehout 2026-06-21) — la récup (shift_type
+    //    'recup', étiquetée « récup (samedi) » ou « récup (V/D) ») est due À CAUSE
+    //    de la garde de week-end : elle doit SUIVRE la garde échangée. On la
+    //    transfère de l'ancien titulaire au nouveau. On retient la récup du même
+    //    médecin placée APRÈS la garde, dans la semaine qui suit (la plus proche).
+    sens.forEach(([g, ancien, nouveau]) => {
+      const jr = plJourSemaine(g.date);
+      if (!estWE(g.date) && jr !== 5) return;          // garde de WE (sam/dim) ou vendredi consolidé
+      const cand = (shifts || []).filter((s) => s.shift_type === "recup" && !suppr.has(s.id) &&
+        docDe(s) === ancien && s.date > g.date && s.date <= plAdd(g.date, 10))
+        .sort((a, b) => a.date.localeCompare(b.date));
+      if (cand.length) { changes.push({ id: cand[0].id, doctor_id: nouveau }); reaff[cand[0].id] = nouveau; }
+    });
+
     // 2bis) NOUVEAU (2026-06-15, étendu 2026-06-16) — les JOURNÉES qui empêchent
     //    le receveur de prendre la garde sont REDONNÉES au cédant au lieu de
     //    bloquer l'échange. Deux jours concernés pour chaque garde gagnée :
