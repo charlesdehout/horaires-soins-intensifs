@@ -644,6 +644,50 @@ function genererTrimestreCouple(opts) {
         if (!congresJour && !plSansContinuite(st)) etat.station[m.id][cle] = st;
       }
     });
+    // GARANTIE DE COUVERTURE (jour de semaine ORDINAIRE — hors congrès) : 7/7
+    // stations est une règle DURE, on ne laisse JAMAIS une station vide. Leviers,
+    // dans l'ordre : (1) promouvoir une garde de nuit en 24h (elle tient la station
+    // + la nuit) ; (2) reprendre une personne en RÉCUP ce jour et DÉPLACER sa récup
+    // vers un jour ouvré libre (la récup est déplaçable, l'unité doit être tenue).
+    if (!congresJour) {
+      let vides = postes.filter((c) => !(c in plan));
+      if (vides.length) {                                   // (1) garde de nuit → 24h (vendredi inclus en dernier recours : couverture > consolidation)
+        sortie.filter((s) => s.date === date && s.shift_type === "garde_nuit").forEach((g) => {
+          if (!vides.length) return;
+          if (sortie.some((x) => x.doctor_id === g.doctor_id && x.shift_type === "garde_24h" && plLundiDe(x.date) === cle)) return;
+          const med = medecins.find((x) => x.id === g.doctor_id); if (!med) return;
+          const st = plChoisirStation(med, vides, plan, etat, cle);
+          if (st && !(st in plan)) {
+            g.shift_type = "garde_24h"; g.poste = st; plan[st] = g.doctor_id;
+            etat.heures[g.doctor_id] += (PL_HEURES.garde_24h - PL_HEURES.garde_nuit);
+            vides = postes.filter((c) => !(c in plan));
+          }
+        });
+      }
+      if (vides.length) {                                   // (2) reprise d'une récup (récup déplacée)
+        const recups = sortie.filter((s) => s.date === date && s.shift_type === "recup");
+        for (const r of recups) {
+          if (!vides.length) break;
+          if (sortie.some((x) => x !== r && x.date === date && x.doctor_id === r.doctor_id)) continue; // déjà occupé ce jour
+          const med = medecins.find((x) => x.id === r.doctor_id); if (!med) continue;
+          const st = plChoisirStation(med, vides, plan, etat, cle);
+          if (!st || (st in plan)) continue;
+          // jour ouvré libre suivant pour reposer la récup déplacée (best-effort).
+          let dRecup = null, d2 = plAdd(date, 1);
+          for (let k = 0; k < 21; k++) {
+            if (within.has(d2) && plJourSemaine(d2) <= 5 && !plEstWeekendOuFerie(d2) && !sortie.some((s) => s.doctor_id === r.doctor_id && s.date === d2)) { dRecup = d2; break; }
+            d2 = plAdd(d2, 1);
+          }
+          const note = r.note;
+          r.shift_type = "jour"; r.poste = st; if ("note" in r) delete r.note;
+          etat.heures[r.doctor_id] += PL_HEURES.jour;        // récup (0 h) → station (10,5 h)
+          plan[st] = r.doctor_id;
+          if (!plSansContinuite(st)) etat.station[r.doctor_id][cle] = st;
+          if (dRecup) { sortie.push({ date: dRecup, shift_type: "recup", poste: null, doctor_id: r.doctor_id, note: note }); plMarquerAssigne(dRecup, r.doctor_id, etat); }
+          vides = postes.filter((c) => !(c in plan));
+        }
+      }
+    }
     // (c) TOLÉRANCE congrès : on ne signale un conflit que SOUS le minimum assoupli.
     const vide = postes.filter((c) => !(c in plan));
     const toleres = congresJour ? plToleranceVides(date, etat.periodes) : 0;

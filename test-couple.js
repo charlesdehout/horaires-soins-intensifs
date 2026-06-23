@@ -139,5 +139,15 @@ t("CONGRÈS (M17) : les 2 gardes en 24h (aucune 17h-9h), AUCUNE doublure, tolér
   // ÉQUITÉ congrès : la rotation (joursCongres) ne laisse personne très au-dessus des autres.
   if(rc.etat&&rc.etat.joursCongres){const v=equipe().map(m=>rc.etat.joursCongres[m.id]||0);assert(Math.max(...v)-Math.min(...v)<=4,"équité jours de congrès trop large : "+v.join(","));}
 });
+t("COUVERTURE DURE : 7/7 stations pourvues chaque JOUR DE SEMAINE ordinaire (jamais 6/7)",()=>{
+  const STATIONS=["usi1","usi2","usi3","usi4","usi5","bordet","labo_choc"];
+  const fr=require("./regles.js");const fer=new Set(fr.joursFeriesBE(2026));
+  Object.keys(byDate).forEach(d=>{
+    const jj=js(d); if(jj>5||fer.has(d))return;            // week-end / férié exclus
+    const couvre=new Set();
+    byDate[d].forEach(s=>{ if((s.shift_type==="jour"||s.shift_type==="garde_24h")&&s.poste)couvre.add(s.poste); });
+    STATIONS.forEach(st=>assert(couvre.has(st),"station "+st+" NON pourvue le "+d+" (couverture incomplète)"));
+  });
+});
 console.log("\n--- "+ok+"/"+tot+" tests (moteur couplé) ---\n");
 process.exi

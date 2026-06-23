@@ -1605,10 +1605,14 @@ const PREF_LABELS_FULL = {
 let calendrier = null;       // instance FullCalendar (créée une seule fois)
 let carteMedecins = {};      // { doctor_id: { name, grade } }, pour nommer les shifts
 
-/* Renvoie la date (YYYY-MM-DD) du lendemain d'une date donnée. */
+/* Renvoie la date (YYYY-MM-DD) du lendemain d'une date donnée.
+   UTC STRICT (setUTCDate) : en heure locale d'un fuseau positif (UTC+1/+2),
+   minuit local +1 jour retombe sur le MÊME jour une fois converti par
+   toISOString() → « demain » renvoyait « aujourd'hui » et les fonds multi-jours
+   du calendrier (congé, congrès, CM) s'affichaient un jour trop court. */
 function lendemainDe(dateStr) {
-  const d = new Date(dateStr + "T00:00:00");
-  d.setDate(d.getDate() + 1);
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().slice(0, 10);
 }
 
