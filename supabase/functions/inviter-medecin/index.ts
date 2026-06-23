@@ -31,13 +31,23 @@ function reponse(obj: unknown, status = 200): Response {
   });
 }
 
+/* Mot de passe temporaire lisible (sans caractères ambigus 0/O/1/l/I). */
+function genererMotDePasse(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  const arr = new Uint32Array(12);
+  crypto.getRandomValues(arr);
+  let s = "";
+  for (let i = 0; i < arr.length; i++) s += chars[arr[i] % chars.length];
+  return s;
+}
+
 Deno.serve(async (req) => {
   // Pré-vol CORS (le navigateur l'envoie avant le POST cross-origin).
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return reponse({ error: "Méthode non autorisée." }, 405);
 
   try {
-    const { email, redirectTo } = await req.json().catch(() => ({}));
+    const { email, redirectTo, mode } = await req.json().catch(() => ({}));
     if (!email || typeof email !== "string") {
       return reponse({ error: "Email manquant ou invalide." }, 400);
     }
@@ -66,6 +76,27 @@ Deno.serve(async (req) => {
     if (errProfil) return reponse({ error: "Lecture du profil impossible : " + errProfil.message }, 500);
     if (!profil || profil.role !== "admin") {
       return reponse({ error: "Action réservée à l'administrateur." }, 403);
+    }
+
+    const email2 = email.trim().toLowerCase();
+
+    // 3bis) MODE « creer » (sans email) : on crée le compte avec un mot de passe
+    //       TEMPORAIRE, renvoyé à l'admin pour qu'il le transmette lui-même. Le
+    //       médecin DEVRA le changer à la 1re connexion (flag must_change_password).
+    //       Utile quand l'envoi d'email échoue (ex. délivrabilité Hotmail/DKIM).
+    if (mode === "creer") {
+      const motDePasseTemp = genererMotDePasse();
+      const { data, error } = await admin.auth.admin.createUser({
+        email: email2,
+        password: motDePasseTemp,
+        email_confirm: true, // compte actif immédiatement, aucun email envoyé
+        user_metadata: { must_change_password: true },
+      });
+      if (error) {
+        console.error("createUser error:", error);
+        return reponse({ error: error.message || "Création du compte impossible.", code: (error as { code?: string }).code, status: (error as { status?: number }).status }, 400);
+      }
+      return reponse({ ok: true, email: data?.user?.email || email2, motDePasseTemp });
     }
 
     // 3) Envoyer l'invitation (email avec lien pour définir le mot de passe).

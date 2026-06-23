@@ -262,9 +262,16 @@ loginForm.addEventListener("submit", async (e) => {
     return;
   }
 
-  // Connexion réussie → on charge le profil puis on affiche l'espace.
+  // Connexion réussie. Si le compte a été créé avec un MOT DE PASSE TEMPORAIRE
+  // (par l'admin, sans email), on force d'abord la page « définir le mot de passe ».
   const profil = await chargerProfil(data.user);
-  if (profil) afficherEspace(profil);
+  if (profil) {
+    if (data.user && data.user.user_metadata && data.user.user_metadata.must_change_password) {
+      montrerDefinirMotDePasse();
+    } else {
+      afficherEspace(profil);
+    }
+  }
 });
 
 
@@ -325,7 +332,9 @@ if (setPasswordForm) {
     if (p1.length < 8) { messageSetPassword("8 caractères minimum."); return; }
     if (p1 !== p2) { messageSetPassword("Les deux mots de passe ne correspondent pas."); return; }
 
-    const { error } = await sb.auth.updateUser({ password: p1 });
+    // On enregistre le mot de passe ET on retire le flag « doit changer »
+    // (utile pour les comptes créés avec un mot de passe temporaire par l'admin).
+    const { error } = await sb.auth.updateUser({ password: p1, data: { must_change_password: false } });
     if (error) { messageSetPassword("Erreur : " + error.message); return; }
 
     messageSetPassword("Mot de passe enregistré. Accès à votre espace…", "info");
@@ -674,6 +683,12 @@ function rendreTableau(medecins) {
     btnInvite.title = "Envoyer un email d'invitation pour définir le mot de passe";
     btnInvite.addEventListener("click", () => inviterMedecin(med));
 
+    const btnCreer = document.createElement("button");
+    btnCreer.textContent = "Créer";
+    btnCreer.className = "mini";
+    btnCreer.title = "Créer le compte avec un mot de passe temporaire (SANS email) — à transmettre au médecin, qui le changera à la 1re connexion";
+    btnCreer.addEventListener("click", () => creerMedecin(med));
+
     const btnDel = document.createElement("button");
     btnDel.textContent = "Supprimer";
     btnDel.className = "mini danger";
@@ -681,6 +696,7 @@ function rendreTableau(medecins) {
 
     tdActions.appendChild(btnEdit);
     tdActions.appendChild(btnInvite);
+    tdActions.appendChild(btnCreer);
     tdActions.appendChild(btnDel);
     tr.appendChild(tdActions);
 
@@ -808,6 +824,50 @@ async function inviterMedecin(med) {
     window.alert("Invitation envoyée à " + (out.email || med.email) + ".");
   } catch (e) {
     window.alert("Impossible de joindre la fonction d'invitation : " + e.message +
+      "\n(Souvent : fonction non déployée, mauvais nom, ou blocage CORS.)");
+  }
+}
+
+/* Crée le compte d'un médecin avec un MOT DE PASSE TEMPORAIRE (sans email).
+   L'admin transmet lui-même ce mot de passe ; le médecin le changera à sa
+   première connexion (page « définir le mot de passe »). Pratique quand l'envoi
+   d'email échoue (délivrabilité Hotmail/DKIM non configuré). */
+async function creerMedecin(med) {
+  if (!med.email) { window.alert("Ce médecin n'a pas d'email enregistré."); return; }
+  if (!window.confirm("Créer le compte de " + med.email + " avec un mot de passe temporaire ?\n\nAucun email n'est envoyé : tu transmettras toi-même le mot de passe au médecin.")) return;
+
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { window.alert("Session expirée, reconnecte-toi."); return; }
+
+  try {
+    const res = await fetch(SUPABASE_URL + "/functions/v1/inviter-medecin", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + session.access_token,
+        "apikey": SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ email: med.email, mode: "creer" }),
+    });
+    const raw = await res.text();
+    let out = {};
+    try { out = raw ? JSON.parse(raw) : {}; } catch (e) { out = {}; }
+    if (!res.ok) {
+      const detail = out.error || out.message || (raw && raw.slice(0, 300)) || "(réponse vide)";
+      window.alert(
+        "Échec de la création — HTTP " + res.status + " : " + detail +
+        "\n\nSi « already been registered » : le compte existe déjà → utilise « Inviter » " +
+        "ou réinitialise son mot de passe.\nSinon, vérifie que la fonction inviter-medecin est bien à jour (Edge Functions → Logs).");
+      return;
+    }
+    // On affiche le mot de passe dans un prompt (texte sélectionnable → copiable).
+    window.prompt(
+      "✅ Compte créé pour " + (out.email || med.email) + ".\n\n" +
+      "Transmets ce MOT DE PASSE TEMPORAIRE au médecin (il devra le changer à sa 1re connexion).\n" +
+      "Sélectionne-le et copie-le :",
+      out.motDePasseTemp || "");
+  } catch (e) {
+    window.alert("Impossible de joindre la fonction : " + e.message +
       "\n(Souvent : fonction non déployée, mauvais nom, ou blocage CORS.)");
   }
 }
@@ -5980,7 +6040,10 @@ if (_gsResync) _gsResync.addEventListener("click", resyncSheet);
   const { data: { session } } = await sb.auth.getSession();
   if (session) {
     const profil = await chargerProfil(session.user);
-    if (profil) afficherEspace(profil);
+    if (profil) {
+      if (session.user && session.user.user_metadata && session.user.user_metadata.must_change_password) montrerDefinirMotDePasse();
+      else afficherEspace(profil);
+    }
   }
 })();
 
