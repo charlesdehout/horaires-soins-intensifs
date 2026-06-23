@@ -761,3 +761,11 @@ button.danger:not(.mini):hover { background: #9e2b22; }
 .rb-table .rb-effet { font-size: 0.82rem; color: #57606a; }
 .rb-table .rb-effet.rb-warn { color: #ad6800; }
 .rb-table .rb-effet.rb-vide { color: #cf222e; font-style: italic; }
+
+/* Historique des congés maladie (onglet « Congé maladie »). */
+.cm-hist-item { padding: 8px 0; border-bottom: 1px solid #eaecef; }
+.cm-hist-item:last-child { border-bottom: none; }
+.cm-hist-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cm-hist-meta { color: #57606a; font-size: 0.85rem; }
+.cm-hist-head .cm-annuler { margin-left: auto; }
+.cm-hist-postes { margin: 6px 0 0 18px; font-size: 0.88rem; color: #24292f; }

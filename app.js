@@ -2546,7 +2546,7 @@ async function rbAnalyser() {
   if (r1.error) { rbMsg("Erreur médecins : " + r1.error.message, "error"); return; }
   rbDocs = (r1.data || []).filter(function (m) { return m.grade !== "pg"; });
 
-  const r2 = await sb.from("shifts").select("id, date, shift_type, poste, doctor_id").gte("date", debutTrim).lte("date", finTrim);
+  const r2 = await sb.from("shifts").select("id, date, shift_type, poste, doctor_id, schedule_id, epingle").gte("date", debutTrim).lte("date", finTrim);
   if (r2.error) { rbMsg("Erreur shifts : " + r2.error.message, "error"); return; }
   rbShiftsTrim = r2.data || [];
 
@@ -2644,22 +2644,32 @@ async function rbPublierManuel() {
 
   const aInserer = [];                 // nouveaux shifts (remplaçants, repos, récup)
   const aSupprimer = new Set();        // ids de shifts à retirer
+  const resume = [];                   // résumé lisible (historique)
   let nonRepris = 0;
 
   rbPostes.forEach(function (post, i) {
     const docId = rbChoix[i];
     if (!docId) { nonRepris++; return; }
     aInserer.push({ date: post.date, shift_type: post.shift_type, poste: post.poste, doctor_id: docId });
+    const remNom = (carteMedecins[docId] || {}).name || docId;
+    resume.push({ date: post.date, type: post.shift_type, poste: post.poste || null, remplacant: remNom });
     // Le remplaçant était en off / récup / doublure ce jour → on libère ce shift.
     const cand = (post._cands || []).find(function (c) { return c.id === docId; });
     if (cand && cand.statut && cand.statut.shift && cand.statut.shift.id) aSupprimer.add(cand.statut.shift.id);
     // Garde → repos lendemain (+ récup la semaine suivante pour une garde de week-end).
+    // On LIBÈRE d'abord le jour ciblé des shifts existants du remplaçant (ex. un off
+    // ce lendemain), sinon il se retrouverait avec deux shifts le même jour (off + repos).
     if (RB_GARDES.indexOf(post.shift_type) !== -1) {
-      aInserer.push({ date: rbAdd(post.date, 1), shift_type: "repos_garde", poste: null, doctor_id: docId });
+      const lendemain = rbAdd(post.date, 1);
+      rbShiftsTrim.forEach(function (s) { if (s.doctor_id === docId && s.date === lendemain) aSupprimer.add(s.id); });
+      aInserer.push({ date: lendemain, shift_type: "repos_garde", poste: null, doctor_id: docId });
       const jr = rbJourISO(post.date);
       if (jr === 6 || jr === 7) {
         const dRecup = rbProchaineRecup(docId, post.date);
-        if (dRecup) aInserer.push({ date: dRecup, shift_type: "recup", poste: null, doctor_id: docId });
+        if (dRecup) {
+          rbShiftsTrim.forEach(function (s) { if (s.doctor_id === docId && s.date === dRecup) aSupprimer.add(s.id); });
+          aInserer.push({ date: dRecup, shift_type: "recup", poste: null, doctor_id: docId });
+        }
       }
     }
   });
@@ -2671,12 +2681,22 @@ async function rbPublierManuel() {
   if (!aInserer.length && !aSupprimer.size) { rbMsg("Aucun remplaçant choisi.", "error"); return; }
   rbMsg("Publication…");
 
+  // INSTANTANÉ « avant » : on mémorise les lignes retirées (pour pouvoir les
+  // RÉINSÉRER à l'annulation) AVANT toute suppression.
+  const supprimes = rbShiftsTrim
+    .filter(function (s) { return aSupprimer.has(s.id); })
+    .map(function (s) { return { date: s.date, shift_type: s.shift_type, poste: s.poste || null, doctor_id: s.doctor_id, schedule_id: s.schedule_id || null, epingle: !!s.epingle }; });
+  const insereIds = [];
+  let prefId = null;
+
   try {
     // 1) Marquer le malade en CONGÉ MALADIE (préférence approuvée sur la plage).
     //    conge_maladie est un type de PRÉFÉRENCE (pas un shift_type autorisé).
-    const { error: ePref } = await sb.from("preferences")
-      .insert({ doctor_id: malId, pref_type: "conge_maladie", start_date: debut, end_date: fin, status: "approuve" });
+    const { data: prefRow, error: ePref } = await sb.from("preferences")
+      .insert({ doctor_id: malId, pref_type: "conge_maladie", start_date: debut, end_date: fin, status: "approuve" })
+      .select("id").single();
     if (ePref) console.warn("Marquage congé maladie (préférence) :", ePref.message);
+    else if (prefRow) prefId = prefRow.id;
 
     // 2) Retirer les shifts libérés (malade + off/récup/doublures repris).
     if (aSupprimer.size) {
@@ -2684,7 +2704,8 @@ async function rbPublierManuel() {
       if (eDel) throw eDel;
     }
 
-    // 3) Insérer les nouveaux shifts, rattachés au schedule (draft) de leur mois.
+    // 3) Insérer les nouveaux shifts, rattachés au schedule de leur mois (créé en
+    //    brouillon si absent). On récupère leurs ids (pour l'annulation).
     const parMois = {};
     aInserer.forEach(function (s) { (parMois[s.date.slice(0, 7)] = parMois[s.date.slice(0, 7)] || []).push(s); });
     for (const k of Object.keys(parMois)) {
@@ -2698,17 +2719,99 @@ async function rbPublierManuel() {
       const lignes = parMois[k].map(function (s) {
         return { date: s.date, shift_type: s.shift_type, poste: s.poste || null, doctor_id: s.doctor_id, schedule_id: sched.id, epingle: false };
       });
-      const { error: eI } = await sb.from("shifts").insert(lignes);
+      const { data: rows, error: eI } = await sb.from("shifts").insert(lignes).select("id");
       if (eI) throw eI;
+      (rows || []).forEach(function (r) { insereIds.push(r.id); });
     }
   } catch (err) {
     rbMsg("Erreur publication : " + (err.message || err), "error"); return;
   }
 
+  // 4) Enregistrer le CM dans l'historique (pour traçabilité + annulation).
+  //    Non bloquant : si la table n'existe pas (module34 non lancé), on prévient
+  //    mais les remplacements restent en place.
+  try {
+    const { error: eHist } = await sb.from("cm_remplacements").insert({
+      malade_id: malId, start_date: debut, end_date: fin, pref_id: prefId,
+      details: { supprimes: supprimes, inseres: insereIds, resume: resume, malade_nom: rbMalade.name || malId },
+    });
+    if (eHist) console.warn("Historique CM non enregistré (lancer sql/module34 ?) :", eHist.message);
+  } catch (e) { console.warn("Historique CM :", e); }
+
   rbMsg("✓ Remplacements enregistrés" + (nonRepris ? " (" + nonRepris + " poste(s) laissé(s) non repris)" : "") + ". Le malade est marqué en congé maladie. Recharge le calendrier.", "success");
   if (rbTableWrap) rbTableWrap.classList.add("hidden");
   rbPostes = []; rbChoix = {};
   await chargerShifts();
+  rbChargerHistorique();
+}
+
+/* ----- Historique des congés maladie + annulation (revert) ----- */
+async function rbChargerHistorique() {
+  const box = document.getElementById("rb-historique");
+  if (!box) return;
+  const { data, error } = await sb.from("cm_remplacements")
+    .select("id, created_at, malade_id, start_date, end_date, details")
+    .order("created_at", { ascending: false });
+  if (error) {
+    box.innerHTML = "<em>Historique indisponible (lance <code>sql/module34_cm_remplacements.sql</code> dans Supabase).</em>";
+    return;
+  }
+  if (!data || !data.length) { box.innerHTML = "Aucun congé maladie enregistré."; return; }
+  let html = "";
+  data.forEach(function (op) {
+    const d = op.details || {};
+    const nom = d.malade_nom || (carteMedecins[op.malade_id] || {}).name || op.malade_id;
+    const created = (op.created_at || "").slice(0, 16).replace("T", " ");
+    const postes = (d.resume || []).map(function (r) {
+      const lib = r.type === "jour" ? ((typeof POSTE_LABELS !== "undefined" && POSTE_LABELS[r.poste]) || r.poste)
+        : ((SHIFT_CONFIG[r.type] || {}).label || r.type);
+      return "<li>" + RB_JOURS[rbJourISO(r.date)] + " " + r.date + " — " + escapeHtml(lib) + " → " + escapeHtml(r.remplacant) + "</li>";
+    }).join("");
+    html += '<div class="cm-hist-item">' +
+      '<div class="cm-hist-head"><strong>' + escapeHtml(nom) + '</strong> · ' + op.start_date + " → " + op.end_date +
+      ' <span class="cm-hist-meta">(enregistré le ' + created + ", " + (d.resume || []).length + " poste(s) repris)</span>" +
+      ' <button class="mini danger cm-annuler" data-id="' + op.id + '">↩ Annuler ce CM</button></div>' +
+      (postes ? "<ul class='cm-hist-postes'>" + postes + "</ul>" : "") +
+      "</div>";
+  });
+  box.innerHTML = html;
+  box.querySelectorAll(".cm-annuler").forEach(function (b) {
+    b.addEventListener("click", function () { rbAnnulerCM(b.dataset.id); });
+  });
+}
+
+/* Annule un CM : retire les shifts ajoutés, réinsère ceux retirés, enlève le
+   marquage congé maladie, puis supprime la ligne d'historique. */
+async function rbAnnulerCM(opId) {
+  if (!window.confirm("Annuler ce congé maladie et revenir à la situation d'avant ? Les remplaçants posés seront retirés et les shifts d'origine restaurés.")) return;
+  const { data: op, error } = await sb.from("cm_remplacements").select("id, pref_id, details").eq("id", opId).single();
+  if (error || !op) { window.alert("CM introuvable : " + (error && error.message)); return; }
+  const d = op.details || {};
+  try {
+    // 1) Retirer les shifts ajoutés par le CM (remplaçants, repos, récups).
+    if (d.inseres && d.inseres.length) {
+      const { error: e1 } = await sb.from("shifts").delete().in("id", d.inseres);
+      if (e1) throw e1;
+    }
+    // 2) Réinsérer les shifts d'origine retirés (malade + off/récup/doublures).
+    if (d.supprimes && d.supprimes.length) {
+      const lignes = d.supprimes.map(function (s) {
+        return { date: s.date, shift_type: s.shift_type, poste: s.poste || null, doctor_id: s.doctor_id, schedule_id: s.schedule_id || null, epingle: !!s.epingle };
+      });
+      const { error: e2 } = await sb.from("shifts").insert(lignes);
+      if (e2) throw e2;
+    }
+    // 3) Enlever le marquage congé maladie (préférence).
+    if (op.pref_id) { await sb.from("preferences").delete().eq("id", op.pref_id); }
+    // 4) Supprimer la ligne d'historique.
+    const { error: e4 } = await sb.from("cm_remplacements").delete().eq("id", opId);
+    if (e4) throw e4;
+  } catch (err) {
+    window.alert("Erreur d'annulation : " + (err.message || err)); return;
+  }
+  await chargerShifts();
+  rbChargerHistorique();
+  rbMsg("✓ Congé maladie annulé : situation d'avant restaurée.", "success");
 }
 
 if (rbBtnAnalyser) rbBtnAnalyser.addEventListener("click", rbAnalyser);
@@ -5336,7 +5439,7 @@ if (vueGrilleBtn) vueGrilleBtn.addEventListener("click", () => basculerVuePlanni
 /* les onglets ne gèrent que l'affichage.                                */
 /* ===================================================================== */
 
-const ONGLETS = ["planning", "periodes", "medecins", "echanges-admin", "conges-admin", "prefs", "echanges"];
+const ONGLETS = ["planning", "cm", "periodes", "medecins", "echanges-admin", "conges-admin", "prefs", "echanges"];
 
 function basculerOnglet(nom) {
   ONGLETS.forEach((t) => {
@@ -5351,6 +5454,7 @@ function basculerOnglet(nom) {
   if (nom === "echanges-admin" && typeof chargerEchangesAdmin === "function") { chargerEchangesAdmin(); if (typeof echAdminCharger === "function") echAdminCharger(); }
   if (nom === "echanges" && typeof initEchanges === "function") { initEchanges(); }
   if (nom === "conges-admin" && typeof cgInit === "function") { cgInit(); chargerDemandes(); }
+  if (nom === "cm" && typeof rbChargerHistorique === "function") { rbChargerHistorique(); }
 }
 
 document.querySelectorAll("#tabs-nav .tab").forEach((b) =>
