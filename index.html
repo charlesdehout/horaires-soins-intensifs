@@ -80,6 +80,7 @@
         <button type="button" class="tab tab-admin hidden" data-tab="conges-admin">Congés et demandes</button>
         <button type="button" class="tab tab-admin hidden" data-tab="periodes">Congrès, fermetures &amp; export</button>
         <button type="button" class="tab tab-admin hidden" data-tab="cm">Congé maladie</button>
+        <button type="button" class="tab tab-admin hidden" data-tab="doublures">Doublures</button>
         <button type="button" class="tab tab-doctor hidden" data-tab="prefs">Mes préférences</button>
         <button type="button" class="tab tab-doctor hidden" data-tab="echanges">Échanges
           <span id="tab-badge-echanges" class="tab-badge hidden"></span></button>
@@ -273,6 +274,18 @@
 
           <div class="zone-header"><h3 class="sous-titre">Historique des congés maladie</h3></div>
           <div id="rb-historique" class="zone-info">Aucun congé maladie enregistré.</div>
+        </div>
+
+        <!-- Onglet DOUBLURES (Module 35) — repositionnement manuel de la charge -->
+        <div id="panel-doublures" class="tab-panel hidden">
+          <div class="zone-header"><h2>⚖️ Doublures — repositionnement manuel de la charge</h2></div>
+          <div class="zone-info">
+            <p>Pour le mois affiché au calendrier : les médecins sont classés par charge décroissante. Pour chaque doublure (2ᵉ personne sur une unité), tu peux la déplacer vers une unité libre ce jour-là, ou retirer la personne du planning (non planifiée). La réduction de charge — heures/semaine du mois ET du trimestre — s'affiche en direct.</p>
+            <button id="db-btn-analyser" class="secondary">🔄 Analyser le mois affiché</button>
+            <div id="db-content"></div>
+            <div id="db-actions-wrap" class="hidden"><button id="db-btn-appliquer">✓ Appliquer les changements</button></div>
+            <p id="db-message" class="message"></p>
+          </div>
         </div>
 
         <!-- Onglet CONGRÈS & FERMETURES (Module 17) — saisie ADMIN uniquement -->

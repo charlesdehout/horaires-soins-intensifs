@@ -769,3 +769,12 @@ button.danger:not(.mini):hover { background: #9e2b22; }
 .cm-hist-meta { color: #57606a; font-size: 0.85rem; }
 .cm-hist-head .cm-annuler { margin-left: auto; }
 .cm-hist-postes { margin: 6px 0 0 18px; font-size: 0.88rem; color: #24292f; }
+
+/* Onglet Doublures (Module 35). */
+.db-doc { padding: 8px 0 10px; border-bottom: 1px solid #eaecef; }
+.db-doc:last-child { border-bottom: none; }
+.db-doc-head { margin-bottom: 4px; }
+.db-impact { font-size: 0.85rem; color: #57606a; margin-left: 8px; }
+.db-impact.db-reduit { color: #1a7f37; font-weight: 600; }
+#db-content { margin-top: 10px; }
+#db-actions-wrap { margin-top: 8px; }

@@ -2818,6 +2818,145 @@ if (rbBtnAnalyser) rbBtnAnalyser.addEventListener("click", rbAnalyser);
 if (rbBtnPublier)  rbBtnPublier.addEventListener("click", rbPublierManuel);
 
 /* ===================================================================== */
+/* MODULE 35 — Doublures : repositionnement manuel de la charge          */
+/* ===================================================================== */
+const dbBtnAnalyser  = document.getElementById("db-btn-analyser");
+const dbBtnAppliquer = document.getElementById("db-btn-appliquer");
+const dbMessage      = document.getElementById("db-message");
+
+let dbDocs = [], dbDoublures = [], dbActions = {}, dbOcc = {}, dbPeriodes = null;
+let dbHeuresMois = {}, dbHeuresTrim = {}, dbWeeksMois = 4.33, dbWeeksTrim = 13;
+const DB_POSTES = (typeof POSTES_JOUR !== "undefined") ? POSTES_JOUR.map((p) => p.code) : ["usi1","usi2","usi3","usi4","usi5","bordet","labo_choc"];
+
+function dbMsg(t, type) { if (dbMessage) { dbMessage.textContent = t; dbMessage.className = "message" + (type ? " " + type : ""); } }
+
+/* Stations OUVERTES ce jour et SANS personne (cibles de déplacement). */
+function dbStationsLibres(date) {
+  const occ = dbOcc[date] || {};
+  const ouverts = (dbPeriodes && typeof plPostesOuverts === "function") ? plPostesOuverts(date, dbPeriodes) : DB_POSTES;
+  return ouverts.filter((c) => !(occ[c] >= 1));
+}
+
+/* Étape 1 — analyser le mois affiché : charge par médecin + doublures. */
+async function dbAnalyser() {
+  if (!calendrier) return;
+  const b = bornesMoisAffiche();
+  dbMsg("Analyse du mois " + String(b.mois).padStart(2, "0") + "/" + b.annee + "…");
+  dbActions = {};
+  const content = document.getElementById("db-content");
+  if (content) content.innerHTML = "";
+  const wrap = document.getElementById("db-actions-wrap"); if (wrap) wrap.classList.add("hidden");
+
+  const annee = b.annee, trimestre = Math.ceil(b.mois / 3);
+  const m1 = (trimestre - 1) * 3 + 1, m3 = (trimestre - 1) * 3 + 3;
+  const debutTrim = annee + "-" + String(m1).padStart(2, "0") + "-01";
+  const finTrim = annee + "-" + String(m3).padStart(2, "0") + "-" + String(new Date(annee, m3, 0).getDate()).padStart(2, "0");
+
+  const r1 = await sb.from("doctors").select("id, name, grade, fte, jours_travailles, role").neq("role", "admin");
+  if (r1.error) { dbMsg("Erreur médecins : " + r1.error.message, "error"); return; }
+  dbDocs = (r1.data || []).filter((m) => m.grade !== "pg");
+
+  const rT = await sb.from("shifts").select("id, date, shift_type, poste, doctor_id").gte("date", debutTrim).lte("date", finTrim);
+  if (rT.error) { dbMsg("Erreur shifts : " + rT.error.message, "error"); return; }
+  const shiftsTrim = rT.data || [];
+  const shiftsMois = shiftsTrim.filter((s) => s.date >= b.debut && s.date <= b.fin);
+
+  let periodesRaw = [];
+  try { periodesRaw = await periodesSur(b.debut, b.fin); } catch (e) { periodesRaw = []; }
+  dbPeriodes = (typeof plIndexerPeriodes === "function") ? plIndexerPeriodes(periodesRaw) : null;
+
+  dbOcc = {};
+  shiftsMois.forEach((s) => { if (s.shift_type === "jour" && s.poste) { (dbOcc[s.date] = dbOcc[s.date] || {}); dbOcc[s.date][s.poste] = (dbOcc[s.date][s.poste] || 0) + 1; } });
+
+  dbHeuresMois = {}; dbHeuresTrim = {};
+  shiftsMois.forEach((s) => { dbHeuresMois[s.doctor_id] = (dbHeuresMois[s.doctor_id] || 0) + (RB_HEURES[s.shift_type] || 0); });
+  shiftsTrim.forEach((s) => { dbHeuresTrim[s.doctor_id] = (dbHeuresTrim[s.doctor_id] || 0) + (RB_HEURES[s.shift_type] || 0); });
+  dbWeeksMois = (new Date(annee, b.mois, 0).getDate()) / 7;
+  dbWeeksTrim = (Math.round((new Date(finTrim + "T00:00:00Z") - new Date(debutTrim + "T00:00:00Z")) / 86400000) + 1) / 7;
+
+  // Doublures = stations de jour tenues à ≥2 personnes ce jour-là.
+  dbDoublures = shiftsMois.filter((s) => s.shift_type === "jour" && s.poste && (((dbOcc[s.date] && dbOcc[s.date][s.poste]) || 1) >= 2));
+
+  dbRendre();
+  const n = dbDoublures.length;
+  dbMsg(n ? n + " doublure(s) sur le mois (médecins les plus chargés en haut)." : "Aucune doublure ce mois.", n ? "" : "info");
+}
+
+/* Étape 2 — rendu : par médecin (charge décroissante), ses doublures + impact live. */
+function dbRendre() {
+  const content = document.getElementById("db-content");
+  const wrap = document.getElementById("db-actions-wrap");
+  if (!content) return;
+  if (!dbDoublures.length) { content.innerHTML = "<p>Aucune doublure à repositionner ce mois.</p>"; if (wrap) wrap.classList.add("hidden"); return; }
+  const parDoc = {};
+  dbDoublures.forEach((d) => { (parDoc[d.doctor_id] = parDoc[d.doctor_id] || []).push(d); });
+  const docIds = Object.keys(parDoc).sort((a, b) => (dbHeuresMois[b] || 0) - (dbHeuresMois[a] || 0));
+  let html = "";
+  docIds.forEach((docId) => {
+    const nom = (carteMedecins[docId] || {}).name || docId;
+    const doubs = parDoc[docId].sort((a, b) => a.date.localeCompare(b.date));
+    html += '<div class="db-doc">';
+    html += '<div class="db-doc-head"><strong>' + escapeHtml(nom) + '</strong> <span class="db-impact" data-doc="' + docId + '"></span></div>';
+    html += '<table class="data-table rb-table"><tbody>';
+    doubs.forEach((d) => {
+      const libres = dbStationsLibres(d.date);
+      let opts = '<option value="">Garder en doublure</option>';
+      libres.forEach((c) => { opts += '<option value="move:' + c + '">→ Déplacer vers ' + escapeHtml((POSTE_LABELS[c]) || c) + '</option>'; });
+      opts += '<option value="remove">Retirer du planning (non planifié)</option>';
+      html += '<tr><td>' + RB_JOURS[rbJourISO(d.date)] + ' ' + d.date + '</td>' +
+              '<td>' + escapeHtml((POSTE_LABELS[d.poste]) || d.poste) + ' (doublée)</td>' +
+              '<td><select class="db-pick" data-shift="' + d.id + '" data-doc="' + docId + '">' + opts + '</select></td></tr>';
+    });
+    html += '</tbody></table></div>';
+  });
+  content.innerHTML = html;
+  if (wrap) wrap.classList.remove("hidden");
+  content.querySelectorAll(".db-pick").forEach((sel) => {
+    sel.addEventListener("change", () => { dbActions[sel.dataset.shift] = sel.value; dbMajImpact(sel.dataset.doc); });
+  });
+  docIds.forEach(dbMajImpact);
+}
+
+/* Impact LIVE : réduction de charge (mois + trimestre) selon les retraits cochés. */
+function dbMajImpact(docId) {
+  const span = document.querySelector('.db-impact[data-doc="' + docId + '"]');
+  if (!span) return;
+  let nRem = 0;
+  dbDoublures.forEach((d) => { if (d.doctor_id === docId && dbActions[d.id] === "remove") nRem++; });
+  const red = nRem * RB_HEURES.jour;
+  const hM = dbHeuresMois[docId] || 0, hT = dbHeuresTrim[docId] || 0;
+  const moy = (h, w) => (w > 0.2 ? (Math.round((h / w) * 10) / 10) : 0);
+  let txt = "Mois : " + Math.round(hM) + " h (" + moy(hM, dbWeeksMois) + " h/sem) · Trim : " + Math.round(hT) + " h (" + moy(hT, dbWeeksTrim) + " h/sem)";
+  if (red > 0) txt += "   →   après : " + Math.round(hM - red) + " h (" + moy(hM - red, dbWeeksMois) + " h/sem) mois · " + Math.round(hT - red) + " h (" + moy(hT - red, dbWeeksTrim) + " h/sem) trim";
+  span.textContent = txt;
+  span.className = "db-impact" + (red > 0 ? " db-reduit" : "");
+}
+
+/* Étape 3 — appliquer : déplacer (update poste) ou retirer (delete) les doublures. */
+async function dbAppliquer() {
+  const ids = Object.keys(dbActions).filter((id) => dbActions[id]);
+  if (!ids.length) { dbMsg("Aucun changement sélectionné.", "info"); return; }
+  if (!window.confirm(ids.length + " changement(s) — appliquer ? Les « retraits » suppriment la doublure (la personne passe non planifiée), les « déplacements » changent l'unité.")) return;
+  dbMsg("Application…");
+  try {
+    for (const id of ids) {
+      const act = dbActions[id];
+      if (act === "remove") {
+        const { error } = await sb.from("shifts").delete().eq("id", id); if (error) throw error;
+      } else if (act.indexOf("move:") === 0) {
+        const { error } = await sb.from("shifts").update({ poste: act.slice(5) }).eq("id", id); if (error) throw error;
+      }
+    }
+  } catch (err) { dbMsg("Erreur : " + (err.message || err), "error"); return; }
+  dbMsg("✓ Changements appliqués. Recharge le calendrier.", "success");
+  await chargerShifts();
+  dbAnalyser();
+}
+
+if (dbBtnAnalyser)  dbBtnAnalyser.addEventListener("click", dbAnalyser);
+if (dbBtnAppliquer) dbBtnAppliquer.addEventListener("click", dbAppliquer);
+
+/* ===================================================================== */
 /* MODULE 30 — Vue Semaine (grille postes × jours, remplace la vue liste) */
 /* ===================================================================== */
 
@@ -5443,7 +5582,7 @@ if (vueGrilleBtn) vueGrilleBtn.addEventListener("click", () => basculerVuePlanni
 /* les onglets ne gèrent que l'affichage.                                */
 /* ===================================================================== */
 
-const ONGLETS = ["planning", "cm", "periodes", "medecins", "echanges-admin", "conges-admin", "prefs", "echanges"];
+const ONGLETS = ["planning", "cm", "doublures", "periodes", "medecins", "echanges-admin", "conges-admin", "prefs", "echanges"];
 
 function basculerOnglet(nom) {
   ONGLETS.forEach((t) => {
@@ -5459,6 +5598,7 @@ function basculerOnglet(nom) {
   if (nom === "echanges" && typeof initEchanges === "function") { initEchanges(); }
   if (nom === "conges-admin" && typeof cgInit === "function") { cgInit(); chargerDemandes(); }
   if (nom === "cm" && typeof rbChargerHistorique === "function") { rbChargerHistorique(); }
+  if (nom === "doublures" && typeof dbAnalyser === "function") { dbAnalyser(); }
 }
 
 document.querySelectorAll("#tabs-nav .tab").forEach((b) =>
