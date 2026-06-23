@@ -2483,9 +2483,20 @@ function validerPlanning(opts) {
       if ((jSem === 1 || jSem === 2) &&
           dm[avantVeille] && dm[avantVeille].some((s) => s.shift_type === "garde_24h") &&
           dm[jMoins4] && dm[jMoins4].some(estGarde)) {
-        const lib = jSem === 1 ? "lundi après gardes couplées jeudi+samedi"
-                               : "mardi après gardes couplées vendredi+dimanche";
-        conflits.push({ date, message: `${nom(id)} : récup non respectée (travail le ${lib}).` });
+        // La récup couplée peut être posée UN AUTRE jour de la semaine : si la
+        // personne a DÉJÀ une récup ailleurs dans la semaine, le repos est honoré
+        // → pas de manquement (Dr Dehout 2026-06-21).
+        const lundiSem = plLundiDe(date);
+        let aRecupSemaine = false;
+        for (let k = 0; k < 7; k++) {
+          const dd = plAdd(lundiSem, k);
+          if (dm[dd] && dm[dd].some((s) => s.shift_type === "recup")) { aRecupSemaine = true; break; }
+        }
+        if (!aRecupSemaine) {
+          const lib = jSem === 1 ? "lundi après gardes couplées jeudi+samedi"
+                                 : "mardi après gardes couplées vendredi+dimanche";
+          conflits.push({ date, message: `${nom(id)} : récup non respectée (travail le ${lib}).` });
+        }
       }
     });
   });
@@ -2570,6 +2581,21 @@ function validerPlanning(opts) {
     const m = (heuresParSemaine[s.doctor_id] = heuresParSemaine[s.doctor_id] || {});
     m[lk] = (m[lk] || 0) + h;
   });
+  // NIVEAU DE GRAVITÉ des dépassements d'heures (Dr Dehout 2026-06-21) :
+  //   > plafond..65 h = vert ; 65..70 h = orange ; > 70 h = rouge.
+  // Un dépassement RÉPÉTÉ dans le MOIS (≥2 semaines) est plus grave qu'un isolé
+  //   → on monte la couleur d'un cran.
+  const depMois = {}; // id -> { 'YYYY-MM' -> nb de semaines > plafond }
+  Object.keys(heuresParSemaine).forEach((id) => {
+    Object.keys(heuresParSemaine[id]).forEach((lk) => {
+      if (Math.round(heuresParSemaine[id][lk] * 10) / 10 > eqV.plafond_hebdo) {
+        const mo = lk.slice(0, 7);
+        (depMois[id] = depMois[id] || {})[mo] = ((depMois[id] || {})[mo] || 0) + 1;
+      }
+    });
+  });
+  const niveauHeures = (h) => (h > 70 ? "rouge" : (h > 65 ? "orange" : "vert"));
+  const monterNiveau = (n) => (n === "vert" ? "orange" : "rouge");
   Object.keys(heuresParSemaine).forEach((id) => {
     Object.keys(heuresParSemaine[id]).forEach((lk) => {
       const h = Math.round(heuresParSemaine[id][lk] * 10) / 10;
@@ -2577,7 +2603,10 @@ function validerPlanning(opts) {
         const g = (gardesSemH[id] && gardesSemH[id][lk]) || { tot: 0, we: 0 };
         const expl = `${g.tot} garde${g.tot > 1 ? "s" : ""} cette semaine` +
           (g.we > 0 ? ` dont ${g.we} de week-end` : "");
-        conflits.push({ date: lk, message: `${nom(id)} : ${h} h la semaine du ${lk} (> ${eqV.plafond_hebdo} h — ${expl} ; N2 indicatif, compensable la semaine suivante).` });
+        const repete = ((depMois[id] && depMois[id][lk.slice(0, 7)]) || 0) > 1;
+        const niveau = repete ? monterNiveau(niveauHeures(h)) : niveauHeures(h);
+        conflits.push({ date: lk, niveau, repete,
+          message: `${nom(id)} : ${h} h la semaine du ${lk} (> ${eqV.plafond_hebdo} h — ${expl}${repete ? " ; RÉPÉTÉ ce mois" : ""} ; N2 indicatif, compensable la semaine suivante).` });
       }
     });
   });

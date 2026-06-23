@@ -778,3 +778,8 @@ button.danger:not(.mini):hover { background: #9e2b22; }
 .db-impact.db-reduit { color: #1a7f37; font-weight: 600; }
 #db-content { margin-top: 10px; }
 #db-actions-wrap { margin-top: 8px; }
+
+/* Niveaux de gravité des alertes d'heures (Conflits détectés). */
+.conflit-ligne.conflit-vert   { border-left: 3px solid #1a7f37; padding-left: 6px; }
+.conflit-ligne.conflit-orange { border-left: 3px solid #d4a72c; padding-left: 6px; }
+.conflit-ligne.conflit-rouge  { border-left: 3px solid #cf222e; padding-left: 6px; font-weight: 600; }

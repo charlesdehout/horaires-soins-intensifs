@@ -4987,11 +4987,12 @@ function majConflits() {
   conflitsZone.innerHTML = "";
   conflits.forEach((c) => {
     const div = document.createElement("div");
-    div.className = "conflit-ligne";
+    div.className = "conflit-ligne" + (c.niveau ? " conflit-" + c.niveau : "");
     const sp = document.createElement("span");
     sp.className = "conflit-date"; sp.textContent = c.date + " — ";
     div.appendChild(sp);
-    div.appendChild(document.createTextNode(c.message));
+    const puce = c.niveau ? ({ vert: "🟢 ", orange: "🟠 ", rouge: "🔴 " }[c.niveau] || "") : "";
+    div.appendChild(document.createTextNode(puce + c.message));
     conflitsZone.appendChild(div);
   });
   alertesAbs.forEach((a) => {
