@@ -4680,7 +4680,11 @@ async function majCompteurs() {
   // congé depuis les préférences APPROUVÉES et depuis les shifts d'absence
   // « congé » du planning (dédupliqués par date).
   const debutMois = srcDebut, finMois = srcFin; // bornes de la PÉRIODE (mois ou trimestre)
-  const CONGE_SET = new Set(["conge", "conge_annuel", "conge_extralegal", "conge_scientifique"]);
+  // Absences qui RÉDUISENT la cible et la moyenne h/sem (le médecin n'était pas
+  // disponible ces jours-là). Inclut le CONGÉ MALADIE (posé comme préférence par
+  // l'assistant CM) + formation/autre, qui bloquent aussi la disponibilité à la
+  // génération — sinon un médecin absent apparaît à tort très sous sa cible.
+  const CONGE_SET = new Set(["conge", "conge_annuel", "conge_extralegal", "conge_scientifique", "conge_maladie", "formation", "autre"]);
   const congeJours = {}; // doctorId -> Set(dateISO) des jours de congé du mois
   const ajouterConge = (id, date) => {
     if (date < debutMois || date > finMois) return;

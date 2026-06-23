@@ -211,63 +211,6 @@ function plEquilibrerHeuresMois(sortie, medecins, etat, annee, mois) {
   passe(true);   // continuité assouplie ensuite (toujours gardé par les 2 critères)
 }
 
-/* PLAFOND DUR DES HEURES HAUTES (Dr Dehout 2026-06-21) — « plafonner plus fort » :
-   au-delà de `cap` h/SEMAINE (normalisé à l'ETP), on ne se contente pas de retirer
-   les doublures : on DÉPLACE une STATION TITULAIRE du sur-chargé vers un médecin
-   SOUS-CHARGÉ disponible ce jour-là. La couverture est PRÉSERVÉE (le receveur prend
-   la station) ; seule la CONTINUITÉ d'unité cède le pas, pour le haut de la
-   distribution uniquement. Ne touche jamais aux gardes ni aux shifts épinglés. */
-function plPlafonnerHeuresHautes(sortie, medecins, etat, cap) {
-  const PLAF = (typeof cap === "number" && cap > 0) ? cap : 50;
-  const Hh = (t) => (t === "off" ? PL_HEURES_OFFCLINIC : (PL_HEURES[t] || 0));
-  const fteOf = (m) => (m && typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1;
-  const mById = {}; medecins.forEach((m) => { mById[m.id] = m; });
-  const heuresSemaine = () => {
-    const h = {};
-    sortie.forEach((s) => { const v = Hh(s.shift_type); if (!v) return; const k = s.doctor_id + "|" + plLundiDe(s.date); h[k] = (h[k] || 0) + v; });
-    return h;
-  };
-  let guard = 0;
-  while (guard++ < 800) {
-    const hSem = heuresSemaine();
-    // Stations TITULAIRES (jour, non épinglé, non doublure, unité à continuité)
-    // dont le porteur dépasse le plafond hebdo normalisé, pire d'abord.
-    const overs = [];
-    sortie.forEach((s) => {
-      if (s.shift_type !== "jour" || s.epingle || s.doublure || !s.poste || plSansContinuite(s.poste)) return;
-      const m = mById[s.doctor_id]; if (!m) return;
-      const hw = (hSem[s.doctor_id + "|" + plLundiDe(s.date)] || 0) / fteOf(m);
-      if (hw > PLAF + PL_EPS) overs.push({ s, hw });
-    });
-    overs.sort((a, b) => b.hw - a.hw);
-    let bouge = false;
-    for (const o of overs) {
-      const s = o.s, date = s.date, cle = plLundiDe(date), poste = s.poste;
-      const occupeJour = new Set(sortie.filter((x) => x.date === date).map((x) => x.doctor_id));
-      let best = null, bestHw = Infinity;
-      medecins.forEach((m) => {
-        if (m.id === s.doctor_id || occupeJour.has(m.id)) return;            // déjà occupé ce jour
-        if (!plDispo(m, date, etat)) return;                                 // dispo (contrat/jours/congés/repos/récup)
-        if (plEstNouvelEngage(m, date, etat.debutPeriode)) return;
-        if (plStationPlafonnee(m, date, etat)) return;                       // mi-temps : plafond station
-        const hwR = (hSem[m.id + "|" + cle] || 0) / fteOf(m);
-        if (hwR + PL_HEURES.jour / fteOf(m) > PLAF + PL_EPS) return;         // ne crée pas un nouveau sur-chargé
-        if (hwR >= o.hw - PL_EPS) return;                                    // doit être PLUS bas que le sur-chargé
-        if (hwR < bestHw) { bestHw = hwR; best = m; }
-      });
-      if (!best) continue;                                                   // pas de receveur : on tente le suivant
-      const ancien = s.doctor_id;
-      s.doctor_id = best.id;
-      etat.heures[ancien] -= PL_HEURES.jour;
-      etat.heures[best.id] += PL_HEURES.jour;
-      if (etat.station[ancien] && etat.station[ancien][cle] === poste) etat.station[ancien][cle] = null;
-      if (etat.station[best.id] && !plSansContinuite(poste)) etat.station[best.id][cle] = poste;
-      bouge = true; break;
-    }
-    if (!bouge) break;
-  }
-}
-
 function plCoupleChoisir(pool, etat, dateRef, n, exigerResident, preTri) {
   // Garantit ≥1 résident si demandé et jamais 2 A/S. Trie par équité week-end
   // (sauf si preTri : la liste est déjà ordonnée par préférence). Renvoie ≤ n.
@@ -687,10 +630,6 @@ function genererTrimestreCouple(opts) {
       sortie.splice(sortie.indexOf(sh), 1);                       // retire la doublure → non-planifié
     }
   }
-  // PLAFOND DUR : après avoir retiré les doublures surnuméraires, on DÉPLACE le
-  // titulaire en trop des sur-chargés (> ~50 h/sem ETP) vers les sous-chargés —
-  // resserre l'écart d'heures sans créer de trou (la station change de mains).
-  plPlafonnerHeuresHautes(sortie, medecins, etat, 50);
   // (Récups/congés fériés déjà émis AVANT la Phase 3 — voir « RÉCUPS D'OFFICE » plus haut.)
 
   return { shifts: sortie, conflits, etat, medecins, datesTrim, within, moisTrim, annee, recupsNonPosees: etat.recupsNonPosees || [] };
