@@ -752,3 +752,12 @@ button.danger:not(.mini):hover { background: #9e2b22; }
 .congres-compteur .cc-table td { padding: 4px 10px; }
 .congres-compteur .cc-fort td { background: rgba(255, 77, 79, 0.12); }
 .congres-compteur .cc-faible td { background: rgba(82, 196, 26, 0.12); }
+
+/* Assistant de remplacement CM (Module 29) — tableau postes × remplaçant. */
+#rb-table-wrap { margin-top: 10px; }
+.rb-table { width: 100%; margin-bottom: 10px; }
+.rb-table th, .rb-table td { padding: 5px 8px; vertical-align: middle; }
+.rb-table select.rb-pick { width: 100%; min-width: 280px; }
+.rb-table .rb-effet { font-size: 0.82rem; color: #57606a; }
+.rb-table .rb-effet.rb-warn { color: #ad6800; }
+.rb-table .rb-effet.rb-vide { color: #cf222e; font-style: italic; }

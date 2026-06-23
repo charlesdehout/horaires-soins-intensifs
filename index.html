@@ -241,10 +241,10 @@
         <div class="zone-header"><h3 class="sous-titre">Conflits détectés</h3></div>
         <div id="conflits-zone" class="zone-info">Aucun planning chargé.</div>
 
-      <!-- Module 29 — Rebouchage CM -->
-      <div class="zone-header"><h3 class="sous-titre">🏥 Rebouchage — Congé maladie</h3></div>
+      <!-- Module 29 — Assistant de remplacement (congé maladie) -->
+      <div class="zone-header"><h3 class="sous-titre">🏥 Remplacement — Congé maladie</h3></div>
       <div id="rebouchage-zone" class="zone-info">
-        <p>Outil pour combler les trous créés par un congé maladie en cours de trimestre, sans toucher aux shifts existants des autres médecins.</p>
+        <p>Quand un médecin tombe malade : liste ses postes à reprendre (les rôles doublés ne sont pas repris), puis choisis un remplaçant par poste. Le menu classe les candidats — non planifiés, puis off-clinic, puis récup — et indique leurs heures du mois. Pour une garde, priorité à ceux qui peuvent être absents le lendemain. Repos (et récup de week-end) du remplaçant posés automatiquement ; le malade est marqué en congé maladie.</p>
         <div class="rebouchage-form">
           <label>Médecin malade :
             <select id="rb-medecin"></select>
@@ -255,18 +255,11 @@
           <label>Au :
             <input type="date" id="rb-fin">
           </label>
-          <button id="rb-btn-apercu" class="secondary">🔍 Aperçu des shifts à libérer</button>
+          <button id="rb-btn-analyser" class="secondary">🔍 Lister les postes à reprendre</button>
         </div>
-        <div id="rb-apercu-sup" class="hidden">
-          <h4>Shifts qui seront supprimés :</h4>
-          <ul id="rb-liste-sup"></ul>
-          <button id="rb-btn-generer">⚙️ Libérer et générer le rebouchage</button>
-        </div>
-        <div id="rb-apercu-new" class="hidden">
-          <h4>Nouveaux shifts proposés :</h4>
-          <ul id="rb-liste-new"></ul>
-          <div id="rb-conflits-new"></div>
-          <button id="rb-btn-publier">✓ Publier les nouveaux shifts</button>
+        <div id="rb-table-wrap" class="hidden">
+          <table id="rb-table" class="data-table rb-table"></table>
+          <button id="rb-btn-publier">✓ Publier les remplacements</button>
         </div>
         <p id="rb-message" class="message"></p>
       </div>
