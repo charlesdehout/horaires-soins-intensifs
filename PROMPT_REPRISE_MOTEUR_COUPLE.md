@@ -133,9 +133,11 @@ jours de récup (`plDispo` respecte `etat.assigneJour` & `etat.bloque`).
 
 ### PHASE 4 — Off-clinic, plancher, équités finales
 Off-clinic par mois — **proratisé à l'ETP** (mi-temps = moitié des off), exclut
-`cap_fromager`/`sans_off`. `plCompleterMinimumHeures` (plancher), `plEquilibrerTours`,
-`plReequilibrerHeures` (écart d'heures trimestre), **`plEquilibrerHeuresMois`** (lisse les
-heures PAR MOIS, sans régresser le trimestre), allègement des sur-chargés (>45 h/sem).
+`cap_fromager`/`sans_off`. `plEquilibrerTours`, `plReequilibrerHeures` (écart d'heures
+trimestre, par TRANSFERT), **`plEquilibrerHeuresMois`** (lisse les heures PAR MOIS, sans
+régresser le trimestre), puis **`plDoubluresCiblees`** (doublures en DERNIER recours :
+gros déficit relatif à l'équipe + plancher ETP ; remplace l'ancien plancher 40 h/sem
+`plCompleterMinimumHeures`), enfin allègement des sur-chargés (>45 h/sem).
 
 Note staffing : la **Phase 3** applique `plStationPlafonnee` → un mi-temps n'est jamais
 sur-stationné au-delà de son quota hebdo (gardes comprises).

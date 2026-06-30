@@ -85,11 +85,28 @@ const EQUITE = {
   // génération — au-delà, des journées de station sont transférées du plus
   // chargé vers le moins chargé (correction avant brouillon). 0 = désactiver.
   ecart_heures_max: 12,
-  // MINIMUM D'HEURES HEBDOMADAIRE (révision 2026-06-12) : équivalent à
-  // atteindre par semaine pour un ETP complet présent tous les jours ouvrés
-  // (proratisé fte × jours disponibles). Complété par des DOUBLURES d'unités
-  // si le planning normal ne suffit pas. 0 = désactiver.
+  // MINIMUM D'HEURES HEBDOMADAIRE (révision 2026-06-12) : équivalent visé par
+  // semaine pour un ETP complet présent tous les jours ouvrés (proratisé fte ×
+  // jours disponibles). NE PILOTE PLUS LES DOUBLURES (révision 2026-06-30 — voir
+  // doublure_deficit_journees) : il ne sert désormais que de GARDE-FOU au
+  // rééquilibrage par transfert (un donneur ne descend pas sous ce minimum) et
+  // au crédit des jours de congé. 0 = désactiver.
   minimum_hebdo_h: 40,
+  // DOUBLURES CIBLÉES (révision 2026-06-30) — « tout le monde travaille le moins
+  // possible ». On ne pose plus de doublure pour atteindre un plancher horaire
+  // fixe. Une doublure (2e personne sur une unité déjà pourvue) n'est AJOUTÉE que
+  // pour rattraper un GROS DÉFICIT d'heures RELATIF à l'équipe — et, par le même
+  // calcul, garantir le PLANCHER ETP (un mi-temps fait AU MOINS sa quotité × ce
+  // que fait un plein temps). Chacun est projeté en équivalent plein temps
+  // (heures ÷ fte) ; tout médecin sous (fte × médiane des pleins temps − seuil)
+  // reçoit des doublures jusqu'à ce seuil. seuil = ce nombre × 10,5 h (une
+  // journée). Plus le nombre est GRAND, MOINS il y a de doublures. 0 = ne jamais
+  // poser de doublure de déficit (nouvel engagé toujours doublé, lui, à part).
+  doublure_deficit_journees: 1,
+  // CONTINUITÉ (révision 2026-06-30) : au-delà de N médecins DIFFÉRENTS sur une
+  // même unité dans la semaine, on signale une fragmentation (alerte) et on
+  // évite d'y ajouter une tête de plus. 0 = désactiver l'alerte.
+  continuite_max_tetes: 3,
   // Pt 6 — COUPLAGE des gardes (jeudi→samedi, vendredi→dimanche) : le médecin
   // de la garde de nuit de l'avant-veille est préféré pour la 24 h du week-end
   // (combo MAXIMISÉ, sous l'équité week-end et les contraintes dures).

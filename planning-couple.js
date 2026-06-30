@@ -700,18 +700,20 @@ function genererTrimestreCouple(opts) {
     if (vide.length > toleres) conflits.push({ date, message: "Stations vides : " + vide.join(",") });
   });
 
-  // ---- PHASE 4 : off-clinic, plancher heures (doublures), équité tours/heures ----
+  // ---- PHASE 4 : off-clinic, équité tours/heures, doublures CIBLÉES en dernier ----
   moisTrim.forEach((mois) => {
     const offs = genererOffClinic({ annee, mois, medecins, shifts: sortie, preferences })
       .filter((o) => { const m = medecins.find((x) => x.id === o.doctor_id); return !(m && (m.sans_off || m.cap_fromager)); }); // statut spécial / CAP fromager : pas d'off
     offs.forEach((o) => { sortie.push(o); etat.heures[o.doctor_id] += PL_HEURES_OFFCLINIC; });
   });
   plResorberOff24h(sortie, medecins, etat);
-  plCompleterMinimumHeures(sortie, medecins, etat, datesTrim);  // plancher 40h/sem (doublures)
   plEquilibrerTours(sortie, medecins, etat);
-  plReequilibrerHeures(sortie, medecins, etat);                // resserre l'écart d'heures (trimestre)
+  plReequilibrerHeures(sortie, medecins, etat);                // resserre l'écart d'heures (trimestre) — TRANSFERT
   // Lissage des heures PAR MOIS (sans régresser l'équité trimestre — voir fonction).
   moisTrim.forEach((mois) => plEquilibrerHeuresMois(sortie, medecins, etat, annee, mois));
+  // Doublures CIBLÉES (gros déficit relatif + plancher ETP) — APRÈS tous les
+  // transferts, dernier recours. Remplace l'ancien plancher 40 h/sem.
+  plDoubluresCiblees(sortie, medecins, etat, datesTrim);
   // ALLÈGEMENT DES SUR-CHARGÉS (Dr Dehout) : quand la couverture est assurée, on évite
   // les journées surchargées. Une DOUBLURE (2e personne sur une unité) est surnuméraire :
   // on la retire au médecin le plus chargé tant qu'il dépasse ~45 h/SEMAINE → il passe en

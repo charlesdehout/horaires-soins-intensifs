@@ -1323,12 +1323,14 @@ function genererPlanning(opts) {
   // redescend en 17h–9h (évite une 24 h alors qu'un off pourrait être en clinique).
   plResorberOff24h(sortie, medecins, etat);
 
-  // Minimum d'heures hebdomadaire (doublures d'unités si nécessaire).
-  plCompleterMinimumHeures(sortie, medecins, etat, plDatesDuMois(annee, mois));
   // Équité des TOURS week-end isolés (déplace uniquement des twe, pas les gardes).
   plEquilibrerTours(sortie, medecins, etat);
-  // Correction finale avant brouillon : écart d'heures resserré au maximum.
+  // Correction finale avant brouillon : écart d'heures resserré au maximum
+  // (TRANSFERT, n'ajoute pas d'heures) — fait AVANT toute doublure.
   plReequilibrerHeures(sortie, medecins, etat);
+  // Doublures CIBLÉES (gros déficit relatif + plancher ETP) — DERNIER recours,
+  // après le transfert : on ne double que ce qui n'a pas pu être rééquilibré.
+  plDoubluresCiblees(sortie, medecins, etat, plDatesDuMois(annee, mois));
 
   plEmettreCongesFerie(sortie, etat, plDatesDuMois(annee, mois)); // M26 — jours de récup visibles
   plEmettreRecupsWeekend(sortie, medecins, etat, plDatesDuMois(annee, mois)); // Étape 6 — récup flexible WE
@@ -1464,103 +1466,146 @@ function plReequilibrerGardes(sortie, medecins, etat) {
   }
 }
 
-/* MINIMUM D'HEURES HEBDOMADAIRE (révision 2026-06-12) : chaque médecin doit
-   atteindre l'équivalent de `EQUITE.minimum_hebdo_h` (défaut 40 h) par semaine,
-   proratisé : minimum × fte × (jours ouvrés DISPONIBLES de la semaine / 5).
-   Si le planning normal ne suffit pas, on AJOUTE des journées en DOUBLURE
-   d'une unité déjà pourvue (« quitte à doubler les unités »). À appeler en FIN
-   de génération (après off-clinic). Mute sortie + état via plAffecter. */
-function plCompleterMinimumHeures(sortie, medecins, etat, dates) {
+/* DOUBLURES CIBLÉES (révision 2026-06-30) — remplace l'ancien remplissage au
+   plancher de 40 h/semaine. Objectif : « tout le monde travaille le moins
+   possible ». On ne pose PLUS de doublure pour atteindre un minimum horaire fixe.
+   Une doublure (2e personne sur une unité déjà pourvue) n'est AJOUTÉE que pour
+   rattraper un GROS DÉFICIT d'heures RELATIF À L'ÉQUIPE — ce même calcul garantit
+   le PLANCHER ETP (un mi-temps fait au moins sa quotité × ce que fait un plein
+   temps).
+
+   Méthode : on projette chacun en ÉQUIVALENT PLEIN TEMPS (heures totales ÷ fte)
+   et on prend la NORME d'équipe = médiane des heures des PLEINS TEMPS
+   (résidents/AS). Tout médecin sous (fte × norme − seuil) reçoit des doublures
+   jusqu'à atteindre ce seuil. seuil = EQUITE.doublure_deficit_journees × 10,5 h.
+   La doublure est posée en priorité sur une unité que le médecin TIENT DÉJÀ cette
+   semaine (continuité) et JAMAIS sur une unité déjà fragmentée (≥
+   continuite_max_tetes visages cette semaine), pour ne pas aggraver la continuité.
+
+   Le NOUVEL ENGAGÉ est doublé à part (chaque jour ouvré, ailleurs) → exclu d'ici.
+   À appeler en TOUTE FIN de génération, APRÈS le rééquilibrage par TRANSFERT
+   (plReequilibrerHeures), qui, lui, ne rajoute pas d'heures : la doublure est le
+   DERNIER recours. Mute sortie + état via plAffecter. */
+function plDoubluresCiblees(sortie, medecins, etat, dates) {
   const eq = plEquite();
-  const minH = (typeof eq.minimum_hebdo_h === "number") ? eq.minimum_hebdo_h : 40;
-  if (!minH) return;
-  // Index par semaine ISO (lundi) : dates ouvrées de la période.
-  const semaines = {}; // lundiISO -> [dates ouvrées]
-  dates.forEach((d) => {
-    if (plEstWeekendOuFerie(d)) return;
-    (semaines[plLundiDe(d)] = semaines[plLundiDe(d)] || []).push(d);
-  });
-  // Heures RÉELLES par médecin et par semaine (depuis la sortie, off compris).
-  const heuresSem = {}; // id -> { lundi -> h }
-  const aShift = {};    // id -> Set(dates)
+  const seuilJ = (typeof eq.doublure_deficit_journees === "number") ? eq.doublure_deficit_journees : 1;
+  if (seuilJ <= 0) return; // doublures de déficit désactivées
+  const seuilH = seuilJ * PL_HEURES.jour;
+  const maxTetes = (typeof eq.continuite_max_tetes === "number" && eq.continuite_max_tetes > 0)
+    ? eq.continuite_max_tetes : Infinity;
+  const fteDe = (m) => (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1;
+  // Médecins concernés : résidents / A-S sous contrat, hors indépendants et hors
+  // nouvel engagé (doublé à part). On garde une map id -> médecin.
+  const concernes = medecins.filter((m) =>
+    (m.grade === "resident" || m.grade === "assistant_specialiste") &&
+    m.statut !== "independant" && !m.nouvel_engage);
+  if (!concernes.length) return;
+
+  // Heures TOTALES par médecin (sortie, off compris) + jours déjà occupés.
+  const totalH = {}; const aShift = {};
+  medecins.forEach((m) => { totalH[m.id] = 0; });
   sortie.forEach((s) => {
     (aShift[s.doctor_id] = aShift[s.doctor_id] || new Set()).add(s.date);
     let h = PL_HEURES[s.shift_type] || 0;
     if (s.shift_type === "off") h = PL_HEURES_OFFCLINIC;
-    if (h <= 0) return;
-    const lk = plLundiDe(s.date);
-    const m = (heuresSem[s.doctor_id] = heuresSem[s.doctor_id] || {});
-    m[lk] = (m[lk] || 0) + h;
+    if (h > 0 && totalH[s.doctor_id] !== undefined) totalH[s.doctor_id] += h;
   });
-  // Occupation des stations par date : nb de personnes par unité. Une unité
-  // n'est DOUBLABLE que si elle a exactement 1 titulaire (max 2 par unité) et
-  // n'est pas le Labo de choc (1 personne max, jamais de doublure).
-  const occupation = {}; // date -> { poste -> nb }
-  const tenuePar24h = new Set(); // "date|poste" : unité tenue par une garde 24 h
+
+  // NORME D'ÉQUIPE = médiane des heures totales des PLEINS TEMPS (fte ≥ 1) qui ont
+  // travaillé. À défaut de plein temps, médiane des heures NORMALISÉES (÷ fte).
+  const median = (arr) => {
+    if (!arr.length) return 0;
+    const a = arr.slice().sort((x, y) => x - y);
+    const i = Math.floor(a.length / 2);
+    return a.length % 2 ? a[i] : (a[i - 1] + a[i]) / 2;
+  };
+  const pleins = concernes.filter((m) => fteDe(m) >= 1 && totalH[m.id] > 0).map((m) => totalH[m.id]);
+  const normFull = pleins.length
+    ? median(pleins)
+    : median(concernes.filter((m) => totalH[m.id] > 0).map((m) => totalH[m.id] / fteDe(m)));
+  if (normFull <= 0) return;
+
+  // Semaines ISO (lundi) -> jours ouvrés.
+  const semaines = {};
+  dates.forEach((d) => {
+    if (plEstWeekendOuFerie(d)) return;
+    (semaines[plLundiDe(d)] = semaines[plLundiDe(d)] || []).push(d);
+  });
+  // Occupation des unités par date + unités tenues par une garde 24 h.
+  const occupation = {}; const tenuePar24h = new Set();
+  // Visages par (semaine, unité) — fragmentation. tetesSem[lk][poste] = Set(id).
+  const tetesSem = {};
+  // Unités tenues par chaque médecin chaque semaine (continuité).
+  const uniteSemMed = {}; // id -> { lk -> Set(poste) }
+  const reposDe = {};     // id -> Set(dates)
   sortie.forEach((s) => {
     if ((s.shift_type === "jour" || s.shift_type === "garde_24h") && s.poste) {
       const o = (occupation[s.date] = occupation[s.date] || {});
       o[s.poste] = (o[s.poste] || 0) + 1;
       if (s.shift_type === "garde_24h") tenuePar24h.add(s.date + "|" + s.poste);
+      const lk = plLundiDe(s.date);
+      const t = (tetesSem[lk] = tetesSem[lk] || {});
+      (t[s.poste] = t[s.poste] || new Set()).add(s.doctor_id);
+      const u = (uniteSemMed[s.doctor_id] = uniteSemMed[s.doctor_id] || {});
+      (u[lk] = u[lk] || new Set()).add(s.poste);
     }
-  });
-  // RÈGLE (révision) : pas de doublure sur une unité tenue par une GARDE 24 H
-  // (le médecin de 24 h couvre déjà jour + nuit ; règle valable pour toutes
-  // les doublures SAUF celles du nouvel engagé, posées ailleurs).
-  // CONGRÈS (M17) : AUCUNE doublure un jour de congrès (équipe minimale — le but
-  // est de libérer du monde, pas d'ajouter une 2e personne sur une unité). Les
-  // heures non posées ce jour-là le seront sur les jours ouvrés HORS congrès.
-  const stationsDoublables = (d) => (etat.periodes && plEstCongres(d, etat.periodes)) ? []
-    : Object.keys(occupation[d] || {})
-    .filter((c) => !plSansContinuite(c) && occupation[d][c] === 1 && !tenuePar24h.has(d + "|" + c));
-  // Jours de REPOS DE GARDE par médecin : ce ne sont PAS des jours
-  // travaillables → ils sortent du prorata ET des jours doublables.
-  const reposDe = {}; // id -> Set(dates)
-  sortie.forEach((s) => {
     if (s.shift_type === "repos_garde")
       (reposDe[s.doctor_id] = reposDe[s.doctor_id] || new Set()).add(s.date);
   });
-  Object.keys(semaines).sort().forEach((lk) => {
-    const joursOuvres = semaines[lk];
-    medecins.forEach((m) => {
-      if (m.nouvel_engage && joursOuvres.some((d) => plEstNouvelEngage(m, d, etat.debutPeriode))) return; // déjà doublé chaque jour
-      // Jours ouvrés DISPONIBLES (statique : contrat, jours travaillés, congés).
-      const indispoSet = etat.indispo[m.id];
-      const dispoSet = etat.dispoDeclaree[m.id];
-      // Jours de PRÉSENCE possibles : disponibles (contrat, jours travaillés,
-      // congés) ET non bloqués par un repos de garde (jour non travaillable).
-      const joursDispo = joursOuvres.filter((d) =>
-        plDispoStatique(m, d, indispoSet, dispoSet) &&
-        !etat.bloque[m.id].has(d) &&
-        !(reposDe[m.id] && reposDe[m.id].has(d)));
-      if (!joursDispo.length) return;
-      const fte = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1;
-      // Dénominateur = jours OUVRÉS TRAVAILLABLES du médecin (jours_travailles
-      // ∩ lun-ven), PAS 5 fixes : un temps plein qui ne travaille pas le lundi
-      // (convenance) doit quand même viser ~40 h sur ses 4 jours + week-ends —
-      // avec /5 fixe, sa cible tombait à 32 h et il restait sous-employé.
-      const jtSemaine = ((m.jours_travailles && m.jours_travailles.length)
-        ? m.jours_travailles : [1, 2, 3, 4, 5, 6, 7]).filter((j) => j >= 1 && j <= 5).length;
-      if (!jtSemaine) return; // ne travaille jamais en semaine → pas de doublure possible
-      const cible = minH * fte * Math.min(joursDispo.length / jtSemaine, 1);
-      let h = (heuresSem[m.id] && heuresSem[m.id][lk]) || 0;
-      for (const d of joursDispo) {
-        if (h >= cible) break;
-        if (aShift[m.id] && aShift[m.id].has(d)) continue;  // déjà occupé ce jour
-        if (etat.bloque[m.id].has(d)) continue;             // repos de garde
-        if (plStationPlafonnee(m, d, etat)) continue;       // mi-temps : plafond station (strict)
-        const pourvues = stationsDoublables(d);
-        if (!pourvues.length) continue; // plus d'unité doublable ce jour
-        const st = pourvues[parseInt(d.slice(8, 10), 10) % pourvues.length];
+  const nbTetes = (lk, poste) => (tetesSem[lk] && tetesSem[lk][poste]) ? tetesSem[lk][poste].size : 0;
+  // Unités DOUBLABLES un jour : 1 seul titulaire, non Labo, non tenue par 24 h,
+  // hors jour de congrès (équipe minimale → aucune doublure).
+  const stationsDoublables = (d) => (etat.periodes && plEstCongres(d, etat.periodes)) ? []
+    : Object.keys(occupation[d] || {})
+      .filter((c) => !plSansContinuite(c) && occupation[d][c] === 1 && !tenuePar24h.has(d + "|" + c));
+
+  // Tri : on sert d'abord les plus déficitaires (heures normalisées les plus
+  // basses) pour ne pas « épuiser » les unités doublables sur les moins urgents.
+  const ordre = concernes.slice().sort((a, b) => (totalH[a.id] / fteDe(a)) - (totalH[b.id] / fteDe(b)));
+  ordre.forEach((m) => {
+    const fte = fteDe(m);
+    const cible = fte * normFull - seuilH; // plancher absolu d'heures du médecin
+    if (totalH[m.id] >= cible) return;     // pas en gros déficit
+    const indispoSet = etat.indispo[m.id];
+    const dispoSet = etat.dispoDeclaree[m.id];
+    for (const lk of Object.keys(semaines).sort()) {
+      if (totalH[m.id] >= cible) break;
+      const contUnits = (uniteSemMed[m.id] && uniteSemMed[m.id][lk]) || new Set();
+      for (const d of semaines[lk]) {
+        if (totalH[m.id] >= cible) break;
+        if (aShift[m.id] && aShift[m.id].has(d)) continue;              // déjà occupé ce jour
+        if (!plDispoStatique(m, d, indispoSet, dispoSet)) continue;     // contrat / jours / congés
+        if (etat.bloque[m.id] && etat.bloque[m.id].has(d)) continue;    // repos de garde
+        if (reposDe[m.id] && reposDe[m.id].has(d)) continue;
+        if (plStationPlafonnee(m, d, etat)) continue;                   // mi-temps : plafond hebdo strict
+        const doublables = stationsDoublables(d);
+        if (!doublables.length) continue;
+        // 1) priorité CONTINUITÉ : une unité que m tient déjà cette semaine,
+        //    doublable ce jour et non fragmentée.
+        let st = doublables.find((u) => contUnits.has(u) && nbTetes(lk, u) <= maxTetes);
+        // 2) sinon, l'unité la MOINS fragmentée où m ne crée pas une tête de trop.
+        if (!st) {
+          st = doublables
+            .filter((u) => {
+              const t = (tetesSem[lk] && tetesSem[lk][u]) ? tetesSem[lk][u] : null;
+              const taille = t ? t.size : 0;
+              const nouvelle = !t || !t.has(m.id);
+              return (taille + (nouvelle ? 1 : 0)) <= maxTetes;
+            })
+            .sort((a, b) => nbTetes(lk, a) - nbTetes(lk, b))[0];
+        }
+        if (!st) continue; // aucune unité acceptable (toutes fragmentées)
         const occ = (occupation[d] = occupation[d] || {});
         occ[st] = (occ[st] || 0) + 1; // l'unité passe à 2 → plus doublable
+        const t = (tetesSem[lk] = tetesSem[lk] || {});
+        (t[st] = t[st] || new Set()).add(m.id);
+        contUnits.add(st);
         plAffecter(sortie, etat, d, "jour", m.id, st);
         sortie[sortie.length - 1].doublure = true; // marqueur informatif (ignoré en base)
         (aShift[m.id] = aShift[m.id] || new Set()).add(d);
-        h += PL_HEURES.jour;
+        totalH[m.id] += PL_HEURES.jour;
       }
-      if (heuresSem[m.id]) heuresSem[m.id][lk] = h;
-    });
+    }
   });
 }
 
@@ -1932,16 +1977,18 @@ function genererTrimestre(opts) {
   // redescend en 17h–9h (évite une 24 h alors qu'un off pourrait être en clinique).
   plResorberOff24h(sortie, medecins, etat);
 
-  // Minimum d'heures hebdomadaire sur tout le trimestre (doublures d'unités).
+  // Équité des TOURS week-end isolés (déplace uniquement des twe, pas les gardes).
+  plEquilibrerTours(sortie, medecins, etat);
+  // Correction finale avant brouillon : écart d'heures resserré au maximum
+  // (TRANSFERT, n'ajoute pas d'heures) — fait AVANT toute doublure.
+  plReequilibrerHeures(sortie, medecins, etat);
+  // Doublures CIBLÉES sur tout le trimestre (gros déficit relatif + plancher ETP)
+  // — DERNIER recours, après le transfert.
   {
     let datesTrim = [];
     moisTrim.forEach((mois) => { datesTrim = datesTrim.concat(plDatesDuMois(annee, mois)); });
-    plCompleterMinimumHeures(sortie, medecins, etat, datesTrim);
+    plDoubluresCiblees(sortie, medecins, etat, datesTrim);
   }
-  // Équité des TOURS week-end isolés (déplace uniquement des twe, pas les gardes).
-  plEquilibrerTours(sortie, medecins, etat);
-  // Correction finale avant brouillon : écart d'heures resserré au maximum.
-  plReequilibrerHeures(sortie, medecins, etat);
 
   // M26 — jours de récup (congé férié) visibles sur tout le trimestre.
   plEmettreCongesFerie(sortie, etat, moisTrim.reduce((a, mo) => a.concat(plDatesDuMois(annee, mo)), []));
@@ -2537,6 +2584,36 @@ function validerPlanning(opts) {
       }
     });
   });
+
+  // ---- 3 ter) CONTINUITÉ DES UNITÉS (révision 2026-06-30) ----
+  // Trop de médecins DIFFÉRENTS sur une même unité dans la semaine = soins
+  // fragmentés. On signale (alerte) les unités au-delà de continuite_max_tetes
+  // visages sur la semaine ISO (jour + garde 24 h ; le Labo de choc, sans
+  // continuité, est exclu). Informatif : à corriger à la main via l'onglet
+  // Doublures / le repositionnement, le moteur n'ajoute jamais de tête pour ça.
+  {
+    const eqC = plEquite();
+    const maxTetes = (typeof eqC.continuite_max_tetes === "number" && eqC.continuite_max_tetes > 0)
+      ? eqC.continuite_max_tetes : 0;
+    if (maxTetes) {
+      const tetes = {}; // lundiISO -> { poste -> Set(id) }
+      shifts.forEach((s) => {
+        if ((s.shift_type !== "jour" && s.shift_type !== "garde_24h") || !s.poste) return;
+        if (plSansContinuite(s.poste)) return;
+        const lk = plLundiDe(s.date);
+        const t = (tetes[lk] = tetes[lk] || {});
+        (t[s.poste] = t[s.poste] || new Set()).add(s.doctor_id);
+      });
+      Object.keys(tetes).forEach((lk) => {
+        Object.keys(tetes[lk]).forEach((poste) => {
+          const n = tetes[lk][poste].size;
+          if (n > maxTetes) {
+            conflits.push({ date: lk, message: `${poste} : ${n} médecins différents la semaine du ${lk} (continuité fragmentée, ${maxTetes} souhaité max).` });
+          }
+        });
+      });
+    }
+  }
 
   // ---- 4) Max 2 week-ends travaillés par mois et par médecin (§6 N2) ----
   // Un week-end = clé samedi ISO ; sam OU dim travaillé en garde 24h/tour le compte.
