@@ -1466,31 +1466,32 @@ function plReequilibrerGardes(sortie, medecins, etat) {
   }
 }
 
-/* DOUBLURES CIBLÉES (révision 2026-06-30) — remplace l'ancien remplissage au
+/* DOUBLURES CIBLÉES (révision 2026-06-30, v2) — remplace l'ancien remplissage au
    plancher de 40 h/semaine. Objectif : « tout le monde travaille le moins
    possible ». On ne pose PLUS de doublure pour atteindre un minimum horaire fixe.
-   Une doublure (2e personne sur une unité déjà pourvue) n'est AJOUTÉE que pour
-   rattraper un GROS DÉFICIT d'heures RELATIF À L'ÉQUIPE — ce même calcul garantit
-   le PLANCHER ETP (un mi-temps fait au moins sa quotité × ce que fait un plein
-   temps).
+   Deux passes, par ordre de priorité :
 
-   Méthode : on projette chacun en ÉQUIVALENT PLEIN TEMPS (heures totales ÷ fte)
-   et on prend la NORME d'équipe = médiane des heures des PLEINS TEMPS
-   (résidents/AS). Tout médecin sous (fte × norme − seuil) reçoit des doublures
-   jusqu'à atteindre ce seuil. seuil = EQUITE.doublure_deficit_journees × 10,5 h.
+   PASS 1 — PLANCHER ETP des MI-TEMPS, raisonné par MOIS : un mi-temps doit faire
+   AU MOINS sa quotité × ce que fait un plein temps ce mois-là (médiane des pleins
+   temps). Comme les gardes (non proratisées) consomment le plafond hebdo et
+   empêchent sinon le mi-temps d'atteindre la moitié, ce plafond est RELÂCHÉ ici
+   (le ratio ETP « au moins la moitié » prime — demande Dr Dehout). Toujours actif.
+
+   PASS 2 — GROS DÉFICIT relatif des PLEINS TEMPS, sur tout le scope (trimestre).
+   Rare : le trimestre est déjà équilibré par transfert. Cible = médiane des
+   pleins temps − seuil (= EQUITE.doublure_deficit_journees × 10,5 h). Plafond
+   normal. Désactivable via doublure_deficit_journees = 0 (n'affecte PAS la PASS 1).
+
    La doublure est posée en priorité sur une unité que le médecin TIENT DÉJÀ cette
    semaine (continuité) et JAMAIS sur une unité déjà fragmentée (≥
-   continuite_max_tetes visages cette semaine), pour ne pas aggraver la continuité.
-
-   Le NOUVEL ENGAGÉ est doublé à part (chaque jour ouvré, ailleurs) → exclu d'ici.
-   À appeler en TOUTE FIN de génération, APRÈS le rééquilibrage par TRANSFERT
-   (plReequilibrerHeures), qui, lui, ne rajoute pas d'heures : la doublure est le
-   DERNIER recours. Mute sortie + état via plAffecter. */
+   continuite_max_tetes visages cette semaine). Le NOUVEL ENGAGÉ est doublé à part
+   → exclu d'ici. À appeler en TOUTE FIN de génération, APRÈS le rééquilibrage par
+   TRANSFERT (qui ne rajoute pas d'heures) : la doublure est le DERNIER recours.
+   Mute sortie + état via plAffecter. */
 function plDoubluresCiblees(sortie, medecins, etat, dates) {
   const eq = plEquite();
   const seuilJ = (typeof eq.doublure_deficit_journees === "number") ? eq.doublure_deficit_journees : 1;
-  if (seuilJ <= 0) return; // doublures de déficit désactivées
-  const seuilH = seuilJ * PL_HEURES.jour;
+  const seuilH = (seuilJ > 0 ? seuilJ : 0) * PL_HEURES.jour; // seuilJ=0 désactive SEULEMENT le déficit plein temps (PASS 2) ; le plancher ETP mi-temps (PASS 1) reste actif
   const maxTetes = (typeof eq.continuite_max_tetes === "number" && eq.continuite_max_tetes > 0)
     ? eq.continuite_max_tetes : Infinity;
   const fteDe = (m) => (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1;
@@ -1501,112 +1502,95 @@ function plDoubluresCiblees(sortie, medecins, etat, dates) {
     m.statut !== "independant" && !m.nouvel_engage);
   if (!concernes.length) return;
 
-  // Heures TOTALES par médecin (sortie, off compris) + jours déjà occupés.
-  const totalH = {}; const aShift = {};
-  medecins.forEach((m) => { totalH[m.id] = 0; });
-  sortie.forEach((s) => {
-    (aShift[s.doctor_id] = aShift[s.doctor_id] || new Set()).add(s.date);
-    let h = PL_HEURES[s.shift_type] || 0;
-    if (s.shift_type === "off") h = PL_HEURES_OFFCLINIC;
-    if (h > 0 && totalH[s.doctor_id] !== undefined) totalH[s.doctor_id] += h;
-  });
+  const median = (arr) => { if (!arr.length) return 0; const a = arr.slice().sort((x, y) => x - y); const i = Math.floor(a.length / 2); return a.length % 2 ? a[i] : (a[i - 1] + a[i]) / 2; };
+  const totauxSur = (scope) => { const dset = new Set(scope); const tot = {}; medecins.forEach((m) => { tot[m.id] = 0; }); sortie.forEach((s) => { if (!dset.has(s.date)) return; let h = PL_HEURES[s.shift_type] || 0; if (s.shift_type === "off") h = PL_HEURES_OFFCLINIC; if (h > 0 && tot[s.doctor_id] !== undefined) tot[s.doctor_id] += h; }); return tot; };
 
-  // NORME D'ÉQUIPE = médiane des heures totales des PLEINS TEMPS (fte ≥ 1) qui ont
-  // travaillé. À défaut de plein temps, médiane des heures NORMALISÉES (÷ fte).
-  const median = (arr) => {
-    if (!arr.length) return 0;
-    const a = arr.slice().sort((x, y) => x - y);
-    const i = Math.floor(a.length / 2);
-    return a.length % 2 ? a[i] : (a[i - 1] + a[i]) / 2;
-  };
-  const pleins = concernes.filter((m) => fteDe(m) >= 1 && totalH[m.id] > 0).map((m) => totalH[m.id]);
-  const normFull = pleins.length
-    ? median(pleins)
-    : median(concernes.filter((m) => totalH[m.id] > 0).map((m) => totalH[m.id] / fteDe(m)));
-  if (normFull <= 0) return;
-
-  // Semaines ISO (lundi) -> jours ouvrés.
-  const semaines = {};
-  dates.forEach((d) => {
-    if (plEstWeekendOuFerie(d)) return;
-    (semaines[plLundiDe(d)] = semaines[plLundiDe(d)] || []).push(d);
-  });
-  // Occupation des unités par date + unités tenues par une garde 24 h.
-  const occupation = {}; const tenuePar24h = new Set();
-  // Visages par (semaine, unité) — fragmentation. tetesSem[lk][poste] = Set(id).
-  const tetesSem = {};
-  // Unités tenues par chaque médecin chaque semaine (continuité).
-  const uniteSemMed = {}; // id -> { lk -> Set(poste) }
-  const reposDe = {};     // id -> Set(dates)
-  sortie.forEach((s) => {
-    if ((s.shift_type === "jour" || s.shift_type === "garde_24h") && s.poste) {
-      const o = (occupation[s.date] = occupation[s.date] || {});
-      o[s.poste] = (o[s.poste] || 0) + 1;
-      if (s.shift_type === "garde_24h") tenuePar24h.add(s.date + "|" + s.poste);
-      const lk = plLundiDe(s.date);
-      const t = (tetesSem[lk] = tetesSem[lk] || {});
-      (t[s.poste] = t[s.poste] || new Set()).add(s.doctor_id);
-      const u = (uniteSemMed[s.doctor_id] = uniteSemMed[s.doctor_id] || {});
-      (u[lk] = u[lk] || new Set()).add(s.poste);
-    }
-    if (s.shift_type === "repos_garde")
-      (reposDe[s.doctor_id] = reposDe[s.doctor_id] || new Set()).add(s.date);
-  });
-  const nbTetes = (lk, poste) => (tetesSem[lk] && tetesSem[lk][poste]) ? tetesSem[lk][poste].size : 0;
-  // Unités DOUBLABLES un jour : 1 seul titulaire, non Labo, non tenue par 24 h,
-  // hors jour de congrès (équipe minimale → aucune doublure).
-  const stationsDoublables = (d) => (etat.periodes && plEstCongres(d, etat.periodes)) ? []
-    : Object.keys(occupation[d] || {})
-      .filter((c) => !plSansContinuite(c) && occupation[d][c] === 1 && !tenuePar24h.has(d + "|" + c));
-
-  // Tri : on sert d'abord les plus déficitaires (heures normalisées les plus
-  // basses) pour ne pas « épuiser » les unités doublables sur les moins urgents.
-  const ordre = concernes.slice().sort((a, b) => (totalH[a.id] / fteDe(a)) - (totalH[b.id] / fteDe(b)));
-  ordre.forEach((m) => {
-    const fte = fteDe(m);
-    const cible = fte * normFull - seuilH; // plancher absolu d'heures du médecin
-    if (totalH[m.id] >= cible) return;     // pas en gros déficit
-    const indispoSet = etat.indispo[m.id];
-    const dispoSet = etat.dispoDeclaree[m.id];
-    for (const lk of Object.keys(semaines).sort()) {
-      if (totalH[m.id] >= cible) break;
-      const contUnits = (uniteSemMed[m.id] && uniteSemMed[m.id][lk]) || new Set();
-      for (const d of semaines[lk]) {
-        if (totalH[m.id] >= cible) break;
-        if (aShift[m.id] && aShift[m.id].has(d)) continue;              // déjà occupé ce jour
-        if (!plDispoStatique(m, d, indispoSet, dispoSet)) continue;     // contrat / jours / congés
-        if (etat.bloque[m.id] && etat.bloque[m.id].has(d)) continue;    // repos de garde
-        if (reposDe[m.id] && reposDe[m.id].has(d)) continue;
-        if (plStationPlafonnee(m, d, etat)) continue;                   // mi-temps : plafond hebdo strict
-        const doublables = stationsDoublables(d);
-        if (!doublables.length) continue;
-        // 1) priorité CONTINUITÉ : une unité que m tient déjà cette semaine,
-        //    doublable ce jour et non fragmentée.
-        let st = doublables.find((u) => contUnits.has(u) && nbTetes(lk, u) <= maxTetes);
-        // 2) sinon, l'unité la MOINS fragmentée où m ne crée pas une tête de trop.
-        if (!st) {
-          st = doublables
-            .filter((u) => {
-              const t = (tetesSem[lk] && tetesSem[lk][u]) ? tetesSem[lk][u] : null;
-              const taille = t ? t.size : 0;
-              const nouvelle = !t || !t.has(m.id);
-              return (taille + (nouvelle ? 1 : 0)) <= maxTetes;
-            })
-            .sort((a, b) => nbTetes(lk, a) - nbTetes(lk, b))[0];
-        }
-        if (!st) continue; // aucune unité acceptable (toutes fragmentées)
-        const occ = (occupation[d] = occupation[d] || {});
-        occ[st] = (occ[st] || 0) + 1; // l'unité passe à 2 → plus doublable
-        const t = (tetesSem[lk] = tetesSem[lk] || {});
-        (t[st] = t[st] || new Set()).add(m.id);
-        contUnits.add(st);
-        plAffecter(sortie, etat, d, "jour", m.id, st);
-        sortie[sortie.length - 1].doublure = true; // marqueur informatif (ignoré en base)
-        (aShift[m.id] = aShift[m.id] || new Set()).add(d);
-        totalH[m.id] += PL_HEURES.jour;
+  // Placeur commun : ajoute des doublures à chaque médecin de `items` jusqu'à sa
+  // `cible` (heures, sur l'ensemble `scope`). relaxCap=true ignore le plafond
+  // hebdo (PLANCHER ETP d'un mi-temps : prioritaire). Reconstruit l'état depuis
+  // `sortie` (occupation, têtes par unité/semaine, continuité, repos).
+  function placer(scope, items) {
+    const dscope = new Set(scope);
+    const occupation = {}, tenue24 = new Set(), tetesSem = {}, uniteSemMed = {}, reposDe = {}, aShift = {}, totalH = {};
+    medecins.forEach((m) => { totalH[m.id] = 0; });
+    sortie.forEach((s) => {
+      (aShift[s.doctor_id] = aShift[s.doctor_id] || new Set()).add(s.date);
+      if (dscope.has(s.date)) { let h = PL_HEURES[s.shift_type] || 0; if (s.shift_type === "off") h = PL_HEURES_OFFCLINIC; if (h > 0 && totalH[s.doctor_id] !== undefined) totalH[s.doctor_id] += h; }
+      if ((s.shift_type === "jour" || s.shift_type === "garde_24h") && s.poste) {
+        const o = (occupation[s.date] = occupation[s.date] || {}); o[s.poste] = (o[s.poste] || 0) + 1;
+        if (s.shift_type === "garde_24h") tenue24.add(s.date + "|" + s.poste);
+        const lk = plLundiDe(s.date); const t = (tetesSem[lk] = tetesSem[lk] || {}); (t[s.poste] = t[s.poste] || new Set()).add(s.doctor_id);
+        const u = (uniteSemMed[s.doctor_id] = uniteSemMed[s.doctor_id] || {}); (u[lk] = u[lk] || new Set()).add(s.poste);
       }
-    }
+      if (s.shift_type === "repos_garde") (reposDe[s.doctor_id] = reposDe[s.doctor_id] || new Set()).add(s.date);
+    });
+    const nbTetes = (lk, p) => (tetesSem[lk] && tetesSem[lk][p]) ? tetesSem[lk][p].size : 0;
+    const doublables = (d) => (etat.periodes && plEstCongres(d, etat.periodes)) ? []
+      : Object.keys(occupation[d] || {}).filter((c) => !plSansContinuite(c) && occupation[d][c] === 1 && !tenue24.has(d + "|" + c));
+    const semaines = {}; scope.forEach((d) => { if (plEstWeekendOuFerie(d)) return; (semaines[plLundiDe(d)] = semaines[plLundiDe(d)] || []).push(d); });
+    items.sort((a, b) => (totalH[a.m.id] - a.cible) - (totalH[b.m.id] - b.cible)); // plus déficitaire d'abord
+    items.forEach(({ m, cible, relaxCap }) => {
+      if (totalH[m.id] >= cible) return;
+      const indispoSet = etat.indispo[m.id], dispoSet = etat.dispoDeclaree[m.id];
+      for (const lk of Object.keys(semaines).sort()) {
+        if (totalH[m.id] >= cible) break;
+        const contUnits = (uniteSemMed[m.id] && uniteSemMed[m.id][lk]) || new Set();
+        for (const d of semaines[lk]) {
+          if (totalH[m.id] >= cible) break;
+          if (aShift[m.id] && aShift[m.id].has(d)) continue;
+          if (!plDispoStatique(m, d, indispoSet, dispoSet)) continue;
+          if (etat.bloque[m.id] && etat.bloque[m.id].has(d)) continue;
+          if (reposDe[m.id] && reposDe[m.id].has(d)) continue;
+          if (!relaxCap && plStationPlafonnee(m, d, etat)) continue;
+          const dbl = doublables(d);
+          if (!dbl.length) continue;
+          let st = dbl.find((u) => contUnits.has(u) && nbTetes(lk, u) <= maxTetes);
+          if (!st) {
+            st = dbl.filter((u) => { const t = (tetesSem[lk] && tetesSem[lk][u]) ? tetesSem[lk][u] : null; const taille = t ? t.size : 0; const nv = !t || !t.has(m.id); return (taille + (nv ? 1 : 0)) <= maxTetes; })
+              .sort((a, b) => nbTetes(lk, a) - nbTetes(lk, b))[0];
+          }
+          if (!st) continue;
+          const occ = (occupation[d] = occupation[d] || {}); occ[st] = (occ[st] || 0) + 1;
+          const t = (tetesSem[lk] = tetesSem[lk] || {}); (t[st] = t[st] || new Set()).add(m.id);
+          contUnits.add(st);
+          plAffecter(sortie, etat, d, "jour", m.id, st);
+          sortie[sortie.length - 1].doublure = true;
+          (aShift[m.id] = aShift[m.id] || new Set()).add(d);
+          totalH[m.id] += PL_HEURES.jour;
+        }
+      }
+    });
+  }
+
+  // PASS 1 — PLANCHER ETP des MI-TEMPS, par MOIS (prioritaire, plafond relâché).
+  // Un mi-temps doit faire AU MOINS sa quotité × ce que fait un plein temps CE
+  // mois-là (médiane des pleins temps). Les gardes (non proratisées) mangeant le
+  // plafond hebdo, on RELÂCHE ce plafond juste assez pour atteindre la moitié.
+  const parMois = {}; dates.forEach((d) => { (parMois[d.slice(0, 7)] = parMois[d.slice(0, 7)] || []).push(d); });
+  Object.keys(parMois).sort().forEach((mo) => {
+    const scope = parMois[mo];
+    const tot = totauxSur(scope);
+    const pleins = concernes.filter((m) => fteDe(m) >= 1 && tot[m.id] > 0).map((m) => tot[m.id]);
+    const normMois = median(pleins);
+    if (normMois <= 0) return;
+    const items = concernes.filter((m) => fteDe(m) < 1)
+      .map((m) => ({ m, cible: fteDe(m) * normMois, relaxCap: true }))
+      .filter((it) => tot[it.m.id] < it.cible);
+    if (items.length) placer(scope, items);
   });
+
+  // PASS 2 — GROS DÉFICIT relatif des PLEINS TEMPS, sur tout le scope (rare : le
+  // trimestre est déjà équilibré par transfert). Plafond normal (= Infinity pour
+  // un plein temps). Désactivable via doublure_deficit_journees = 0.
+  if (seuilJ > 0) {
+    const tot = totauxSur(dates);
+    const pleinsM = concernes.filter((m) => fteDe(m) >= 1);
+    const norm = median(pleinsM.filter((m) => tot[m.id] > 0).map((m) => tot[m.id]));
+    if (norm > 0) {
+      const items = pleinsM.map((m) => ({ m, cible: norm - seuilH, relaxCap: false })).filter((it) => tot[it.m.id] < it.cible);
+      if (items.length) placer(dates, items);
+    }
+  }
 }
 
 /* RÉÉQUILIBRAGE FINAL DES HEURES (révision 2026-06-13) — correction avant

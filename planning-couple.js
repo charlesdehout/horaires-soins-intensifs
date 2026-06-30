@@ -529,7 +529,13 @@ function genererTrimestreCouple(opts) {
   //     SOUS-CHARGÉ devient une garde 24h (tient une station + la nuit, +9h),
   //     pour combler les heures/plancher et réduire l'écart. Tient compte des
   //     stations déjà prises ce jour. ----
-  {
+  //     DÉSACTIVÉE PAR DÉFAUT (révision 2026-06-30) : cette promotion forçait des
+  //     gardes 24h en semaine (médecin de jour + nuit) ALORS QUE des médecins
+  //     étaient libres et auraient pu tenir la station en journée. Contraire à
+  //     « travailler le moins possible ». La couverture 7/7 reste garantie par la
+  //     PHASE 3 (vivier de jour, puis promotion 24h en TOUT DERNIER recours si une
+  //     station resterait vide). Réactivable via GARDES.promotion_24h_souscharge.
+  if (plGardes().promotion_24h_souscharge) {
     const _mb = {}; medecins.forEach((m) => { _mb[m.id] = m; });
     const fteOf = (id) => { const m = _mb[id]; return (m && typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1; };
     // Charge NORMALISÉE par l'ETP (heures/fte) : un mi-temps n'est pas "sous-chargé"

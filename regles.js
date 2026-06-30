@@ -142,7 +142,15 @@ const GARDES = {
   // sous son minimum cumulé (EQUITE.minimum_hebdo_h proratisé) prend sa garde
   // de SEMAINE en 24 h (station + nuit) pour rattraper. Seuil de déficit (h)
   // déclenchant la promotion ; 0 = désactiver.
-  promotion_24h_deficit_h: 9,
+  // DÉSACTIVÉ (révision 2026-06-30) : on ne « comble » plus les heures en forçant
+  // des 24 h. Une 24 h de semaine n'est posée qu'en dernier recours pour la
+  // COUVERTURE (station qui resterait vide). Moteur de base (non couplé).
+  promotion_24h_deficit_h: 0,
+  // PROMOTION 24h « sous-chargé » du moteur COUPLÉ (PHASE 2b). DÉSACTIVÉE par
+  // défaut (révision 2026-06-30) pour la même raison : elle faisait travailler
+  // 24 h des médecins sous-chargés alors que d'autres étaient libres. Mettre true
+  // pour rétablir l'ancien comportement.
+  promotion_24h_souscharge: false,
 };
 
 
