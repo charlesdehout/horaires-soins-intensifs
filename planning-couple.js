@@ -425,11 +425,16 @@ function genererTrimestreCouple(opts) {
   // ---- PHASE 1b : FÉRIÉS en semaine = jours « type WEEK-END » : 2 gardes 24h
   //     + 1 tour, PAS de station. Les gardes 24h FONT le tour (comme le week-end). ----
   const couvF = plCouv();
+  // Un médecin déjà de garde la VEILLE ou le LENDEMAIN ne peut pas enchaîner une
+  // 2e garde 24h (repos obligatoire). Corrige le « 2 gardes 24h consécutives »
+  // quand un FÉRIÉ jouxte un WEEK-END (ex. 1er janvier tombant un vendredi → samedi).
+  const plAGardeLe = (id, d) => sortie.some((s) => s.doctor_id === id && s.date === d && (s.shift_type === "garde_24h" || s.shift_type === "garde_nuit"));
   datesTrim.filter((d) => plJourSemaine(d) <= 5 && plEstWeekendOuFerie(d)).forEach((ferie) => {
     plCrediterAbsences(ferie, medecins, etat);
     const poolG = plFiltrerPlafond(medecins.filter((m) =>
       plDispo(m, ferie, etat) && plPeutGarde(m, ferie) &&
       plGardesSemaine(m.id, ferie, etat) < PL_MAX_GARDES_SEMAINE &&
+      !plAGardeLe(m.id, plAdd(ferie, -1)) && !plAGardeLe(m.id, plAdd(ferie, 1)) && // pas 2 gardes 24h d'affilée (férié ↔ week-end)
       !plEstNouvelEngage(m, ferie, etat.debutPeriode)), ferie, etat, PL_HEURES.garde_24h);
     const triG = plTrier(poolG.slice(), "weekend", etat, ferie, null);
     const gardes = plCoupleChoisir(triG, etat, ferie, couvF.gardes_weekend, true, true);
@@ -484,6 +489,7 @@ function genererTrimestreCouple(opts) {
     const dejaAS = dejaG.filter((s) => { const m = medecins.find((x) => x.id === s.doctor_id); return m && m.grade === "assistant_specialiste"; }).length;
     const libres = medecins.filter((m) => plDispo(m, date, etat) && plPeutGarde(m, date) &&
       plGardesSemaine(m.id, date, etat) < PL_MAX_GARDES_SEMAINE &&
+      !plAGardeLe(m.id, plAdd(date, 1)) &&  // pas de garde le LENDEMAIN (ex. veille d'un férié déjà posé) → évite 2 gardes 24h consécutives
       !plEstNouvelEngage(m, date, etat.debutPeriode));
     // ≥1 résident d'abord si aucun encore.
     if (!dejaResident) {
