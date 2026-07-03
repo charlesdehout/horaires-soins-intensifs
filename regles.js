@@ -86,11 +86,11 @@ const EQUITE = {
   // chargé vers le moins chargé (correction avant brouillon). 0 = désactiver.
   ecart_heures_max: 12,
   // DÉRIVE TRIMESTRE AUTORISÉE pour le lissage MENSUEL (révision 2026-07-03) :
-  // le lissage des heures PAR MOIS (plEquilibrerHeuresMois) peut laisser l'écart
-  // TRIMESTRIEL monter jusqu'à ce plafond (h) pour mieux resserrer chaque mois.
-  // 18 h ≈ mois ~42 h / trimestre 18 h (au lieu de mois ~55 h / trimestre 12 h).
-  // Remettre à 12 (= ecart_heures_max) pour retrouver l'ancien comportement.
-  derive_trimestre_h: 18,
+  // le lissage par TRANSFERT (plEquilibrerHeuresMois) peut laisser l'écart
+  // TRIMESTRIEL monter jusqu'à ce plafond (h). Depuis la v2 « échange apparié
+  // entre mois » (plEchangerJoursEntreMois, trimestre intact par construction),
+  // 12 (= ecart_heures_max) suffit : mois ~15 h ET trimestre ~13 h mesurés.
+  derive_trimestre_h: 12,
   // MINIMUM D'HEURES HEBDOMADAIRE (révision 2026-06-12) : équivalent visé par
   // semaine pour un ETP complet présent tous les jours ouvrés (proratisé fte ×
   // jours disponibles). NE PILOTE PLUS LES DOUBLURES (révision 2026-06-30 — voir

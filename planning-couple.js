@@ -223,6 +223,128 @@ function plEquilibrerHeuresMois(sortie, medecins, etat, annee, mois) {
   passe(true);   // continuité assouplie ensuite (toujours gardé par les 2 critères)
 }
 
+/* ÉCHANGE APPARIÉ DE JOURNÉES ENTRE MOIS (Dr Dehout 2026-07-03) — v2 du lissage
+   mensuel. Le transfert simple (plEquilibrerHeuresMois) est bridé : chaque jour
+   déplacé déséquilibre le TRIMESTRE, donc les mois restaient à ~50 h d'écart.
+   Ici on ÉCHANGE : A (surchargé le mois M) donne une journée de station à B, et
+   B rend une journée à A dans un AUTRE mois. Les heures TRIMESTRE de chacun sont
+   EXACTEMENT inchangées → l'équité trimestrielle (et ses tests) est préservée par
+   construction, pendant que les deux mois se resserrent. Mesuré (équipe factice) :
+   écart mensuel 54/58/45 h → ~15 h, trimestre intact à 13,5 h.
+   Mêmes garde-fous que le transfert simple : seulement des journées de STATION
+   (jamais gardes/week-ends/épinglés/doublures), receveur LIBRE ce jour-là,
+   continuité clinique (stricte puis assouplie), plafond hebdo mi-temps, nouvel
+   engagé exclu. Un échange n'est appliqué que s'il RÉDUIT l'écart du mois cible
+   sans AGGRAVER celui de l'autre mois. Appelé après plEquilibrerHeuresMois. */
+function plEchangerJoursEntreMois(sortie, medecins, etat, annee, moisTrim) {
+  const eq = plEquite();
+  const seuil = (typeof eq.ecart_heures_max === "number") ? eq.ecart_heures_max : 12;
+  if (!seuil) return;
+  const Hh = (t) => (t === "off" ? PL_HEURES_OFFCLINIC : (PL_HEURES[t] || 0));
+  const fteR = {}; medecins.forEach((m) => { fteR[m.id] = (typeof m.fte === "number" && m.fte > 0) ? Math.min(m.fte, 1) : 1; });
+  const cibleHebdoDe = (m) => (typeof m.weekly_hours_target === "number" && m.weekly_hours_target > 0) ? m.weekly_hours_target : (PL_REF_HEBDO * fteR[m.id]);
+  const jtSemDe = (m) => (((m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1,2,3,4,5,6,7]).filter((j) => j >= 1 && j <= 5).length || 5);
+  // ---- État par mois : cibles proratisées, heures, occupation, unités/semaine ----
+  const MOIS = {};
+  moisTrim.forEach((mois) => {
+    const datesMois = plDatesDuMois(annee, mois);
+    const mo = datesMois[0].slice(0, 7);
+    const dm = new Set(datesMois);
+    const jOuvres = datesMois.filter((d) => !plEstWeekendOuFerie(d));
+    const cible = {}, h = {}, occupe = {}, unitesSem = {}, hSem = {};
+    medecins.forEach((m) => {
+      h[m.id] = 0; occupe[m.id] = new Set(); unitesSem[m.id] = {}; hSem[m.id] = {};
+      let present = 0;
+      jOuvres.forEach((d) => { if (plDispoStatique(m, d, etat.indispo[m.id], etat.dispoDeclaree[m.id]) && !(etat.bloque[m.id] && etat.bloque[m.id].has(d))) present++; });
+      cible[m.id] = cibleHebdoDe(m) * (present / jtSemDe(m));
+    });
+    MOIS[mo] = { dm, cible, h, occupe, unitesSem, hSem };
+  });
+  sortie.forEach((s) => {
+    const M = MOIS[s.date.slice(0, 7)];
+    if (!M || M.h[s.doctor_id] === undefined) return;
+    M.h[s.doctor_id] += Hh(s.shift_type);
+    M.occupe[s.doctor_id].add(s.date);
+    const lk = plLundiDe(s.date);
+    M.hSem[s.doctor_id][lk] = (M.hSem[s.doctor_id][lk] || 0) + Hh(s.shift_type);
+    if (s.shift_type === "jour" && s.poste) (M.unitesSem[s.doctor_id][lk] = M.unitesSem[s.doctor_id][lk] || new Set()).add(s.poste);
+  });
+  const hNorm = (M, id) => M.h[id] - (M.cible[id] || 0);
+  const ecart = (M) => { let mx = -Infinity, mn = Infinity; medecins.forEach((m) => { const v = hNorm(M, m.id); if (v > mx) mx = v; if (v < mn) mn = v; }); return mx - mn; };
+  const peutRecevoir = (M, m, s, relax) => {
+    const d = s.date;
+    if (!M.dm.has(d) || plEstWeekendOuFerie(d)) return false;
+    if (etat.periodes && plEstCongres(d, etat.periodes)) return false;
+    if (!plSousContrat(m, d)) return false;
+    const jt = (m.jours_travailles && m.jours_travailles.length) ? m.jours_travailles : [1,2,3,4,5,6,7];
+    if (!jt.includes(plJourSemaine(d))) return false;
+    if (M.occupe[m.id].has(d)) return false;
+    if (etat.bloque[m.id] && etat.bloque[m.id].has(d)) return false;
+    if (etat.indispo[m.id] && etat.indispo[m.id].has(d)) return false;
+    if (!plDispoIndependant(m, d, etat.dispoDeclaree[m.id])) return false;
+    if (plEstNouvelEngage(m, d, etat.debutPeriode)) return false;
+    const cap = plPlafondStation(m);
+    if (cap !== Infinity) { const cur = (M.hSem[m.id][plLundiDe(d)] || 0); if (cur + PL_HEURES.jour > cap + PL_EPS) return false; }
+    if (!plSansContinuite(s.poste)) {
+      const u = M.unitesSem[m.id][plLundiDe(d)];
+      if (u && u.size && !u.has(s.poste)) return false;
+      if (!relax && !(u && u.has(s.poste))) return false;
+    }
+    return true;
+  };
+  // Applique (ou annule, en rappelant avec de/vers inversés) un demi-échange.
+  const appliquer = (M, s, deId, versId) => {
+    const lk = plLundiDe(s.date);
+    M.h[deId] -= PL_HEURES.jour; M.h[versId] += PL_HEURES.jour;
+    M.occupe[deId].delete(s.date); M.occupe[versId].add(s.date);
+    M.hSem[deId][lk] = (M.hSem[deId][lk] || 0) - PL_HEURES.jour;
+    M.hSem[versId][lk] = (M.hSem[versId][lk] || 0) + PL_HEURES.jour;
+    if (s.poste) { const uh = M.unitesSem[deId][lk]; if (uh) uh.delete(s.poste); (M.unitesSem[versId][lk] = M.unitesSem[versId][lk] || new Set()).add(s.poste); }
+    etat.heures[deId] -= PL_HEURES.jour; etat.heures[versId] += PL_HEURES.jour;
+    s.doctor_id = versId;
+  };
+  const donnables = (M, id) => sortie.filter((s) => s.doctor_id === id && s.shift_type === "jour" && M.dm.has(s.date) && !s.epingle && !s.doublure);
+  const mos = Object.keys(MOIS).sort();
+  // Tente UN échange apparié pour le mois `mo` : A (le plus au-dessus de sa cible)
+  // donne une journée à B (le plus en dessous), et B rend une journée à A dans un
+  // autre mois. Post-condition vérifiée, sinon annulation.
+  const tenter = (mo, relax) => {
+    const M = MOIS[mo];
+    const tri = medecins.slice().sort((a, b) => hNorm(M, b.id) - hNorm(M, a.id));
+    for (let hi = 0; hi < tri.length; hi++) {
+      for (let bi = tri.length - 1; bi > hi; bi--) {
+        const A = tri[hi], B = tri[bi];
+        if (hNorm(M, A.id) - hNorm(M, B.id) <= seuil) break;
+        for (const s1 of donnables(M, A.id)) {
+          if (!peutRecevoir(M, B, s1, relax)) continue;
+          for (const mo2 of mos) {
+            if (mo2 === mo) continue;
+            const M2 = MOIS[mo2];
+            for (const s2 of donnables(M2, B.id)) {
+              if (!peutRecevoir(M2, A, s2, relax)) continue;
+              const e1 = ecart(M), e2 = ecart(M2);
+              appliquer(M, s1, A.id, B.id);
+              appliquer(M2, s2, B.id, A.id);
+              if (ecart(M) < e1 - PL_EPS && ecart(M2) <= e2 + PL_EPS) return true;
+              appliquer(M, s1, B.id, A.id);   // annulation (symétrique)
+              appliquer(M2, s2, A.id, B.id);
+            }
+          }
+        }
+      }
+    }
+    return false;
+  };
+  [false, true].forEach((relax) => {
+    for (let iter = 0; iter < 300; iter++) {
+      const pires = mos.filter((k) => ecart(MOIS[k]) > seuil + PL_EPS).sort((a, b) => ecart(MOIS[b]) - ecart(MOIS[a]));
+      let progres = false;
+      for (const mo of pires) { if (tenter(mo, relax)) { progres = true; break; } }
+      if (!progres) break;
+    }
+  });
+}
+
 /* FILET ANTI « DOUBLE AFFECTATION » (Dr Dehout 2026-06-21) : en fin de génération,
    un médecin ne doit jamais avoir 2 shifts de TRAVAIL le même jour. Résolution :
    - station de jour + garde de NUIT le même jour = de fait une garde de 24h →
@@ -720,6 +842,9 @@ function genererTrimestreCouple(opts) {
   plReequilibrerHeures(sortie, medecins, etat);                // resserre l'écart d'heures (trimestre) — TRANSFERT
   // Lissage des heures PAR MOIS (sans régresser l'équité trimestre — voir fonction).
   moisTrim.forEach((mois) => plEquilibrerHeuresMois(sortie, medecins, etat, annee, mois));
+  // v2 (2026-07-03) : ÉCHANGE APPARIÉ entre mois — resserre chaque mois (~15 h
+  // d'écart au lieu de ~50 h) en gardant les heures TRIMESTRE de chacun intactes.
+  plEchangerJoursEntreMois(sortie, medecins, etat, annee, moisTrim);
   // Doublures CIBLÉES (gros déficit relatif + plancher ETP) — APRÈS tous les
   // transferts, dernier recours. Remplace l'ancien plancher 40 h/sem.
   plDoubluresCiblees(sortie, medecins, etat, datesTrim);
