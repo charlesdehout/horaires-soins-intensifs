@@ -3,6 +3,8 @@
 Application de génération des horaires de l'unité de soins intensifs (gardes, stations,
 tours, week-ends, récups), avec back-end Supabase.
 
+<!-- Dernière mise à jour : 2026-07-03 -->
+
 ## Structure
 
 | Fichier / dossier | Rôle |
