@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mesure moteur — doublures & équilibre</title>
+<!-- PAGE DE DIAGNOSTIC (2026-07-03) : simulation avec une ÉQUIPE FACTICE
+     (aucune donnée réelle, aucun accès Supabase). Ouvre simplement cette page
+     dans le navigateur : elle génère un trimestre avec le moteur actuel et
+     affiche doublures, écarts d'heures et vérifications de couverture. -->
+<style>
+  body { font-family: system-ui, sans-serif; margin: 1.5rem auto; max-width: 900px; padding: 0 1rem; color: #1f2328; }
+  h1 { font-size: 1.3rem; } h2 { font-size: 1.05rem; margin-top: 1.6rem; border-bottom: 1px solid #d0d7de; padding-bottom: .3rem; }
+  table { border-collapse: collapse; margin-top: .5rem; font-size: .9rem; }
+  th, td { border: 1px solid #d0d7de; padding: .25rem .55rem; text-align: left; }
+  th { background: #eef3f1; }
+  .ok { color: #1a7f37; font-weight: 600; } .ko { color: #cf222e; font-weight: 600; }
+  .muted { color: #6e6e6e; font-size: .85rem; }
+  select, button { font-size: 1rem; padding: .25rem .5rem; margin-right: .5rem; }
+  #statut { margin: 1rem 0; font-style: italic; }
+</style>
+</head>
+<body>
+<h1>Mesure du moteur — doublures &amp; équilibre</h1>
+<p class="muted">Simulation avec une équipe factice (6 résidents + 8 assistants spécialistes plein temps + 1 résident à 0,5).
+Aucune donnée réelle utilisée. Le moteur exécuté est celui actuellement déployé (regles.js / planning.js / planning-couple.js).</p>
+<p>
+  <label>Année <select id="annee"><option>2026</option><option>2027</option></select></label>
+  <label>Trimestre <select id="trimestre"><option value="1">T1</option><option value="2">T2</option><option value="3" selected>T3</option><option value="4">T4</option></select></label>
+  <button id="btn">▶ Lancer la simulation</button>
+</p>
+<p id="statut"></p>
+<div id="resultats"></div>
+
+<script src="regles.js"></script>
+<script src="planning.js"></script>
+<script src="planning-couple.js"></script>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+  function equipe() {
+    const meds = [];
+    const ajouter = (n, grade, fte) => {
+      for (let i = 1; i <= n; i++) meds.push({
+        id: grade + (fte < 1 ? "_mi" : "") + i, name: grade + i, grade,
+        fte, weekly_hours_target: 52 * fte, jours_travailles: [1, 2, 3, 4, 5, 6, 7],
+      });
+    };
+    ajouter(6, "resident", 1);
+    ajouter(8, "assistant_specialiste", 1);
+    ajouter(1, "resident", 0.5);
+    return meds;
+  }
+
+  function lancer() {
+    const annee = parseInt($("annee").value, 10);
+    const trimestre = parseInt($("trimestre").value, 10);
+    $("statut").textContent = "Génération en cours… (quelques secondes)";
+    $("resultats").innerHTML = "";
+    setTimeout(() => {
+      try { calculer(annee, trimestre); $("statut").textContent = ""; }
+      catch (e) { $("statut").innerHTML = '<span class="ko">Erreur : ' + esc(e.message) + "</span>"; }
+    }, 50);
+  }
+
+  function calculer(annee, trimestre) {
+    const medecins = equipe();
+    const R = genererTrimestreCouple({ annee, trimestre, medecins, preferences: [] });
+    const H = { jour: 10.5, twe: 6, garde_nuit: 15, garde_24h: 24, off: 10.5 };
+    const js = (s) => { const j = new Date(s + "T00:00:00Z").getUTCDay(); return j === 0 ? 7 : j; };
+    const feries = joursFeriesBE(annee);
+    const nomDe = {}, fteDe = {};
+    medecins.forEach((m) => { nomDe[m.id] = m.name + (m.fte < 1 ? " (0.5)" : ""); fteDe[m.id] = m.fte; });
+    let html = "";
+
+    // 1. Doublures
+    const doublures = R.shifts.filter((s) => s.doublure).sort((a, b) => a.date.localeCompare(b.date));
+    html += "<h2>Doublures créées : " + doublures.length + "</h2>";
+    if (doublures.length) {
+      html += "<table><tr><th>Date</th><th>Unité</th><th>Médecin</th><th>Motif probable</th></tr>";
+      doublures.forEach((s) => {
+        const motif = fteDe[s.doctor_id] < 1 ? "PASS 1 — plancher ETP mi-temps" : "PASS 2 — déficit plein temps";
+        html += "<tr><td>" + s.date + "</td><td>" + esc(s.poste || "?") + "</td><td>" + esc(nomDe[s.doctor_id]) + "</td><td>" + motif + "</td></tr>";
+      });
+      html += "</table>";
+    } else html += "<p>(aucune)</p>";
+
+    // 2. Heures par mois / trimestre
+    const mois = {};
+    R.shifts.forEach((s) => {
+      const h = H[s.shift_type] || 0; if (!h) return;
+      const mo = s.date.slice(0, 7);
+      (mois[mo] = mois[mo] || {})[s.doctor_id] = ((mois[mo] || {})[s.doctor_id] || 0) + h;
+    });
+    const trim = {}; medecins.forEach((m) => { trim[m.id] = 0; });
+    Object.values(mois).forEach((t) => { Object.keys(t).forEach((id) => { trim[id] += t[id]; }); });
+    const pleins = medecins.filter((m) => m.fte >= 1).map((m) => m.id);
+    const ecart = (t) => { const v = pleins.map((id) => t[id] || 0); return Math.max(...v) - Math.min(...v); };
+    const mos = Object.keys(mois).sort();
+    html += "<h2>Écart d'heures entre pleins temps</h2><table><tr><th>Période</th><th>Écart max</th></tr>";
+    mos.forEach((mo) => { html += "<tr><td>" + mo + "</td><td>" + ecart(mois[mo]).toFixed(1) + " h</td></tr>"; });
+    html += "<tr><td><strong>Trimestre</strong></td><td><strong>" + ecart(trim).toFixed(1) + " h</strong></td></tr></table>";
+
+    // 3. Mi-temps
+    const median = (a) => { const s = a.slice().sort((x, y) => x - y); const i = Math.floor(s.length / 2); return s.length % 2 ? s[i] : (s[i - 1] + s[i]) / 2; };
+    const medPT = median(pleins.map((id) => trim[id]));
+    html += "<h2>Mi-temps</h2>";
+    medecins.filter((m) => m.fte < 1).forEach((m) => {
+      const pct = 100 * trim[m.id] / medPT;
+      const cls = pct >= 100 * m.fte - 0.5 ? "ok" : "ko";
+      html += "<p>" + esc(nomDe[m.id]) + " : " + trim[m.id].toFixed(1) + " h = <span class='" + cls + "'>" +
+        pct.toFixed(0) + " %</span> d'un plein temps (cible ≥ " + (100 * m.fte).toFixed(0) + " %)</p>";
+    });
+
+    // 4. Vérifications de couverture
+    const byDate = {}; R.shifts.forEach((s) => { (byDate[s.date] = byDate[s.date] || []).push(s); });
+    let weOk = true, nuitOk = true, g24sem = 0;
+    Object.keys(byDate).forEach((d) => {
+      const jj = js(d), a = byDate[d];
+      const typeWE = jj >= 6 || feries.has(d);
+      if (typeWE) {
+        if (a.filter((s) => s.shift_type === "garde_24h").length < 2 || a.filter((s) => s.shift_type === "twe").length < 1) weOk = false;
+      } else {
+        const g = a.filter((s) => s.shift_type === "garde_nuit" || s.shift_type === "garde_24h");
+        if (g.length && g.length < 2) nuitOk = false;
+        g24sem += a.filter((s) => s.shift_type === "garde_24h").length;
+      }
+    });
+    html += "<h2>Vérifications</h2><table><tr><th>Contrôle</th><th>Résultat</th></tr>" +
+      "<tr><td>Week-ends / fériés : 2 gardes 24 h + 1 tour</td><td class='" + (weOk ? "ok'>✅ OK" : "ko'>❌ problème") + "</td></tr>" +
+      "<tr><td>Nuits de semaine : 2 gardes</td><td class='" + (nuitOk ? "ok'>✅ OK" : "ko'>❌ problème") + "</td></tr>" +
+      "<tr><td>Gardes 24 h de semaine (hors férié) — attendu : 0 ou presque</td><td>" + g24sem + "</td></tr>" +
+      "<tr><td>Conflits signalés par le moteur</td><td>" + (R.conflits ? R.conflits.length : 0) + "</td></tr></table>";
+    if (R.conflits && R.conflits.length) {
+      html += "<ul class='muted'>";
+      R.conflits.slice(0, 20).forEach((c) => { html += "<li>" + esc((c.date || "") + " " + c.message) + "</li>"; });
+      html += "</ul>";
+    }
+
+    // 5. Détail par médecin
+    html += "<h2>Heures par médecin</h2><table><tr><th>Médecin</th>" +
+      mos.map((mo) => "<th>" + mo + "</th>").join("") + "<th>Trimestre</th></tr>";
+    medecins.forEach((m) => {
+      html += "<tr><td>" + esc(nomDe[m.id]) + "</td>" +
+        mos.map((mo) => "<td>" + (mois[mo][m.id] || 0).toFixed(0) + "</td>").join("") +
+        "<td><strong>" + trim[m.id].toFixed(0) + "</strong></td></tr>";
+    });
+    html += "</table>";
+
+    $("resultats").innerHTML = html;
+  }
+
+  $("btn").addEventListener("click", lancer);
+})();
+</script>
+</body>
+</html>
