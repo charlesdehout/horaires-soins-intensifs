@@ -134,7 +134,10 @@ function plEquilibrerHeuresMois(sortie, medecins, etat, annee, mois) {
   sortie.forEach((s) => { if (hTrim[s.doctor_id] !== undefined) hTrim[s.doctor_id] += H(s.shift_type); });
   const hNormTrim = (id) => hTrim[id] - (cibleTrim[id] || 0);
   const ecartTrim = () => { let mx=-Infinity, mn=Infinity; medecins.forEach((m)=>{const v=hNormTrim(m.id); if(v>mx)mx=v; if(v<mn)mn=v;}); return mx-mn; };
-  let plafondTrim = Math.max(ecartTrim(), seuil); // le trimestre ne dépassera jamais ce plafond
+  // Dérive trimestre autorisée (EQUITE.derive_trimestre_h, révision 2026-07-03) :
+  // on accepte que le trimestre s'écarte jusqu'à ce plafond pour resserrer le mois.
+  const derive = (typeof eq.derive_trimestre_h === "number" && eq.derive_trimestre_h > 0) ? eq.derive_trimestre_h : seuil;
+  let plafondTrim = Math.max(ecartTrim(), seuil, derive); // le trimestre ne dépassera jamais ce plafond
   // ---- Cibles + heures du MOIS ----
   const datesMois = plDatesDuMois(annee, mois);
   const dm = new Set(datesMois);

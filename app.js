@@ -5928,22 +5928,35 @@ async function enregistrerReglagesSheet(e) {
   }
 }
 
-/* Construit les onglets hebdo (grille type export Excel) à partir des shifts.
+/* Construit les onglets hebdo du miroir Sheet — MÊME GABARIT que l'export
+   Excel mois/trimestre (construireFeuilleSemaine) : mêmes lignes, même ordre,
+   mêmes règles de contenu (titre, « Fermé », congrès dans l'en-tête, congés
+   shifts + préférences, « Non planifiés (repos) » en dernier).
+   Seules ADDITIONS par rapport à l'Excel (pour ne rien perdre au miroir) :
+   les lignes PG (« Tour PG (WE) », « Garde PG (24h) ») et « Congé férié (récup) ».
    Renvoie [{ name (onglet = JJ-MM-AAAA du lundi), rows (2D) }]. */
-function construireSemainesSheet(shifts, prefs) {
+function construireSemainesSheet(shifts, prefs, periodes) {
   const lundiDe = (iso) => { const d = new Date(iso + "T00:00:00Z"); const j = d.getUTCDay() || 7; d.setUTCDate(d.getUTCDate() - (j - 1)); return d.toISOString().slice(0, 10); };
   const addJ = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
-  const fmtJJMM = (iso) => iso.slice(8, 10) + "/" + iso.slice(5, 7);
   const fmtTab = (iso) => iso.slice(8, 10) + "-" + iso.slice(5, 7) + "-" + iso.slice(0, 4);
-  const JOURS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
   const noms = (typeof construireNomsCourts === "function") ? construireNomsCourts(carteMedecins) : {};
-  const nom = (id) => noms[id] || (carteMedecins[id] && carteMedecins[id].name) || id;
-  const cell = (date, filtre) => shifts.filter((s) => s.date === date && filtre(s)).map((s) => nom(s.doctor_id)).sort().join("\n");
-  const cellConge = (date, types) => {
-    const set = new Set();
-    shifts.forEach((s) => { if (s.date === date && types.includes(s.shift_type)) set.add(nom(s.doctor_id)); });
-    prefs.forEach((p) => { if (types.includes(p.pref_type) && p.start_date <= date && p.end_date >= date) set.add(nom(p.doctor_id)); });
-    return [...set].sort().join("\n");
+  const nomFn = (id) => noms[id] || (carteMedecins[id] && carteMedecins[id].name) || id;
+  const joinNoms = (arr) => (arr || []).filter(Boolean).sort((a, b) => String(a).localeCompare(String(b))).join("\n");
+  const P = (codes) => (s) => codes.includes(s.shift_type);
+  // « Non planifiés (repos) » : même règle que l'export Excel (construireFeuilleSemaine).
+  const nonPlanifies = (d) => {
+    if (estWeekendOuFerieISO(d)) return [];
+    const aShift = new Set(shifts.filter((s) => s.date === d).map((s) => s.doctor_id));
+    const enConge = new Set();
+    shifts.forEach((s) => { if (s.date === d && GRILLE_CONGES.includes(s.shift_type)) enConge.add(s.doctor_id); });
+    (prefs || []).forEach((p) => {
+      if (!GRILLE_CONGES.includes(p.pref_type)) return;
+      if (p.start_date <= d && p.end_date >= d) enConge.add(p.doctor_id);
+    });
+    return Object.keys(carteMedecins)
+      .filter((id) => carteMedecins[id].role !== "admin" && medActifISO(carteMedecins[id], d) &&
+        jourTravaillableISO(carteMedecins[id], d) && !aShift.has(id) && !enConge.has(id))
+      .map((id) => nomFn(id));
   };
   const stations = [["USI 1", "usi1"], ["USI 2", "usi2"], ["USI 3", "usi3"], ["USI 4", "usi4"], ["USI 5", "usi5"], ["USI Bordet", "bordet"], ["Labo de choc", "labo_choc"]];
   const semaines = {};
@@ -5951,22 +5964,42 @@ function construireSemainesSheet(shifts, prefs) {
   const weeks = [];
   Object.keys(semaines).sort().forEach((lundi) => {
     const jours = [0, 1, 2, 3, 4, 5, 6].map((k) => addJ(lundi, k));
-    const rows = [["Poste"].concat(jours.map((iso, i) => JOURS[i] + " " + fmtJJMM(iso)))];
+    const rows = [];
+    // Ligne 1 — titre (comme le bandeau fusionné de l'Excel).
+    rows.push(["Planning USI — semaine du " +
+      jours[0].slice(8, 10) + "/" + jours[0].slice(5, 7) + " au " +
+      jours[6].slice(8, 10) + "/" + jours[6].slice(5, 7) + "/" + jours[6].slice(0, 4),
+      "", "", "", "", "", "", ""]);
+    // Ligne 2 — en-tête des jours, congrès (M17) en 2e ligne de cellule.
+    rows.push(["Poste"].concat(jours.map((iso, i) => {
+      const congres = congresISO(iso, periodes);
+      return libelleJour(iso, i) + (congres ? "\n" + congres : "");
+    })));
+    // Stations (jour + garde 24h qui tient l'unité) — « Fermé » comme l'Excel.
     stations.forEach(([lib, code]) => {
-      rows.push([lib].concat(jours.map((iso) => cell(iso, (s) => s.poste === code &&
-        (s.shift_type === "jour" || s.shift_type === "garde_24h" || s.shift_type === "pg_jour" || s.shift_type === "pg_twe" || s.shift_type === "twe")))));
+      rows.push([lib].concat(jours.map((iso) => {
+        if ((code === "labo_choc" && estWeekendOuFerieISO(iso)) || uniteFermeeISO(code, iso, periodes)) return "Fermé";
+        return joinNoms(nomsShift(shifts, iso, (s) => s.poste === code && (s.shift_type === "jour" || s.shift_type === "garde_24h"), nomFn));
+      })));
     });
-    rows.push(["Garde de nuit (17h-9h)"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "garde_nuit"))));
-    rows.push(["Garde 24h"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "garde_24h"))));
-    rows.push(["Tour (TWE)"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "twe"))));
-    rows.push(["Tour PG (WE)"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "pg_twe"))));
-    rows.push(["Garde PG (24h)"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "garde_pg"))));
-    rows.push(["Off-clinic"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "off"))));
-    rows.push(["Recuperation"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "recup"))));
-    rows.push(["Repos de garde"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "repos_garde"))));
-    rows.push(["Conge ferie (recup)"].concat(jours.map((iso) => cell(iso, (s) => s.shift_type === "conge_ferie"))));
-    rows.push(["Conge annuel"].concat(jours.map((iso) => cellConge(iso, ["conge_annuel", "conge_extralegal"]))));
-    rows.push(["Conge scientifique"].concat(jours.map((iso) => cellConge(iso, ["conge_scientifique"]))));
+    rows.push(["Autres (saisie libre)", "", "", "", "", "", "", ""]);
+    rows.push(["Garde de nuit (17h–9h)"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["garde_nuit"]), nomFn)))));
+    rows.push(["Garde 24h"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["garde_24h"]), nomFn)))));
+    rows.push(["Tour (TWE)"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["twe"]), nomFn)))));
+    // Lignes PG (absentes de l'Excel — conservées pour ne pas perdre ces données).
+    rows.push(["Tour PG (WE)"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["pg_twe"]), nomFn)))));
+    rows.push(["Garde PG (24h)"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["garde_pg"]), nomFn)))));
+    rows.push(["Off-clinic"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["off"]), nomFn)))));
+    rows.push(["Récupération"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["recup"]), nomFn)))));
+    rows.push(["Repos de garde"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["repos_garde"]), nomFn)))));
+    rows.push(["Congé annuel"].concat(jours.map((iso) => joinNoms(
+      nomsShift(shifts, iso, P(["conge_annuel", "conge_extralegal"]), nomFn)
+        .concat(nomsPref(prefs || [], iso, ["conge_annuel", "conge_extralegal"], nomFn))))));
+    rows.push(["Congé scientifique"].concat(jours.map((iso) => joinNoms(
+      nomsShift(shifts, iso, P(["conge_scientifique"]), nomFn)
+        .concat(nomsPref(prefs || [], iso, ["conge_scientifique"], nomFn))))));
+    rows.push(["Congé férié (récup)"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["conge_ferie"]), nomFn)))));
+    rows.push(["Non planifiés (repos)"].concat(jours.map((iso) => joinNoms(nonPlanifies(iso)))));
     weeks.push({ name: fmtTab(lundi), rows });
   });
   return weeks;
@@ -5987,7 +6020,8 @@ async function pousserVersSheet(raison) {
   const { data: prefs } = await sb.from("preferences")
     .select("doctor_id, start_date, end_date, pref_type").eq("status", "approuve")
     .lte("start_date", dmax).gte("end_date", dmin);
-  const weeks = construireSemainesSheet(shifts, prefs || []);
+  const periodes = await periodesSur(dmin, dmax); // congrès / fermetures (M17), comme l'Excel
+  const weeks = construireSemainesSheet(shifts, prefs || [], periodes);
   if (!weeks.length) return { vide: true };
   // POST « no-cors » : la requête part mais la réponse n'est pas lisible (limite
   // Apps Script / CORS). On considère donc l'envoi comme « tire-et-oublie ».
