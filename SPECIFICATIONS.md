@@ -4,9 +4,9 @@
 > Les points marqués **⚠️ À CONFIRMER** attendent ta validation.
 
 > **MISE À JOUR (2026-06) — Spécification Dr Calabro v1.0.** Le cahier des charges
-> détaillé `Specification_Planning_USI.docx` fait désormais référence. L'analyse
-> de conformité et la feuille de route sont dans `CONFORMITE.md`. Règles déjà
-> appliquées à l'algorithme (`planning.js`) issues de cette spec :
+> détaillé fait référence : `REGLES_PLANNING_USI.docx` (conservé hors du repo,
+> sur la machine de Charles). Règles déjà appliquées à l'algorithme
+> (`planning.js`) issues de cette spec :
 > - **Jamais 2 A/S ensemble en garde** (semaine et week-end) — contrainte dure.
 > - **Max 3 gardes par semaine** (lundi→dimanche) et par personne — contrainte dure.
 > - **Binôme du tour week-end** : qui fait le TWE-seul du samedi refait celui du

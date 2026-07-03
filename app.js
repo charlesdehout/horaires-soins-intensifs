@@ -205,7 +205,15 @@ function afficherEspace(profil) {
   if (tabEchanges && !estAdmin) tabEchanges.classList.toggle("hidden", estPg);
   const adminPlanning = document.getElementById("admin-planning");
   if (adminPlanning) adminPlanning.classList.toggle("hidden", !estAdmin);
-  basculerOnglet("planning"); // toujours démarrer sur le planning
+  // Démarre sur le DERNIER ONGLET utilisé (s'il est visible pour ce rôle),
+  // sinon sur le planning.
+  let ongletInitial = "planning";
+  try {
+    const memo = localStorage.getItem("usi_onglet");
+    const btnMemo = memo && document.querySelector('#tabs-nav .tab[data-tab="' + memo + '"]');
+    if (btnMemo && !btnMemo.classList.contains("hidden")) ongletInitial = memo;
+  } catch (e) {}
+  basculerOnglet(ongletInitial);
 
   basculerVue(true);
 
@@ -220,6 +228,8 @@ function afficherEspace(profil) {
 
   // Côté admin : liste des médecins. Côté médecin : ses préférences.
   if (estAdmin) chargerMedecins();
+  // Badge « demandes en attente » visible dès la connexion (sans ouvrir l'onglet).
+  if (estAdmin) chargerDemandes();
   else { chargerPreferences(); initEchanges(); }
   // INDÉPENDANT : son outil principal est la déclaration de ses jours de
   // travail (type « dispo », contrainte dure + PRIORITAIRE à l'horaire).
@@ -2046,6 +2056,14 @@ async function initCalendrier() {
       },
     });
     calendrier.render();
+    // Restaure la dernière vue du planning (Grille/Semaine) mémorisée —
+    // après render() pour que le calendrier existe.
+    try {
+      const vueMemo = localStorage.getItem("usi_vue");
+      if ((vueMemo === "grille" || vueMemo === "semaine") && typeof basculerVuePlanning === "function") {
+        basculerVuePlanning(vueMemo);
+      }
+    } catch (e) {}
   } else {
     // Déjà créé : on rafraîchit l'affichage et les données.
     calendrier.render();
@@ -2168,7 +2186,7 @@ async function genererPlanningPourMoisAffiche() {
   rafraichirPanneauAdmin(); // met à jour statut, compteurs et conflits
 }
 
-if (genererBtn) genererBtn.addEventListener("click", genererPlanningPourMoisAffiche);
+/* (Écouteur branché plus bas via brancherBoutonGeneration — état « en cours… ».) */
 
 
 /* ===================================================================== */
@@ -2353,7 +2371,7 @@ async function genererTrimestrePourMoisAffiche() {
   rafraichirPanneauAdmin();
 }
 
-if (genererTrimBtn) genererTrimBtn.addEventListener("click", genererTrimestrePourMoisAffiche);
+/* (Écouteur branché plus bas via brancherBoutonGeneration — état « en cours… ».) */
 
 /* ===================================================================== */
 /* GÉNÉRATION DU PLANNING PG (trimestre) — APRÈS les résidents.           */
@@ -2447,7 +2465,28 @@ async function genererPgPourTrimestreAffiche() {
     if (genererPgBtn) genererPgBtn.disabled = false;
   }
 }
-if (genererPgBtn) genererPgBtn.addEventListener("click", genererPgPourTrimestreAffiche);
+/* État « en cours… » sur les BOUTONS DE GÉNÉRATION (anti double-clic) :
+   pendant une génération, les trois boutons sont désactivés et le bouton
+   cliqué affiche « ⏳ En cours… ». Le libellé et l'état sont restaurés à la
+   fin, même en cas d'erreur. */
+function brancherBoutonGeneration(btn, action) {
+  if (!btn) return;
+  btn.addEventListener("click", async function () {
+    if (btn.disabled) return; // anti double-clic
+    const boutons = [genererBtn, genererTrimBtn, genererPgBtn].filter(Boolean);
+    const libelle = btn.innerHTML;
+    boutons.forEach(function (b) { b.disabled = true; });
+    btn.innerHTML = "⏳ En cours…";
+    try { await action(); }
+    finally {
+      btn.innerHTML = libelle;
+      boutons.forEach(function (b) { b.disabled = false; });
+    }
+  });
+}
+brancherBoutonGeneration(genererBtn, genererPlanningPourMoisAffiche);
+brancherBoutonGeneration(genererTrimBtn, genererTrimestrePourMoisAffiche);
+brancherBoutonGeneration(genererPgBtn, genererPgPourTrimestreAffiche);
 
 
 /* ===================================================================== */
@@ -3273,6 +3312,25 @@ function cgBasculer(actif) {
 if (cgTabRes) cgTabRes.addEventListener("click", function() { cgBasculer("res"); });
 if (cgTabPG)  cgTabPG.addEventListener("click",  function() { cgBasculer("pg");  });
 if (cgTabAtt) cgTabAtt.addEventListener("click",  function() { cgBasculer("att"); });
+
+/* Sous-onglets de l'onglet « Congrès, fermetures & export » :
+   Congrès & fermetures / Fériés / Miroir Google Sheets (même modèle). */
+const prTabCF  = document.getElementById("pr-tab-cf");
+const prTabFer = document.getElementById("pr-tab-fer");
+const prTabGS  = document.getElementById("pr-tab-gs");
+const prSecCF  = document.getElementById("pr-sec-cf");
+const prSecFer = document.getElementById("pr-sec-fer");
+const prSecGS  = document.getElementById("pr-sec-gs");
+function prBasculer(actif) {
+  [prTabCF, prTabFer, prTabGS].forEach(function(b) { if (b) b.classList.remove("actif"); });
+  [prSecCF, prSecFer, prSecGS].forEach(function(s) { if (s) s.classList.add("hidden"); });
+  if (actif === "cf")  { prTabCF  && prTabCF.classList.add("actif");  prSecCF  && prSecCF.classList.remove("hidden"); }
+  if (actif === "fer") { prTabFer && prTabFer.classList.add("actif"); prSecFer && prSecFer.classList.remove("hidden"); }
+  if (actif === "gs")  { prTabGS  && prTabGS.classList.add("actif");  prSecGS  && prSecGS.classList.remove("hidden"); }
+}
+if (prTabCF)  prTabCF.addEventListener("click",  function() { prBasculer("cf");  });
+if (prTabFer) prTabFer.addEventListener("click", function() { prBasculer("fer"); });
+if (prTabGS)  prTabGS.addEventListener("click",  function() { prBasculer("gs");  });
 
 /* Initialisation : chargée à l'ouverture de l'onglet */
 async function cgInit() {
@@ -4240,6 +4298,13 @@ async function chargerDemandes() {
 
   if (error) { console.error("Erreur chargement demandes :", error); return; }
   demandesEnAttente = data || [];
+  // Badge sur l'onglet « Congés et demandes » : nombre de demandes en attente
+  // (elles bloquent la génération) — même modèle que le badge Échanges.
+  const badgeDem = document.getElementById("tab-badge-demandes");
+  if (badgeDem) {
+    badgeDem.textContent = demandesEnAttente.length;
+    badgeDem.classList.toggle("hidden", demandesEnAttente.length === 0);
+  }
   rendreDemandes(demandesEnAttente);
 
   // Demandes déjà VALIDÉES, période non terminée → révocables (révision).
@@ -5616,6 +5681,8 @@ grilleTable.addEventListener("click", (e) => {
 /* Bascule Calendrier / Grille. */
 function basculerVuePlanning(vue) {
   vueActive = vue;
+  // Mémorise la dernière vue (Calendrier/Grille/Semaine) pour la session suivante.
+  try { localStorage.setItem("usi_vue", vue); } catch (e) {}
   const estGrille   = vue === "grille";
   const estSemaine  = vue === "semaine";
   const estCal      = vue === "calendrier";
@@ -5637,6 +5704,15 @@ function basculerVuePlanning(vue) {
 if (vueCalendrierBtn) vueCalendrierBtn.addEventListener("click", () => basculerVuePlanning("calendrier"));
 if (vueGrilleBtn) vueGrilleBtn.addEventListener("click", () => basculerVuePlanning("grille"));
 
+/* Légende du calendrier repliable : l'état (ouverte/fermée) est mémorisé. */
+const legendDetails = document.getElementById("legend-details");
+if (legendDetails) {
+  try { if (localStorage.getItem("usi_legende") === "fermee") legendDetails.open = false; } catch (e) {}
+  legendDetails.addEventListener("toggle", function () {
+    try { localStorage.setItem("usi_legende", legendDetails.open ? "ouverte" : "fermee"); } catch (e) {}
+  });
+}
+
 
 /* ===================================================================== */
 /* Navigation par ONGLETS (refonte graphique)                            */
@@ -5650,6 +5726,8 @@ if (vueGrilleBtn) vueGrilleBtn.addEventListener("click", () => basculerVuePlanni
 const ONGLETS = ["planning", "cm", "doublures", "periodes", "medecins", "echanges-admin", "conges-admin", "prefs", "echanges"];
 
 function basculerOnglet(nom) {
+  // Mémorise l'onglet actif pour le retrouver à la prochaine connexion.
+  try { localStorage.setItem("usi_onglet", nom); } catch (e) {}
   ONGLETS.forEach((t) => {
     const p = document.getElementById("panel-" + t);
     if (p) p.classList.toggle("hidden", t !== nom);

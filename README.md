@@ -13,8 +13,8 @@ tours, week-ends, récups), avec back-end Supabase.
 | `regles.js` | Règles métier de base (fériés BE, etc.) |
 | `planning.js` | Moteur de génération (base + fonctions communes) |
 | `planning-couple.js` | Moteur « couplé, week-ends d'abord » (`genererTrimestreCouple`) |
-| `test-couple.js` | Tests Node du moteur couplé — `node test-couple.js` |
-| `test_planning.js` | Tests Node du moteur de base |
+| `mesure.html` | Page de diagnostic (équipe factice) — validation dans le navigateur |
+| `test-couple.js` | Tests Node du moteur couplé (référence ; non lancés en local) |
 | `sql/` | Migrations Supabase |
 | `supabase/functions/` | Edge functions |
 | `google-apps-script/` | Export Google Sheets |
@@ -23,11 +23,12 @@ tours, week-ends, récups), avec back-end Supabase.
 
 - **`SPECIFICATIONS.md`** — spécification métier (grades, contrats, couverture, règles dures).
 - **`PROMPT_REPRISE_MOTEUR_COUPLE.md`** — architecture & algorithme du moteur couplé (doc de reprise).
+- **`PROMPT_REPRISE_HEURES_DOUBLURES.md`** — prompt de reprise de session (état courant du moteur).
 - **`GUIDE_AUTH.md`** — mise en place de l'authentification Supabase.
 
-## Tests
+## Validation
 
-```bash
-node test-couple.js     # moteur couplé (cible 12/12)
-node test_planning.js   # moteur de base
-```
+La validation se fait dans le **navigateur** via `mesure.html` (site déployé) :
+simulation avec équipe factice, doublures et motifs, écarts d'heures mois/trimestre.
+La suite Node `test-couple.js` (cible 14/14) existe comme référence mais n'est pas
+lancée en local.

@@ -411,6 +411,17 @@ button.mini.danger:hover { background: #f7d9d5; }
   background: #fff;
   box-shadow: 0 0 0 2px #1f2328 inset;
 }
+/* Légende repliable (<details>) : état mémorisé via localStorage. */
+.legend-details { margin: 0.5rem 0 1rem; }
+.legend-details summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--texte-doux);
+  user-select: none;
+}
+.legend-details summary:hover { color: var(--accent); }
+.legend-details .legend { margin: 0.4rem 0 0; }
 
 /* =====================================================================
    Module 6 — Admin : actions planning, statut, compteurs, conflits, modale

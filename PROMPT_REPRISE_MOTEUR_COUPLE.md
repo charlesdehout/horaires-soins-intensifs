@@ -1,7 +1,9 @@
 # Reprise — Moteur de planning « couplé, week-ends d'abord »
 
 > Document de référence unique pour reprendre le moteur. Décrit l'architecture,
-> l'algorithme et l'état actuel. Dernière mise à jour : 2026-06-19.
+> l'algorithme et l'état actuel. Dernière mise à jour : 2026-07-03.
+> Pour l'état courant des réglages (équilibre mensuel v2, doublures), voir
+> `PROMPT_REPRISE_HEURES_DOUBLURES.md`.
 
 ---
 
@@ -11,16 +13,20 @@
 
 - **`planning.js`** — moteur de base + fonctions communes (sélection, affectation,
   repos, off-clinic, rééquilibrages, récups…). Exporte sous Node (`module.exports`).
-  Toujours utilisé par le bouton « 📅 Générer le trimestre (équité) » (moteur historique).
+  Utilisé par la génération MENSUELLE (`genererPlanning`) ; `genererTrimestre`
+  n'est plus qu'un repli si le moteur couplé n'est pas chargé.
 - **`planning-couple.js`** — moteur COUPLÉ « week-ends d'abord ». Étend `planning.js`
   (réutilise ses fonctions). Définit `genererTrimestreCouple()` + helpers
   (`plPeutGarde`, `plCoupleChoisir`, `plEquilibrerGardesMois`). Chargé par `index.html`
-  APRÈS `planning.js`. Branché au bouton « 🧪 Générer — moteur couplé (test) ».
+  APRÈS `planning.js`. Moteur par DÉFAUT du bouton « 📅 Générer le trimestre (équité) »
+  (bascule 2026-06-19).
 - **`regles.js`** — règles métier (fériés BE, etc.). Chargé en premier.
 - **`app.js`**, **`index.html`**, **`style.css`** — l'application.
-- **`test-couple.js`** — tests Node du moteur couplé. Charge `planning.js` +
-  `planning-couple.js` dans **un seul scope CommonJS** (loader en tête de fichier) :
-  `node test-couple.js`.
+- **`test-couple.js`** — tests Node du moteur couplé (cible 14/14). Charge `planning.js` +
+  `planning-couple.js` dans **un seul scope CommonJS** (loader en tête de fichier).
+  Non lancé en local (pas de Node chez Charles) — conservé comme référence.
+- **`mesure.html`** — page de diagnostic (équipe factice) : c'est par elle que
+  passe la VALIDATION, dans le navigateur, sur le site déployé.
 - **`SPECIFICATIONS.md`** — spécification métier (grades, contrats, couverture, règles dures).
 - **`sql/`** — migrations Supabase (dont `module33_cap_fromager.sql`).
 
@@ -28,8 +34,9 @@
 et/ou `planning-couple.js`. Le navigateur les charge via `<script>` ; Node les charge
 via le loader en tête de `test-couple.js`. Même source pour les deux.
 
-⚠️ **Environnement Cowork** : le shell sandbox sert parfois une vue tronquée/stale des
-fichiers. Toujours valider en RÉEL avec `node test-couple.js`, puis committer depuis la machine.
+⚠️ **Environnement Cowork** : le shell sandbox est parfois indisponible ou sert une vue
+tronquée/stale des fichiers. Valider en RÉEL dans le navigateur : `mesure.html` sur le
+site déployé (après push), ou exécution du moteur déployé via Chrome MCP + javascript_tool.
 
 ---
 

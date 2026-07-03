@@ -77,7 +77,8 @@
         <button type="button" class="tab actif" data-tab="planning">Planning</button>
         <button type="button" class="tab tab-admin hidden" data-tab="medecins">Médecins</button>
         <button type="button" class="tab tab-admin hidden" data-tab="echanges-admin">Échanges</button>
-        <button type="button" class="tab tab-admin hidden" data-tab="conges-admin">Congés et demandes</button>
+        <button type="button" class="tab tab-admin hidden" data-tab="conges-admin">Congés et demandes
+          <span id="tab-badge-demandes" class="tab-badge hidden" title="Demandes en attente (bloquent la génération)"></span></button>
         <button type="button" class="tab tab-admin hidden" data-tab="periodes">Congrès, fermetures &amp; export</button>
         <button type="button" class="tab tab-admin hidden" data-tab="cm">Congé maladie</button>
         <button type="button" class="tab tab-admin hidden" data-tab="doublures">Doublures</button>
@@ -100,8 +101,10 @@
           </div>
         </div>
 
-        <!-- Légende des couleurs -->
-        <div id="calendar-legend" class="legend">
+        <!-- Légende des couleurs (repliable — état mémorisé) -->
+        <details id="legend-details" class="legend-details" open>
+          <summary>Légende des couleurs</summary>
+          <div id="calendar-legend" class="legend">
           <span class="legend-group">
             <strong>Shifts :</strong>
             <span class="legend-item"><span class="dot" style="background:#1f6feb"></span>Journée</span>
@@ -130,6 +133,7 @@
           </span>
           <span id="legend-mine" class="legend-item hidden"><span class="dot dot-mine"></span>Mes shifts</span>
         </div>
+        </details>
 
         <!-- Vue 3 : grille postes × jours de la semaine -->
         <div id="semaine-wrapper" class="hidden">
@@ -291,6 +295,19 @@
         <!-- Onglet CONGRÈS & FERMETURES (Module 17) — saisie ADMIN uniquement -->
         <div id="panel-periodes" class="tab-panel hidden">
         <div class="zone-header">
+          <h2>Congrès, fermetures &amp; export</h2>
+        </div>
+
+        <!-- Sous-onglets (modèle des sous-onglets Congés) -->
+        <div class="vue-toggle" style="margin-bottom:1.2rem;">
+          <button id="pr-tab-cf"  type="button" class="vue-btn actif">Congrès &amp; fermetures</button>
+          <button id="pr-tab-fer" type="button" class="vue-btn">Fériés</button>
+          <button id="pr-tab-gs"  type="button" class="vue-btn">Miroir Google Sheets</button>
+        </div>
+
+        <!-- ── Congrès & fermetures ── -->
+        <div id="pr-sec-cf">
+        <div class="zone-header">
           <h3 class="sous-titre">Congrès &amp; fermetures d'unités</h3>
           <button id="add-periode-btn" class="mini secondary">+ Ajouter</button>
         </div>
@@ -354,8 +371,11 @@
           <tbody id="periodes-tbody"></tbody>
         </table>
         <p id="periodes-empty" class="zone-info">Aucun congrès ni fermeture d'unité saisie.</p>
+        </div><!-- /pr-sec-cf -->
 
-        <div class="zone-header" style="margin-top:1.75rem;">
+        <!-- ── Fériés ── -->
+        <div id="pr-sec-fer" class="hidden">
+        <div class="zone-header">
           <h3 class="sous-titre">Jours fériés (éditables)</h3>
         </div>
         <p class="zone-info">Les 10 fériés belges sont calculés automatiquement. Ici tu peux en
@@ -391,8 +411,11 @@
           <tbody id="feries-tbody"></tbody>
         </table>
         <p id="feries-empty" class="zone-info">Aucune surcharge de férié enregistrée.</p>
+        </div><!-- /pr-sec-fer -->
 
-        <div class="zone-header" style="margin-top:1.75rem;">
+        <!-- ── Miroir Google Sheets ── -->
+        <div id="pr-sec-gs" class="hidden">
+        <div class="zone-header">
           <h3 class="sous-titre">Miroir Google Sheets</h3>
         </div>
         <p class="zone-info">Recopie le planning <strong>publié</strong> (lecture seule) vers un Google Sheet,
@@ -416,6 +439,7 @@
           </div>
           <p id="gs-msg" class="message"></p>
         </form>
+        </div><!-- /pr-sec-gs -->
         </div><!-- /panel-periodes -->
 
         <!-- Onglet MÉDECINS (Module 2) -->
