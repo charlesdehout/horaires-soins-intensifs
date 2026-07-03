@@ -108,7 +108,13 @@ const EQUITE = {
   // reçoit des doublures jusqu'à ce seuil. seuil = ce nombre × 10,5 h (une
   // journée). Plus le nombre est GRAND, MOINS il y a de doublures. 0 = ne jamais
   // poser de doublure de déficit (nouvel engagé toujours doublé, lui, à part).
-  doublure_deficit_journees: 1,
+  // DÉSACTIVÉ (révision 2026-07-03, demande Dr Dehout) : cette passe comparait
+  // les heures BRUTES à la médiane → un médecin revenant de congé paraissait
+  // « en déficit » et recevait des doublures futiles pour « rattraper ». Depuis
+  // l'échange apparié entre mois (v2), l'équité est déjà assurée par transfert ;
+  // la doublure de déficit n'a plus de raison d'être. Le PLANCHER ETP des
+  // mi-temps (PASS 1) reste actif, lui. Remettre 1 (ou 2-3, plus dur) pour réactiver.
+  doublure_deficit_journees: 0,
   // CONTINUITÉ (révision 2026-06-30) : au-delà de N médecins DIFFÉRENTS sur une
   // même unité dans la semaine, on signale une fragmentation (alerte) et on
   // évite d'y ajouter une tête de plus. 0 = désactiver l'alerte.
