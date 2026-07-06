@@ -6009,11 +6009,15 @@ async function enregistrerReglagesSheet(e) {
 /* Construit les onglets hebdo du miroir Sheet — MÊME GABARIT que l'export
    Excel mois/trimestre (construireFeuilleSemaine) : mêmes lignes, même ordre,
    mêmes règles de contenu (titre, « Fermé », congrès dans l'en-tête, congés
-   shifts + préférences, « Non planifiés (repos) » en dernier).
+   shifts + préférences, « Non planifiés (repos) » en dernier) ET mêmes
+   COULEURS (palette XL) — envoyées dans `fills` (grille hex parallèle aux
+   valeurs), appliquées par le Web App Apps Script (PlanningSheet.gs).
    Seules ADDITIONS par rapport à l'Excel (pour ne rien perdre au miroir) :
    les lignes PG (« Tour PG (WE) », « Garde PG (24h) ») et « Congé férié (récup) ».
-   Renvoie [{ name (onglet = JJ-MM-AAAA du lundi), rows (2D) }]. */
+   Renvoie [{ name (onglet = JJ-MM-AAAA du lundi), rows (2D), fills (2D) }]. */
 function construireSemainesSheet(shifts, prefs, periodes) {
+  // Palette = couleurs XL de l'export Excel (sans le préfixe d'opacité FF).
+  const GS = {}; Object.keys(XL).forEach((k) => { GS[k] = "#" + XL[k].slice(2); });
   const lundiDe = (iso) => { const d = new Date(iso + "T00:00:00Z"); const j = d.getUTCDay() || 7; d.setUTCDate(d.getUTCDate() - (j - 1)); return d.toISOString().slice(0, 10); };
   const addJ = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
   const fmtTab = (iso) => iso.slice(8, 10) + "-" + iso.slice(5, 7) + "-" + iso.slice(0, 4);
@@ -6042,43 +6046,56 @@ function construireSemainesSheet(shifts, prefs, periodes) {
   const weeks = [];
   Object.keys(semaines).sort().forEach((lundi) => {
     const jours = [0, 1, 2, 3, 4, 5, 6].map((k) => addJ(lundi, k));
-    const rows = [];
-    // Ligne 1 — titre (comme le bandeau fusionné de l'Excel).
+    const rows = [], fills = [];
+    // Ligne de contenu générique : libellé coloré (comme l'Excel), cellules de
+    // données grisées « auto » si remplies, blanches sinon.
+    const pushLigne = (label, fillLabel, valeurs) => {
+      rows.push([label].concat(valeurs));
+      fills.push([fillLabel || ""].concat(valeurs.map((v) =>
+        v === "Fermé" ? GS.ferme : (v ? GS.auto : ""))));
+    };
+    // Ligne 1 — titre (bandeau teal sombre fusionné par le script Apps Script).
     rows.push(["Planning USI — semaine du " +
       jours[0].slice(8, 10) + "/" + jours[0].slice(5, 7) + " au " +
       jours[6].slice(8, 10) + "/" + jours[6].slice(5, 7) + "/" + jours[6].slice(0, 4),
       "", "", "", "", "", "", ""]);
-    // Ligne 2 — en-tête des jours, congrès (M17) en 2e ligne de cellule.
+    fills.push([GS.titre, GS.titre, GS.titre, GS.titre, GS.titre, GS.titre, GS.titre, GS.titre]);
+    // Ligne 2 — en-tête des jours : semaine teal clair, week-end/férié gris,
+    // congrès ambre (libellé en 2e ligne de cellule), comme l'Excel.
     rows.push(["Poste"].concat(jours.map((iso, i) => {
       const congres = congresISO(iso, periodes);
       return libelleJour(iso, i) + (congres ? "\n" + congres : "");
     })));
+    fills.push([GS.entete].concat(jours.map((iso) => {
+      if (congresISO(iso, periodes)) return GS.congres;
+      return estWeekendOuFerieISO(iso) ? GS.enteteWE : GS.entete;
+    })));
     // Stations (jour + garde 24h qui tient l'unité) — « Fermé » comme l'Excel.
     stations.forEach(([lib, code]) => {
-      rows.push([lib].concat(jours.map((iso) => {
+      pushLigne(lib, GS.station, jours.map((iso) => {
         if ((code === "labo_choc" && estWeekendOuFerieISO(iso)) || uniteFermeeISO(code, iso, periodes)) return "Fermé";
         return joinNoms(nomsShift(shifts, iso, (s) => s.poste === code && (s.shift_type === "jour" || s.shift_type === "garde_24h"), nomFn));
-      })));
+      }));
     });
-    rows.push(["Autres (saisie libre)", "", "", "", "", "", "", ""]);
-    rows.push(["Garde de nuit (17h–9h)"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["garde_nuit"]), nomFn)))));
-    rows.push(["Garde 24h"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["garde_24h"]), nomFn)))));
-    rows.push(["Tour (TWE)"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["twe"]), nomFn)))));
+    pushLigne("Autres (saisie libre)", "", jours.map(() => ""));
+    pushLigne("Garde de nuit (17h–9h)", GS.garde, jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["garde_nuit"]), nomFn))));
+    pushLigne("Garde 24h", GS.garde, jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["garde_24h"]), nomFn))));
+    pushLigne("Tour (TWE)", GS.garde, jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["twe"]), nomFn))));
     // Lignes PG (absentes de l'Excel — conservées pour ne pas perdre ces données).
-    rows.push(["Tour PG (WE)"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["pg_twe"]), nomFn)))));
-    rows.push(["Garde PG (24h)"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["garde_pg"]), nomFn)))));
-    rows.push(["Off-clinic"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["off"]), nomFn)))));
-    rows.push(["Récupération"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["recup"]), nomFn)))));
-    rows.push(["Repos de garde"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["repos_garde"]), nomFn)))));
-    rows.push(["Congé annuel"].concat(jours.map((iso) => joinNoms(
+    pushLigne("Tour PG (WE)", GS.garde, jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["pg_twe"]), nomFn))));
+    pushLigne("Garde PG (24h)", GS.garde, jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["garde_pg"]), nomFn))));
+    pushLigne("Off-clinic", GS.off, jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["off"]), nomFn))));
+    pushLigne("Récupération", GS.repos, jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["recup"]), nomFn))));
+    pushLigne("Repos de garde", GS.repos_garde, jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["repos_garde"]), nomFn))));
+    pushLigne("Congé annuel", GS.congeA, jours.map((iso) => joinNoms(
       nomsShift(shifts, iso, P(["conge_annuel", "conge_extralegal"]), nomFn)
-        .concat(nomsPref(prefs || [], iso, ["conge_annuel", "conge_extralegal"], nomFn))))));
-    rows.push(["Congé scientifique"].concat(jours.map((iso) => joinNoms(
+        .concat(nomsPref(prefs || [], iso, ["conge_annuel", "conge_extralegal"], nomFn)))));
+    pushLigne("Congé scientifique", GS.congeS, jours.map((iso) => joinNoms(
       nomsShift(shifts, iso, P(["conge_scientifique"]), nomFn)
-        .concat(nomsPref(prefs || [], iso, ["conge_scientifique"], nomFn))))));
-    rows.push(["Congé férié (récup)"].concat(jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["conge_ferie"]), nomFn)))));
-    rows.push(["Non planifiés (repos)"].concat(jours.map((iso) => joinNoms(nonPlanifies(iso)))));
-    weeks.push({ name: fmtTab(lundi), rows });
+        .concat(nomsPref(prefs || [], iso, ["conge_scientifique"], nomFn)))));
+    pushLigne("Congé férié (récup)", GS.repos, jours.map((iso) => joinNoms(nomsShift(shifts, iso, P(["conge_ferie"]), nomFn))));
+    pushLigne("Non planifiés (repos)", GS.autre, jours.map((iso) => joinNoms(nonPlanifies(iso))));
+    weeks.push({ name: fmtTab(lundi), rows, fills });
   });
   return weeks;
 }
