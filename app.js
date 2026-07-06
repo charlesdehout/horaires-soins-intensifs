@@ -3183,7 +3183,9 @@ async function construireVueSemaine() {
     { label: "Tour PG (WE)",           cls: "semaine-row-garde",
       get: function(d) { return nomsS(d, P(["pg_twe"])); } },
     { label: "Off-clinic",             cls: "semaine-row-off",
-      get: function(d) { return nomsS(d, P(["off_clinic"])); } },
+      // « off » = type réellement stocké en base (correctif 2026-07-03 : la ligne
+      // filtrait « off_clinic », un type qui n'existe pas côté shifts → toujours vide).
+      get: function(d) { return nomsS(d, P(["off", "off_clinic"])); } },
     { label: "Récupération",           cls: "semaine-row-repos",
       get: function(d) {
         // Récup posée (shift_type 'recup'), avec l'étiquette d'origine WE (samedi / V/D).
@@ -3757,9 +3759,10 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes) {
       if (p.start_date <= d && p.end_date >= d) enConge.add(p.doctor_id);
     });
     return Object.keys(carteMedecins)
-      .filter((id) => carteMedecins[id].role !== "admin" && medActifISO(carteMedecins[id], d) &&
+      .filter((id) => carteMedecins[id].role !== "admin" && carteMedecins[id].grade !== "pg" &&
+        medActifISO(carteMedecins[id], d) &&
         jourTravaillableISO(carteMedecins[id], d) && // jour non travaillable ≠ non planifié
-        !aShift.has(id) && !enConge.has(id)) // hors contrat / admin exclus
+        !aShift.has(id) && !enConge.has(id)) // hors contrat / admin / PG exclus
       .map((id) => nomFn(id))
       .sort((a, b) => String(a).localeCompare(String(b)));
   };
@@ -6096,7 +6099,8 @@ function construireSemainesSheet(shifts, prefs, periodes) {
       if (p.start_date <= d && p.end_date >= d) enConge.add(p.doctor_id);
     });
     return Object.keys(carteMedecins)
-      .filter((id) => carteMedecins[id].role !== "admin" && medActifISO(carteMedecins[id], d) &&
+      .filter((id) => carteMedecins[id].role !== "admin" && carteMedecins[id].grade !== "pg" &&
+        medActifISO(carteMedecins[id], d) &&
         jourTravaillableISO(carteMedecins[id], d) && !aShift.has(id) && !enConge.has(id))
       .map((id) => nomFn(id));
   };
