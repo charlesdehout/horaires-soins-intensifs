@@ -23,9 +23,11 @@ Philosophie : « tout le monde travaille le moins possible », doublure = except
 3. **`EQUITE.doublure_deficit_journees: 0`** : PASS 2 (doublures de « rattrapage » des pleins temps) DÉSACTIVÉE — elle comparait les heures brutes à la médiane, donc un retour de congé recevait des doublures futiles. La PASS 1 (plancher ETP des mi-temps, par mois) reste active, ainsi que le doublage des nouveaux engagés. Remettre 1 (ou 2-3) pour réactiver.
 4. Toujours en place (session du 2026-06-30) : plancher 40 h/sem supprimé comme moteur de doublures ; `promotion_24h_deficit_h: 0` et `promotion_24h_souscharge: false` (pas de 24 h de remplissage) ; alerte continuité > 3 têtes/unité/semaine.
 
-## Miroir Google Sheets (M27) — fait (contenu + COULEURS)
-`construireSemainesSheet` (app.js) reproduit le gabarit EXACT de l'export Excel mois/trimestre : ligne titre, mêmes lignes dans le même ordre, « Fermé » (Labo WE/fériés + fermetures admin), congrès dans l'en-tête, congés shifts + préférences, « Non planifiés (repos) » en dernier. Ajouts conservés (absents de l'Excel, pour ne rien perdre) : lignes PG (« Tour PG (WE) », « Garde PG (24h) ») et « Congé férié (récup) ».
-Depuis le 2026-07-03, l'app envoie aussi les **couleurs** (grille `fills`, palette XL) et le Web App les applique : titre teal fusionné, en-têtes (WE gris, congrès ambre), lignes colorées par type, « Fermé » gris, bordures, volets figés. ⚠️ Si les couleurs n'apparaissent pas : le **Apps Script doit être REDÉPLOYÉ** — copier `google-apps-script/PlanningSheet.gs` dans l'éditeur Apps Script du Sheet, puis Déployer → Gérer les déploiements → Modifier → Nouvelle version (l'URL /exec ne change pas).
+## Miroir Google Sheets (M27) — fait (contenu + COULEURS + PG)
+`construireSemainesSheet` (app.js) reproduit le gabarit EXACT de l'export Excel mois/trimestre : ligne titre, mêmes lignes dans le même ordre, « Fermé » (Labo WE/fériés + fermetures admin), congrès dans l'en-tête, congés shifts + préférences, « Non planifiés (repos) » en dernier (PG exclus). Ajouts conservés (absents de l'Excel, pour ne rien perdre) : lignes PG (« Tour PG (WE) », « Garde PG (24h) ») et « Congé férié (récup) ».
+L'app envoie aussi les **couleurs** (grille `fills`, palette XL) et le Web App (v3, `google-apps-script/PlanningSheet.gs`) les applique — SANS fusion de cellules (interdit avec volets figés dans Google Sheets). L'onglet `_synchro` du Sheet affiche la **version du script** qui a tourné : si ce n'est pas la v3 après redéploiement, créer un **Nouveau déploiement** et coller la NOUVELLE URL /exec dans l'app (réglages Miroir).
+Acquis 2026-07-06 : cases d'unités = TITULAIRE (résident/AS : jour, garde 24 h, tour) en HAUT, PG en dessous ; chargement des shifts **PAGINÉ** (`chargerShiftsComplet`, la limite Supabase de 1000 lignes/requête tronquait les PG dès novembre) — pagination aussi dans les exports Excel ; synchro déclenchée par : publication (mois + « ✓✓ Publier le trimestre »), restauration, planning PG, échanges (3 variantes), remplacements CM et leur annulation.
+NB moteur/données : les gardes 24 h et tours WE des résidents/AS n'ont PAS d'unité en base (voulu) → cases d'unités vides le week-end sauf PG. Vue semaine : Off-clinic filtrait `off_clinic` (type inexistant) → corrigé en `off`.
 
 ## Outils de diagnostic
 - **`mesure.html`** (déployée) : simulation navigateur avec équipe factice (6 rés. + 8 A/S + 1 rés. 0,5) — doublures et motifs (PASS 1/2), écarts mois/trimestre, % du mi-temps, 24 h de semaine, contrôles de couverture. Choix année/trimestre.
@@ -40,8 +42,17 @@ Les 6 quick wins approuvés lors de l'audit du 2026-07-03 sont implémentés :
 5. ✅ Légende du calendrier repliable (`<details id="legend-details">`, état mémorisé).
 6. ✅ Mémorisation localStorage : dernière vue (`usi_vue`), onglet actif (`usi_onglet`), légende (`usi_legende`).
 
-## À FAIRE — plus gros chantiers UI (à re-valider avant de lancer)
-Formulaire Médecins en sections repliables ; compteurs/conflits repliables dans l'onglet Planning ; passage mobile.
+## Refonte UI « façon Planerio » (2026-07-06) — phases 1 & 2 FAITES
+Contexte : l'équipe migre de Planerio vers l'app. Audit comparatif fait (session 2026-07-06) ; équité mesurée MEILLEURE dans l'app que le plan Planerio courant (~4 h/sem d'écart vs ~8,6). ⚠️ Divergence de comptage connue : off-clinic = 9 h chez Planerio vs 10,5 h dans l'app — à trancher un jour.
+1. ✅ **Barre latérale** de navigation (grand écran ; mobile garde la rangée horizontale), icônes + badges. Grille CSS `.card-app` + `#app-content` (index.html/style.css).
+2. ✅ **Pleine largeur** sur grand écran (la carte 1080 px ne s'applique plus qu'au login) + tailles de police par paliers (≥ 1600 px, ≥ 2200 px : base 19 px).
+3. ✅ **Vue « Matrice »** (4ᵉ bouton de vue) : postes × jours sur 4 semaines, 1re colonne/en-tête figés, WE grisés, séparateurs de mois, navigation par semaine, **pivot Unités ↔ Médecins** (`construireVueMatrice`, app.js ; `MATRICE_NB_SEMAINES = 4`).
+4. ❌ Chips « heures / cible » par médecin : implémentées puis RETIRÉES à la demande du Dr Dehout (redondant avec les compteurs). Ne pas re-proposer.
+5. ✅ (2026-07-06, à valider après push) **Formulaire Médecins en 3 sections repliables** (`.form-section` : Profil & rôle ouverte par défaut, Contrat & disponibilités, Quotas de congés fermées ; Nom/Email toujours visibles ; CAP fromager déplacé dans Profil & rôle) + **Compteurs et Conflits repliables** dans l'onglet Planning (`#compteurs-details`/`#conflits-details`, classe `.bloc-details`, état mémorisé `usi_compteurs`/`usi_conflits`, sélecteur Mois/Trimestre dans le summary avec stopPropagation). Syntaxe JS vérifiée via navigateur (sandbox indisponible ce jour-là).
+
+## À FAIRE — chantiers UI restants (à re-valider avant de lancer)
+- Phase 3 Planerio : calendrier des ABSENCES plein écran (barres par personne, filtres par type, panneau demandes à approuver).
+- Passage mobile.
 
 ## Historique utile (sessions précédentes)
 - Congrès (équipe minimale, ≤2 stations vides, 0 doublure) + compteur congrès séparé.

@@ -237,14 +237,16 @@
         </p>
         <p id="generer-msg" class="message"></p>
 
-        <!-- Compteurs par médecin (heures / gardes / week-ends), mois ou trimestre -->
-        <div class="zone-header">
-          <h3 class="sous-titre" id="compteurs-titre">Compteurs du mois</h3>
+        <!-- Compteurs par médecin (heures / gardes / week-ends), mois ou trimestre.
+             Repliable (état mémorisé, comme la légende). -->
+        <details id="compteurs-details" class="bloc-details" open>
+        <summary class="zone-header">
+          <span class="sous-titre" id="compteurs-titre">Compteurs du mois</span>
           <select id="compteurs-portee" title="Portée des compteurs">
             <option value="mois">Mois affiché</option>
             <option value="trimestre">Trimestre</option>
           </select>
-        </div>
+        </summary>
         <table id="compteurs-table" class="data-table compteurs-table">
           <thead>
             <!-- En-tête (re)construit dynamiquement par majCompteurs() pour gérer
@@ -268,10 +270,13 @@
         </table>
         <p id="compteurs-total" class="zone-info hidden"></p>
         <p id="compteurs-empty" class="zone-info hidden">Aucun shift sur le mois affiché.</p>
+        </details><!-- /compteurs-details -->
 
-        <!-- Conflits détectés sur le mois affiché -->
-        <div class="zone-header"><h3 class="sous-titre">Conflits détectés</h3></div>
+        <!-- Conflits détectés sur le mois affiché (repliable, état mémorisé) -->
+        <details id="conflits-details" class="bloc-details" open>
+        <summary class="zone-header"><span class="sous-titre">Conflits détectés</span></summary>
         <div id="conflits-zone" class="zone-info">Aucun planning chargé.</div>
+        </details><!-- /conflits-details -->
       </div><!-- /admin-planning -->
       </div><!-- /panel-planning -->
 
@@ -487,8 +492,13 @@
               <label for="d-email">Email</label>
               <input type="email" id="d-email" required />
             </div>
-            <!-- Champs visibles uniquement pour les travailleurs (masqués pour admin pur) -->
-            <div id="d-travailleur-fields" class="form-grid-full" style="display:contents;">
+          </div>
+          <!-- Champs visibles uniquement pour les travailleurs (masqués pour admin pur),
+               regroupés en sections repliables (2026-07-06). -->
+          <div id="d-travailleur-fields">
+          <details class="form-section" open>
+            <summary>Profil &amp; rôle</summary>
+            <div class="form-grid">
             <div>
               <label for="d-grade">Grade</label>
               <select id="d-grade">
@@ -537,6 +547,16 @@
               <label for="d-reconnu" title="Médecin reconnu. L'export « Excel — Horaires reconnus » surligne en bleu les jours sans médecin reconnu parmi les personnes de garde.">
                 <input type="checkbox" id="d-reconnu" /> ✔️ Médecin reconnu</label>
             </div>
+            <div class="form-grid-full">
+              <label><input type="checkbox" id="d-cap-fromager" /> 🧀 Statut « CAP fromager »</label>
+              <small style="color:#6e6e6e">Résident à part entière (gardes seul), mais : jamais le lundi (cours), jamais de garde le dimanche, prioritaire sur les gardes du samedi, pas d'off-clinic, et sa récup de samedi tombe le lundi.</small>
+            </div>
+            </div><!-- /form-grid Profil & rôle -->
+          </details>
+
+          <details class="form-section">
+            <summary>Contrat &amp; disponibilités</summary>
+            <div class="form-grid">
             <div id="d-pg-trimestres" class="form-grid-full hidden">
               <label>Trimestres de contrat (PG)</label>
               <div class="trim-grid">
@@ -574,10 +594,12 @@
                 <label><input type="checkbox" class="jt" value="7" checked /> Dim</label>
               </div>
             </div>
-            <div class="form-grid-full">
-              <label><input type="checkbox" id="d-cap-fromager" /> 🧀 Statut « CAP fromager »</label>
-              <small style="color:#6e6e6e">Résident à part entière (gardes seul), mais : jamais le lundi (cours), jamais de garde le dimanche, prioritaire sur les gardes du samedi, pas d'off-clinic, et sa récup de samedi tombe le lundi.</small>
-            </div>
+            </div><!-- /form-grid Contrat & disponibilités -->
+          </details>
+
+          <details class="form-section">
+            <summary>Quotas de congés</summary>
+            <div class="form-grid">
             <div>
               <label for="d-quota-annuel">Congé annuel (j/an)</label>
               <input type="number" id="d-quota-annuel" min="0" step="1" placeholder="défaut 24" />
@@ -590,9 +612,10 @@
               <label for="d-quota-scientifique">Scientifique (j/an)</label>
               <input type="number" id="d-quota-scientifique" min="0" step="1" placeholder="défaut 12" />
             </div>
-          </div>
-          <p class="form-hint">Quotas annuels en jours ouvrés, proratisés selon la durée du contrat. Laisser vide = valeur par défaut.</p>
-            </div><!-- /d-travailleur-fields -->
+            </div><!-- /form-grid Quotas -->
+            <p class="form-hint">Quotas annuels en jours ouvrés, proratisés selon la durée du contrat. Laisser vide = valeur par défaut.</p>
+          </details>
+          </div><!-- /d-travailleur-fields -->
           <div class="form-actions">
             <button type="submit" id="save-doctor-btn">Enregistrer</button>
             <button type="button" id="cancel-doctor-btn" class="secondary">Annuler</button>

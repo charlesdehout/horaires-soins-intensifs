@@ -5987,6 +5987,20 @@ if (legendDetails) {
   });
 }
 
+/* Compteurs et Conflits repliables (onglet Planning) : même mécanisme que
+   la légende — état mémorisé par bloc (2026-07-06). */
+["compteurs", "conflits"].forEach(function (nom) {
+  const bloc = document.getElementById(nom + "-details");
+  if (!bloc) return;
+  try { if (localStorage.getItem("usi_" + nom) === "fermee") bloc.open = false; } catch (e) {}
+  bloc.addEventListener("toggle", function () {
+    try { localStorage.setItem("usi_" + nom, bloc.open ? "ouverte" : "fermee"); } catch (e) {}
+  });
+});
+/* Le sélecteur Mois/Trimestre vit DANS le résumé : empêcher son clic de
+   replier/déplier le bloc. */
+if (compteursPorteeSel) compteursPorteeSel.addEventListener("click", function (e) { e.stopPropagation(); });
+
 
 /* ===================================================================== */
 /* Navigation par ONGLETS (refonte graphique)                            */
