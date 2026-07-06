@@ -4119,6 +4119,7 @@ if (exportReconnusBtn) exportReconnusBtn.addEventListener("click", exporterExcel
 const planningStatut  = document.getElementById("planning-statut");
 const ajouterShiftBtn = document.getElementById("ajouter-shift-btn");
 const publierBtn      = document.getElementById("publier-btn");
+const publierTrimBtn  = document.getElementById("publier-trim-btn");
 const depublierBtn    = document.getElementById("depublier-btn");
 const supprimerTrimBtn = document.getElementById("supprimer-trim-btn");
 const restaurerTrimBtn = document.getElementById("restaurer-trim-btn");
@@ -5337,6 +5338,49 @@ if (publierBtn) publierBtn.addEventListener("click", async () => {
   const _okSync = (_sync && _sync.ok) ? " · miroir Sheet synchronisé ✅" : (_sync && _sync.skip ? "" : " · ⚠️ miroir Sheet non synchronisé");
   messageGeneration("Planning " + planningMois.mois + "/" + planningMois.annee + " publié. ✅" + _okSync, "info");
   rafraichirPanneauAdmin();
+});
+
+/* Publication du TRIMESTRE (révision 2026-07-03) : publie d'un coup les 3 mois
+   du trimestre affiché (brouillon → publié). Chaque mois publié génère son
+   snapshot restaurable (Module 22) ; le miroir Sheet n'est synchronisé qu'UNE
+   fois à la fin. Les mois déjà publiés sont laissés tels quels, les mois non
+   générés sont signalés et ignorés. */
+if (publierTrimBtn) publierTrimBtn.addEventListener("click", async () => {
+  if (!medecinCourant || medecinCourant.role !== "admin" || !calendrier) return;
+  const b = bornesTrimestreAffiche();
+  const { data: scheds, error: e0 } = await sb.from("schedules")
+    .select("id, month, status").eq("year", b.annee).in("month", b.moisTrim);
+  if (e0) { messageGeneration("Erreur lecture des plannings : " + e0.message, "error"); return; }
+  const parMois = {}; (scheds || []).forEach((s) => { parMois[s.month] = s; });
+  const manquants = b.moisTrim.filter((m) => !parMois[m]);
+  const aPublier = b.moisTrim.filter((m) => parMois[m] && parMois[m].status !== "published");
+  if (!aPublier.length) {
+    messageGeneration(manquants.length
+      ? "Aucun brouillon à publier — mois non générés : " + manquants.join(", ") + "."
+      : "Les 3 mois du trimestre sont déjà publiés. ✅", "info");
+    return;
+  }
+  if (!window.confirm(
+    "Publier le TRIMESTRE " + b.trimestre + " " + b.annee + " ?\n" +
+    "Mois à publier : " + aPublier.join(", ") +
+    (manquants.length ? "\n⚠️ Mois sans planning (ignorés) : " + manquants.join(", ") : "") +
+    "\nUne fois publiés, les plannings passent en lecture seule.")) return;
+  publierTrimBtn.disabled = true;
+  try {
+    for (const m of aPublier) {
+      const { error } = await sb.from("schedules")
+        .update({ status: "published", published_at: new Date().toISOString() })
+        .eq("id", parMois[m].id);
+      if (error) { messageGeneration("Erreur de publication du mois " + m + " : " + error.message, "error"); return; }
+      await sauvegarderHoraireMois("publication", b.annee, m); // snapshot restaurable
+    }
+    const _sync = await pousserVersSheetAuto("publication trimestre"); // M27 — une seule synchro
+    const _okSync = (_sync && _sync.ok) ? " · miroir Sheet synchronisé ✅" : (_sync && _sync.skip ? "" : " · ⚠️ miroir Sheet non synchronisé");
+    messageGeneration("Trimestre " + b.trimestre + " " + b.annee + " publié (mois " + aPublier.join(", ") + "). ✅" + _okSync, "info");
+    rafraichirPanneauAdmin();
+  } finally {
+    publierTrimBtn.disabled = false;
+  }
 });
 
 /* ----- Module 22 — Sauvegarde / suppression / restauration de l'horaire ----- */
