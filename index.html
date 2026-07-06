@@ -104,6 +104,7 @@
             <button id="vue-calendrier-btn" type="button" class="vue-btn actif">Calendrier</button>
             <button id="vue-grille-btn" type="button" class="vue-btn">Grille</button>
             <button id="vue-semaine-btn" type="button" class="vue-btn">Semaine</button>
+            <button id="vue-matrice-btn" type="button" class="vue-btn">Matrice</button>
           </div>
         </div>
 
@@ -153,6 +154,24 @@
           </div>
         </div>
 
+        <!-- Vue 4 : MATRICE multi-semaines (phase 2, inspirée Planerio) :
+             postes × jours sur 4 semaines, 1re colonne et en-tête figés,
+             bascule Unités ↔ Médecins. -->
+        <div id="matrice-wrapper" class="hidden">
+          <div class="grille-nav">
+            <button id="matrice-prev" type="button" class="mini">‹ Sem. préc.</button>
+            <span id="matrice-titre" class="grille-titre"></span>
+            <button id="matrice-next" type="button" class="mini">Sem. suiv. ›</button>
+            <span class="vue-toggle matrice-pivot">
+              <button id="matrice-pivot-unites" type="button" class="vue-btn actif">Unités</button>
+              <button id="matrice-pivot-medecins" type="button" class="vue-btn">Médecins</button>
+            </span>
+          </div>
+          <div id="matrice-scroll" class="matrice-scroll">
+            <table id="matrice-table" class="matrice-table"></table>
+          </div>
+        </div>
+
         <!-- Vue 1 : calendrier FullCalendar -->
         <div id="calendar"></div>
 
@@ -177,10 +196,6 @@
       <!-- ===== Outils ADMIN du planning (génération, compteurs, conflits) :
                  restent dans l'onglet Planning, masqués pour les médecins ===== -->
       <div id="admin-planning" class="hidden">
-        <!-- Chips « heures / cible » par médecin (phase 1b, inspirées Planerio) :
-             lecture d'un coup d'œil de la charge, congés déduits de la cible.
-             Alimentées par majCompteurs (suivent la portée mois/trimestre). -->
-        <div id="chips-heures" class="chips-heures hidden"></div>
         <div class="zone-header">
           <h2>Planning du mois affiché</h2>
           <span id="planning-statut" class="statut-badge statut-aucun">—</span>

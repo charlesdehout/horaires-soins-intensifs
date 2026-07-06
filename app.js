@@ -3277,6 +3277,212 @@ if (semaineNext) semaineNext.addEventListener("click", function() {
 });
 if (vueSemaineBtn) vueSemaineBtn.addEventListener("click", function() { basculerVuePlanning("semaine"); });
 
+/* ===================================================================== */
+/* VUE MATRICE multi-semaines (phase 2, 2026-07-06 — inspirée Planerio)  */
+/* --------------------------------------------------------------------- */
+/* Postes × jours sur 4 semaines d'un coup : défilement horizontal,      */
+/* 1re colonne + en-tête FIGÉS, week-ends grisés, séparateur de mois,    */
+/* aujourd'hui souligné. Deux PIVOTS de la même donnée :                 */
+/*   « Unités »   : mêmes lignes que la vue Semaine (stations, gardes…). */
+/*   « Médecins » : une ligne par médecin, pastilles compactes de shifts.*/
+/* ===================================================================== */
+const vueMatriceBtn  = document.getElementById("vue-matrice-btn");
+const matriceWrapper = document.getElementById("matrice-wrapper");
+const matriceTable   = document.getElementById("matrice-table");
+const matriceTitre   = document.getElementById("matrice-titre");
+const matricePrev    = document.getElementById("matrice-prev");
+const matriceNext    = document.getElementById("matrice-next");
+const matricePivotU  = document.getElementById("matrice-pivot-unites");
+const matricePivotM  = document.getElementById("matrice-pivot-medecins");
+const MATRICE_NB_SEMAINES = 4;
+let matriceDebut = null;      // lundi ISO de la première semaine affichée
+let matricePivot = "unites";  // "unites" | "medecins"
+
+async function construireVueMatrice() {
+  if (!matriceTable) return;
+  if (!matriceDebut) {
+    const base = calendrier ? calendrier.getDate().toISOString().slice(0, 10)
+                            : new Date().toISOString().slice(0, 10);
+    matriceDebut = sLundi(base);
+  }
+  const nbJ = MATRICE_NB_SEMAINES * 7;
+  const jours = []; for (let k = 0; k < nbJ; k++) jours.push(sAdd(matriceDebut, k));
+  const fin = jours[nbJ - 1];
+  if (matriceTitre) matriceTitre.textContent =
+    "Du " + sFmtCourt(matriceDebut) + " au " + sFmtCourt(fin) + "/" + fin.slice(0, 4);
+
+  if (!Object.keys(carteMedecins).length) await chargerCarteMedecins();
+  const nomsCourts = construireNomsCourts(carteMedecins);
+  const nomFn = function (id) { return nomsCourts[id] || (carteMedecins[id] && carteMedecins[id].name) || "?"; };
+
+  const shifts = await chargerShiftsComplet("id, date, shift_type, doctor_id, poste", matriceDebut, fin);
+  const { data: prefs } = await sb.from("preferences")
+    .select("doctor_id, start_date, end_date, pref_type")
+    .lte("start_date", fin).gte("end_date", matriceDebut).eq("status", "approuve");
+  const prefsList = prefs || [];
+  const { data: rosterRaw } = await sb.from("doctors")
+    .select("id, name, grade, role, contract_start, contract_end, contract_periods, jours_travailles")
+    .neq("role", "admin").order("name");
+  const roster = rosterRaw || [];
+  const periodes = await periodesSur(matriceDebut, fin);
+  const aujourdhui = new Date().toISOString().slice(0, 10);
+
+  matriceTable.innerHTML = "";
+  const thead = matriceTable.createTHead();
+  const trHead = thead.insertRow();
+  const coin = document.createElement("th");
+  coin.className = "mx-coin";
+  coin.textContent = matricePivot === "unites" ? "Poste" : "Médecin";
+  trHead.appendChild(coin);
+  const JJ = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
+  jours.forEach(function (iso, i) {
+    const th = document.createElement("th");
+    if (estWeekendOuFerieISO(iso)) th.classList.add("mx-we");
+    if (iso.slice(8, 10) === "01") th.classList.add("mx-mois");
+    if (iso === aujourdhui) th.classList.add("mx-auj");
+    const cg = congresISO(iso, periodes);
+    th.innerHTML = JJ[i % 7] + "<br><strong>" + sFmtCourt(iso) + "</strong>" +
+      (cg ? "<br><small>" + cg + "</small>" : "");
+    trHead.appendChild(th);
+  });
+  const tbody = matriceTable.createTBody();
+
+  const chip = function (texte, couleur, title) {
+    const el = document.createElement("span");
+    el.className = "mx-chip";
+    el.style.background = couleur || "#6e6e6e";
+    el.textContent = texte;
+    if (title) el.title = title;
+    return el;
+  };
+  const tdJour = function (iso) {
+    const td = document.createElement("td");
+    if (estWeekendOuFerieISO(iso)) td.classList.add("mx-we");
+    if (iso.slice(8, 10) === "01") td.classList.add("mx-mois");
+    return td;
+  };
+  const nouvelleLigne = function (label) {
+    const tr = tbody.insertRow();
+    const td = document.createElement("td");
+    td.className = "mx-rowhead";
+    td.textContent = label;
+    tr.appendChild(td);
+    return tr;
+  };
+  const parJour = {}; shifts.forEach(function (s) { (parJour[s.date] = parJour[s.date] || []).push(s); });
+
+  if (matricePivot === "unites") {
+    /* --- Pivot UNITÉS : mêmes règles d'affichage que la vue Semaine. --- */
+    const TIENT = ["jour", "garde_24h", "pg_jour", "twe", "pg_twe"];
+    const postes = (typeof POSTES_JOUR !== "undefined" ? POSTES_JOUR : []);
+    postes.forEach(function (p) {
+      const tr = nouvelleLigne(p.label);
+      jours.forEach(function (iso) {
+        const td = tdJour(iso);
+        if ((p.code === "labo_choc" && estWeekendOuFerieISO(iso)) || uniteFermeeISO(p.code, iso, periodes)) {
+          td.classList.add("mx-ferme"); td.textContent = "Fermé"; tr.appendChild(td); return;
+        }
+        (parJour[iso] || []).filter(function (s) { return s.poste === p.code && TIENT.includes(s.shift_type); })
+          .forEach(function (s) {
+            const cfg = SHIFT_CONFIG[s.shift_type] || {};
+            td.appendChild(chip(nomFn(s.doctor_id), cfg.couleur, cfg.label));
+          });
+        tr.appendChild(td);
+      });
+    });
+    const rangees = [
+      ["Garde de nuit", ["garde_nuit"]],
+      ["Garde 24h", ["garde_24h"]],
+      ["Tour (TWE)", ["twe"]],
+      ["Gardes PG", ["garde_pg"]],
+      ["Tour PG (WE)", ["pg_twe"]],
+      ["Off-clinic", ["off", "off_clinic"]],
+      ["Récupération", ["recup"]],
+      ["Repos de garde", ["repos_garde"]],
+    ];
+    rangees.forEach(function (r) {
+      const tr = nouvelleLigne(r[0]);
+      jours.forEach(function (iso) {
+        const td = tdJour(iso);
+        (parJour[iso] || []).filter(function (s) { return r[1].includes(s.shift_type); })
+          .forEach(function (s) {
+            const cfg = SHIFT_CONFIG[s.shift_type] || SHIFT_CONFIG[r[1][0]] || {};
+            td.appendChild(chip(nomFn(s.doctor_id), cfg.couleur, cfg.label));
+          });
+        tr.appendChild(td);
+      });
+    });
+    // Congés (shifts d'absence + préférences approuvées, dédupliqués par médecin).
+    const trC = nouvelleLigne("Congés");
+    jours.forEach(function (iso) {
+      const td = tdJour(iso);
+      const vus = new Set();
+      (parJour[iso] || []).forEach(function (s) { if (GRILLE_CONGES.includes(s.shift_type)) vus.add(s.doctor_id); });
+      prefsList.forEach(function (p) {
+        if (GRILLE_CONGES.includes(p.pref_type) && p.start_date <= iso && p.end_date >= iso) vus.add(p.doctor_id);
+      });
+      Array.from(vus).map(nomFn).sort().forEach(function (n) { td.appendChild(chip(n, "#1a7f37", "Congé")); });
+      trC.appendChild(td);
+    });
+  } else {
+    /* --- Pivot MÉDECINS : une ligne par médecin, pastilles compactes. --- */
+    const parMedJour = {};
+    shifts.forEach(function (s) {
+      const k = s.doctor_id + "|" + s.date;
+      (parMedJour[k] = parMedJour[k] || []).push(s);
+    });
+    const posteCourt = function (code) {
+      return (typeof POSTE_LABELS !== "undefined" && POSTE_LABELS[code]) || code || "";
+    };
+    const ordre = { resident: 0, assistant_specialiste: 1, pg: 2 };
+    const actifs = roster
+      .filter(function (m) { return jours.some(function (d) { return medActifISO(m, d); }); })
+      .sort(function (a, b) {
+        const oa = (ordre[a.grade] !== undefined ? ordre[a.grade] : 9);
+        const ob = (ordre[b.grade] !== undefined ? ordre[b.grade] : 9);
+        return oa - ob || String(a.name).localeCompare(String(b.name), "fr");
+      });
+    actifs.forEach(function (m) {
+      const tr = nouvelleLigne(nomFn(m.id));
+      jours.forEach(function (iso) {
+        const td = tdJour(iso);
+        (parMedJour[m.id + "|" + iso] || []).forEach(function (s) {
+          const cfg = SHIFT_CONFIG[s.shift_type] || {};
+          const texte = s.shift_type === "jour" ? posteCourt(s.poste)
+            : (s.shift_type === "garde_24h" && s.poste ? "G24 · " + posteCourt(s.poste)
+            : (cfg.court || s.shift_type));
+          td.appendChild(chip(texte, cfg.couleur, cfg.label || s.shift_type));
+        });
+        prefsList.forEach(function (p) {
+          if (p.doctor_id !== m.id || !GRILLE_CONGES.includes(p.pref_type)) return;
+          if (p.start_date > iso || p.end_date < iso) return;
+          const cfg = SHIFT_CONFIG[p.pref_type] || {};
+          td.appendChild(chip(cfg.court || "Congé", cfg.couleur || "#1a7f37", cfg.label || "Congé"));
+        });
+        tr.appendChild(td);
+      });
+    });
+  }
+}
+
+function matriceChoisirPivot(p) {
+  matricePivot = p;
+  if (matricePivotU) matricePivotU.classList.toggle("actif", p === "unites");
+  if (matricePivotM) matricePivotM.classList.toggle("actif", p === "medecins");
+  construireVueMatrice();
+}
+if (matricePivotU) matricePivotU.addEventListener("click", function () { matriceChoisirPivot("unites"); });
+if (matricePivotM) matricePivotM.addEventListener("click", function () { matriceChoisirPivot("medecins"); });
+if (matricePrev) matricePrev.addEventListener("click", function () {
+  matriceDebut = sAdd(matriceDebut || sLundi(new Date().toISOString().slice(0, 10)), -7);
+  construireVueMatrice();
+});
+if (matriceNext) matriceNext.addEventListener("click", function () {
+  matriceDebut = sAdd(matriceDebut || sLundi(new Date().toISOString().slice(0, 10)), 7);
+  construireVueMatrice();
+});
+if (vueMatriceBtn) vueMatriceBtn.addEventListener("click", function () { basculerVuePlanning("matrice"); });
+
 /* MODULE 31 — Gestion des congés côté admin (Résidents/AS + PG)         */
 /* ===================================================================== */
 
@@ -4955,8 +5161,6 @@ async function majCompteurs() {
   compteursTable.classList.toggle("hidden", vide);
   compteursEmpty.classList.toggle("hidden", !vide);
   if (compteursTotal) compteursTotal.classList.toggle("hidden", vide);
-  const chipsVide = document.getElementById("chips-heures");
-  if (chipsVide) chipsVide.classList.toggle("hidden", vide);
   if (vide) return;
 
   // Nombre de semaines (approx.) de la période pour estimer la cible.
@@ -5098,33 +5302,6 @@ async function majCompteurs() {
   // 4) Total de médecins listés.
   if (compteursTotal) {
     compteursTotal.textContent = "Total : " + lignes.length + " médecin" + (lignes.length > 1 ? "s" : "");
-  }
-
-  // 5) CHIPS « heures / cible » (phase 1b, 2026-07-06, inspirées Planerio) :
-  //    un badge compact par médecin au-dessus du planning — NOM heures/cible,
-  //    trié du plus chargé (vs cible) au moins chargé. Vert ≈ dans la cible
-  //    (±10 h), rouge = au-dessus, bleu = en dessous. Suit la portée (mois/
-  //    trimestre) et la cible réduite par les congés, comme le tableau.
-  const chips = document.getElementById("chips-heures");
-  if (chips) {
-    chips.innerHTML = "";
-    chips.classList.remove("hidden");
-    const nomsCourtsChips = (typeof construireNomsCourts === "function" && Object.keys(carteMedecins).length)
-      ? construireNomsCourts(carteMedecins) : {};
-    const nomCourtDe = (nom) => {
-      const m = meds.find((x) => (x.name || "") === nom);
-      return (m && nomsCourtsChips[m.id]) || nom;
-    };
-    lignes.slice().sort((a, b) => (b.heures - b.cible) - (a.heures - a.cible)).forEach((lg) => {
-      const ecart = lg.heures - lg.cible;
-      const el = document.createElement("span");
-      el.className = "chip-heure " + (ecart > 10 ? "chip-sur" : (ecart < -10 ? "chip-sous" : "chip-dans-cible"));
-      el.textContent = nomCourtDe(lg.name) + " " + lg.heures + "/" + lg.cible;
-      el.title = lg.name + " : " + lg.heures + " h planifiées / cible " + lg.cible + " h (" +
-        (ecart >= 0 ? "+" : "") + ecart + " h)" +
-        (lg.joursConge ? " · cible réduite de " + lg.reductionConge + " h (" + lg.joursConge + " j de congé)" : "");
-      chips.appendChild(el);
-    });
   }
 }
 
@@ -5777,17 +5954,22 @@ function basculerVuePlanning(vue) {
   try { localStorage.setItem("usi_vue", vue); } catch (e) {}
   const estGrille   = vue === "grille";
   const estSemaine  = vue === "semaine";
-  const estCal      = vue === "calendrier";
+  const estMatrice  = vue === "matrice";
+  const estCal      = !estGrille && !estSemaine && !estMatrice; // repli calendrier
   grilleWrapper.classList.toggle("hidden", !estGrille);
   if (semaineWrapper) semaineWrapper.classList.toggle("hidden", !estSemaine);
+  if (matriceWrapper) matriceWrapper.classList.toggle("hidden", !estMatrice);
   calendarEl.classList.toggle("hidden", !estCal);
   vueGrilleBtn.classList.toggle("actif", estGrille);
   if (vueSemaineBtn) vueSemaineBtn.classList.toggle("actif", estSemaine);
+  if (vueMatriceBtn) vueMatriceBtn.classList.toggle("actif", estMatrice);
   vueCalendrierBtn.classList.toggle("actif", estCal);
   if (estGrille) {
     construireGrille();
   } else if (estSemaine) {
     construireVueSemaine();
+  } else if (estMatrice) {
+    construireVueMatrice();
   } else if (calendrier) {
     calendrier.updateSize(); // recalcule la taille après réaffichage
   }

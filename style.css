@@ -309,27 +309,59 @@ button.secondary:hover { background: var(--gris-clair); }
   .fc .fc-daygrid-event { font-size: 1.15rem; }
 }
 
-/* CHIPS « heures / cible » par médecin (phase 1b, inspirées Planerio).
-   Vert = dans la cible (±10 h), rouge = au-dessus, bleu = en dessous. */
-.chips-heures {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  margin: 1rem 0 0.2rem;
-}
-.chip-heure {
-  padding: 0.28rem 0.65rem;
-  border-radius: 999px;
-  font-size: 0.88rem;
-  font-weight: 600;
+/* ===== Vue MATRICE multi-semaines (phase 2, inspirée Planerio) =====
+   Postes × jours sur 4 semaines : défilement dans .matrice-scroll,
+   1re colonne + en-tête FIGÉS (position sticky), week-ends grisés,
+   séparateur au changement de mois, aujourd'hui souligné. */
+.matrice-pivot { margin-left: auto; }
+.matrice-scroll {
+  overflow: auto;
+  max-height: 78vh;
   border: 1px solid var(--gris-bordure);
-  background: var(--gris-clair);
-  cursor: default;
-  white-space: nowrap;
+  border-radius: 10px;
+  background: #fff;
 }
-.chip-dans-cible { background: var(--accent-clair); border-color: var(--accent-pale); color: var(--accent-fonce); }
-.chip-sur  { background: #fdecea; border-color: #f0b9b1; color: var(--rouge); }
-.chip-sous { background: #edf3fb; border-color: #c4d7ef; color: #1f4e79; }
+.matrice-table { border-collapse: separate; border-spacing: 0; font-size: 0.78rem; }
+.matrice-table th, .matrice-table td {
+  border-right: 1px solid var(--gris-bordure);
+  border-bottom: 1px solid var(--gris-bordure);
+  padding: 0.22rem 0.35rem;
+  min-width: 92px;
+  vertical-align: top;
+  background: #fff;
+}
+.matrice-table thead th {
+  position: sticky; top: 0; z-index: 3;
+  background: var(--accent-clair); color: var(--accent-fonce);
+  text-align: center; font-weight: 500; line-height: 1.25;
+}
+.matrice-table thead th.mx-we { background: #d8ddda; color: #444441; }
+.matrice-table thead th.mx-auj { box-shadow: inset 0 -3px 0 var(--accent); }
+.matrice-table .mx-rowhead, .matrice-table .mx-coin {
+  position: sticky; left: 0; z-index: 2;
+  background: #f1efe8;
+  font-weight: 700;
+  min-width: 145px; max-width: 190px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.matrice-table thead .mx-coin { z-index: 4; background: var(--accent-clair); }
+.matrice-table td.mx-we { background: #f3f5f4; }
+.matrice-table td.mx-ferme { background: #e9e9e9; color: #777; font-style: italic; text-align: center; }
+.matrice-table th.mx-mois, .matrice-table td.mx-mois { border-left: 3px solid var(--accent-pale); }
+.mx-chip {
+  display: block;
+  color: #fff;
+  border-radius: 5px;
+  padding: 1px 4px;
+  margin: 1px 0;
+  font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 135px;
+}
+@media (min-width: 1600px) {
+  .matrice-table { font-size: 0.88rem; }
+  .matrice-table th, .matrice-table td { min-width: 106px; }
+}
 
 /* =====================================================================
    Module 2 — Espace admin : gestion des médecins
