@@ -4955,6 +4955,8 @@ async function majCompteurs() {
   compteursTable.classList.toggle("hidden", vide);
   compteursEmpty.classList.toggle("hidden", !vide);
   if (compteursTotal) compteursTotal.classList.toggle("hidden", vide);
+  const chipsVide = document.getElementById("chips-heures");
+  if (chipsVide) chipsVide.classList.toggle("hidden", vide);
   if (vide) return;
 
   // Nombre de semaines (approx.) de la période pour estimer la cible.
@@ -5096,6 +5098,33 @@ async function majCompteurs() {
   // 4) Total de médecins listés.
   if (compteursTotal) {
     compteursTotal.textContent = "Total : " + lignes.length + " médecin" + (lignes.length > 1 ? "s" : "");
+  }
+
+  // 5) CHIPS « heures / cible » (phase 1b, 2026-07-06, inspirées Planerio) :
+  //    un badge compact par médecin au-dessus du planning — NOM heures/cible,
+  //    trié du plus chargé (vs cible) au moins chargé. Vert ≈ dans la cible
+  //    (±10 h), rouge = au-dessus, bleu = en dessous. Suit la portée (mois/
+  //    trimestre) et la cible réduite par les congés, comme le tableau.
+  const chips = document.getElementById("chips-heures");
+  if (chips) {
+    chips.innerHTML = "";
+    chips.classList.remove("hidden");
+    const nomsCourtsChips = (typeof construireNomsCourts === "function" && Object.keys(carteMedecins).length)
+      ? construireNomsCourts(carteMedecins) : {};
+    const nomCourtDe = (nom) => {
+      const m = meds.find((x) => (x.name || "") === nom);
+      return (m && nomsCourtsChips[m.id]) || nom;
+    };
+    lignes.slice().sort((a, b) => (b.heures - b.cible) - (a.heures - a.cible)).forEach((lg) => {
+      const ecart = lg.heures - lg.cible;
+      const el = document.createElement("span");
+      el.className = "chip-heure " + (ecart > 10 ? "chip-sur" : (ecart < -10 ? "chip-sous" : "chip-dans-cible"));
+      el.textContent = nomCourtDe(lg.name) + " " + lg.heures + "/" + lg.cible;
+      el.title = lg.name + " : " + lg.heures + " h planifiées / cible " + lg.cible + " h (" +
+        (ecart >= 0 ? "+" : "") + ecart + " h)" +
+        (lg.joursConge ? " · cible réduite de " + lg.reductionConge + " h (" + lg.joursConge + " j de congé)" : "");
+      chips.appendChild(el);
+    });
   }
 }
 

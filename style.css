@@ -309,6 +309,28 @@ button.secondary:hover { background: var(--gris-clair); }
   .fc .fc-daygrid-event { font-size: 1.15rem; }
 }
 
+/* CHIPS « heures / cible » par médecin (phase 1b, inspirées Planerio).
+   Vert = dans la cible (±10 h), rouge = au-dessus, bleu = en dessous. */
+.chips-heures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 1rem 0 0.2rem;
+}
+.chip-heure {
+  padding: 0.28rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  border: 1px solid var(--gris-bordure);
+  background: var(--gris-clair);
+  cursor: default;
+  white-space: nowrap;
+}
+.chip-dans-cible { background: var(--accent-clair); border-color: var(--accent-pale); color: var(--accent-fonce); }
+.chip-sur  { background: #fdecea; border-color: #f0b9b1; color: var(--rouge); }
+.chip-sous { background: #edf3fb; border-color: #c4d7ef; color: #1f4e79; }
+
 /* =====================================================================
    Module 2 — Espace admin : gestion des médecins
    ===================================================================== */
