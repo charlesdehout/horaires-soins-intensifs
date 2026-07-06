@@ -291,6 +291,16 @@ button.secondary:hover { background: var(--gris-clair); }
   }
   .tabs .tab .tab-lib { flex: 1 1 auto; }
   .tabs .tab .tab-badge { margin-left: auto; }
+  /* Noms lisibles : le calendrier profite de la place gagnée. */
+  #calendar { font-size: 1rem; }
+  .fc .fc-daygrid-event { font-size: 0.95rem; padding: 2px 6px; }
+}
+/* Très grands écrans : encore un cran de lisibilité (calendrier + tableaux). */
+@media (min-width: 1600px) {
+  #calendar { font-size: 1.05rem; }
+  .fc .fc-daygrid-event { font-size: 1rem; }
+  .semaine-table { font-size: 0.95rem; }
+  .grille-table { font-size: 0.92rem; }
 }
 
 /* =====================================================================
