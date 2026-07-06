@@ -2841,7 +2841,11 @@ async function rbPublierManuel() {
     if (eHist) console.warn("Historique CM non enregistré (lancer sql/module34 ?) :", eHist.message);
   } catch (e) { console.warn("Historique CM :", e); }
 
-  rbMsg("✓ Remplacements enregistrés" + (nonRepris ? " (" + nonRepris + " poste(s) laissé(s) non repris)" : "") + ". Le malade est marqué en congé maladie. Recharge le calendrier.", "success");
+  // M27 — miroir Google Sheets (révision 2026-07-03) : les remplacements CM
+  // modifient le planning publié → on resynchronise, comme pour les échanges.
+  const _syncCM = await pousserVersSheetAuto("remplacement congé maladie");
+  const _okSyncCM = (_syncCM && _syncCM.ok) ? " Miroir Sheet synchronisé ✅." : (_syncCM && _syncCM.skip ? "" : " ⚠️ Miroir Sheet non synchronisé.");
+  rbMsg("✓ Remplacements enregistrés" + (nonRepris ? " (" + nonRepris + " poste(s) laissé(s) non repris)" : "") + ". Le malade est marqué en congé maladie." + _okSyncCM + " Recharge le calendrier.", "success");
   if (rbTableWrap) rbTableWrap.classList.add("hidden");
   rbPostes = []; rbChoix = {};
   await chargerShifts();
@@ -2912,6 +2916,7 @@ async function rbAnnulerCM(opId) {
   } catch (err) {
     window.alert("Erreur d'annulation : " + (err.message || err)); return;
   }
+  await pousserVersSheetAuto("annulation congé maladie"); // M27 — miroir Google Sheets
   await chargerShifts();
   rbChargerHistorique();
   rbMsg("✓ Congé maladie annulé : situation d'avant restaurée.", "success");
