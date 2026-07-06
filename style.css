@@ -293,14 +293,20 @@ button.secondary:hover { background: var(--gris-clair); }
   .tabs .tab .tab-badge { margin-left: auto; }
   /* Noms lisibles : le calendrier profite de la place gagnée. */
   #calendar { font-size: 1rem; }
-  .fc .fc-daygrid-event { font-size: 0.95rem; padding: 2px 6px; }
+  .fc .fc-daygrid-event { font-size: 1rem; padding: 3px 7px; }
 }
 /* Très grands écrans : encore un cran de lisibilité (calendrier + tableaux). */
 @media (min-width: 1600px) {
-  #calendar { font-size: 1.05rem; }
-  .fc .fc-daygrid-event { font-size: 1rem; }
-  .semaine-table { font-size: 0.95rem; }
-  .grille-table { font-size: 0.92rem; }
+  #calendar { font-size: 1.1rem; }
+  .fc .fc-daygrid-event { font-size: 1.1rem; padding: 3px 8px; }
+  .semaine-table { font-size: 1rem; }
+  .grille-table { font-size: 1rem; }
+}
+/* Écrans 2K/4K (≥ 2200 px) : on agrandit la police de BASE — toute
+   l'interface suit proportionnellement (menus, tableaux, calendrier). */
+@media (min-width: 2200px) {
+  html { font-size: 19px; }
+  .fc .fc-daygrid-event { font-size: 1.15rem; }
 }
 
 /* =====================================================================
