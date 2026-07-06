@@ -228,6 +228,60 @@ button.secondary:hover { background: var(--gris-clair); }
 .hidden { display: none !important; }
 
 /* =====================================================================
+   BARRE LATÉRALE de navigation (refonte 2026-07-06, inspirée Planerio).
+   Sur GRAND écran : l'app devient une grille [en-tête / menu latéral +
+   contenu] et la rangée d'onglets se transforme en colonne à gauche.
+   Sur mobile (≤ 900 px) : rien ne change, les styles .tabs horizontaux
+   d'origine restent d'application.
+   ===================================================================== */
+.tab-ico { flex: none; width: 1.35em; text-align: center; }
+@media (min-width: 901px) {
+  .card-app {
+    display: grid;
+    grid-template-columns: 215px minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    grid-template-areas:
+      "entete entete"
+      "menu   contenu";
+  }
+  .app-header { grid-area: entete; }
+  #app-content { grid-area: contenu; min-width: 0; }
+  .tabs {
+    grid-area: menu;
+    align-self: start;
+    position: sticky;
+    top: 0;
+    max-height: 100vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 0.2rem;
+    padding: 0.9rem 0.6rem 1.2rem;
+    background: #fff;
+    border-bottom: none;
+    border-right: 1px solid var(--gris-bordure);
+  }
+  .tabs .tab {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    width: 100%;
+    text-align: left;
+    border-bottom: none;
+    border-radius: 9px;
+    padding: 0.6rem 0.7rem;
+  }
+  .tabs .tab.actif {
+    background: var(--accent-clair);
+    color: var(--accent-fonce);
+    border-bottom-color: transparent;
+  }
+  .tabs .tab .tab-lib { flex: 1 1 auto; }
+  .tabs .tab .tab-badge { margin-left: auto; }
+}
+
+/* =====================================================================
    Module 2 — Espace admin : gestion des médecins
    ===================================================================== */
 

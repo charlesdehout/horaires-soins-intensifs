@@ -72,20 +72,26 @@
         </span>
       </header>
 
-      <!-- ===== Navigation par onglets (visibilité selon le rôle) ===== -->
+      <!-- ===== Navigation par onglets (refonte 2026-07-06 : barre LATÉRALE
+                 sur grand écran, rangée horizontale conservée sur mobile).
+                 Même logique JS (data-tab, .tab, badges) — seule la mise en
+                 page change (grille CSS + icônes). ===== -->
       <nav id="tabs-nav" class="tabs">
-        <button type="button" class="tab actif" data-tab="planning">Planning</button>
-        <button type="button" class="tab tab-admin hidden" data-tab="medecins">Médecins</button>
-        <button type="button" class="tab tab-admin hidden" data-tab="echanges-admin">Échanges</button>
-        <button type="button" class="tab tab-admin hidden" data-tab="conges-admin">Congés et demandes
+        <button type="button" class="tab actif" data-tab="planning"><span class="tab-ico">📅</span><span class="tab-lib">Planning</span></button>
+        <button type="button" class="tab tab-admin hidden" data-tab="medecins"><span class="tab-ico">👥</span><span class="tab-lib">Médecins</span></button>
+        <button type="button" class="tab tab-admin hidden" data-tab="echanges-admin"><span class="tab-ico">🔁</span><span class="tab-lib">Échanges</span></button>
+        <button type="button" class="tab tab-admin hidden" data-tab="conges-admin"><span class="tab-ico">🌴</span><span class="tab-lib">Congés et demandes</span>
           <span id="tab-badge-demandes" class="tab-badge hidden" title="Demandes en attente (bloquent la génération)"></span></button>
-        <button type="button" class="tab tab-admin hidden" data-tab="periodes">Congrès, fermetures &amp; export</button>
-        <button type="button" class="tab tab-admin hidden" data-tab="cm">Congé maladie</button>
-        <button type="button" class="tab tab-admin hidden" data-tab="doublures">Doublures</button>
-        <button type="button" class="tab tab-doctor hidden" data-tab="prefs">Mes préférences</button>
-        <button type="button" class="tab tab-doctor hidden" data-tab="echanges">Échanges
+        <button type="button" class="tab tab-admin hidden" data-tab="periodes"><span class="tab-ico">🗂️</span><span class="tab-lib">Congrès, fermetures &amp; export</span></button>
+        <button type="button" class="tab tab-admin hidden" data-tab="cm"><span class="tab-ico">🏥</span><span class="tab-lib">Congé maladie</span></button>
+        <button type="button" class="tab tab-admin hidden" data-tab="doublures"><span class="tab-ico">⚖️</span><span class="tab-lib">Doublures</span></button>
+        <button type="button" class="tab tab-doctor hidden" data-tab="prefs"><span class="tab-ico">📝</span><span class="tab-lib">Mes préférences</span></button>
+        <button type="button" class="tab tab-doctor hidden" data-tab="echanges"><span class="tab-ico">🔁</span><span class="tab-lib">Échanges</span>
           <span id="tab-badge-echanges" class="tab-badge hidden"></span></button>
       </nav>
+
+      <!-- Contenu à droite de la barre latérale (grille CSS — voir style.css). -->
+      <div id="app-content">
 
       <!-- ============ ONGLET PLANNING (tous) ============ -->
       <div id="panel-planning" class="tab-panel">
@@ -980,6 +986,7 @@
           <p id="ech-emises-empty" class="zone-info hidden">Aucune proposition émise.</p>
         </div><!-- /panel-echanges -->
       </div><!-- /doctor-zone -->
+      </div><!-- /app-content -->
     </section>
 
     <!-- ============================================= -->
