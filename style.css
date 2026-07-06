@@ -236,6 +236,18 @@ button.secondary:hover { background: var(--gris-clair); }
    ===================================================================== */
 .tab-ico { flex: none; width: 1.35em; text-align: center; }
 @media (min-width: 901px) {
+  /* PLEINE LARGEUR : l'app connectée occupe tout l'écran (la carte étroite
+     de 1080 px n'a plus de sens avec un menu latéral — c'était le point
+     « vision globale » de la refonte). L'écran de connexion, lui, garde sa
+     petite carte centrée (.card seul, pas .card-app). */
+  .container:has(> .card-app:not(.hidden)) {
+    align-items: stretch;
+    padding: 0.8rem;
+  }
+  #app-view.card-app { max-width: none; width: 100%; }
+  /* Les grands tableaux (compteurs…) défilent dans leur panneau au lieu
+     de déborder de la carte. */
+  .compteurs-table { display: block; overflow-x: auto; max-width: 100%; }
   .card-app {
     display: grid;
     grid-template-columns: 215px minmax(0, 1fr);
