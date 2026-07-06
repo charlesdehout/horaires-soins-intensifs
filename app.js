@@ -3769,12 +3769,15 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes) {
     ["USI 5", "usi5"], ["USI Bordet", "bordet"], ["Labo de choc", "labo_choc"],
   ];
   // Types qui TIENNENT une unité (révision 2026-07-03, alignée sur la vue
-  // Semaine de l'app) : journée, garde 24 h, journée PG, tour WE, tour PG WE —
+  // Semaine de l'app) : journée, garde 24 h, tour WE + PG (pg_jour, pg_twe) —
   // sinon les PG et les tenants d'unité du week-end manquaient à l'export.
-  const TIENT_UNITE_XL = ["jour", "garde_24h", "pg_jour", "twe", "pg_twe"];
+  // Dans la cellule : TITULAIRE (résident/AS) en HAUT, PG EN DESSOUS.
+  const TITULAIRE_XL = ["jour", "garde_24h", "twe"];
+  const PG_XL = ["pg_jour", "pg_twe"];
   stations.forEach(([lib, code]) => {
     lignes.push({ label: lib, fill: XL.station, estLabo: code === "labo_choc", code,
-      get: (d) => nomsShift(shifts, d, (s) => s.poste === code && TIENT_UNITE_XL.includes(s.shift_type), nomFn) });
+      get: (d) => nomsShift(shifts, d, (s) => s.poste === code && TITULAIRE_XL.includes(s.shift_type), nomFn)
+        .concat(nomsShift(shifts, d, (s) => s.poste === code && PG_XL.includes(s.shift_type), nomFn)) });
     // (révision 2026-06-12 : plus de ligne vide intercalée sous chaque unité)
   });
   lignes.push({ label: "Autres (saisie libre)", fill: null, get: () => [] });
@@ -3858,10 +3861,11 @@ async function telechargerClasseur(wb, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-/* Charge shifts + préférences approuvées + périodes spéciales (M17) de la période. */
+/* Charge shifts + préférences approuvées + périodes spéciales (M17) de la période.
+   Shifts PAGINÉS (révision 2026-07-03) : un trimestre peut dépasser la limite
+   Supabase de 1000 lignes par requête (les PG manquaient alors à l'export). */
 async function donneesMoisExport(b) {
-  const { data: shifts } = await sb.from("shifts")
-    .select("date, shift_type, doctor_id, poste").gte("date", b.debut).lte("date", b.fin);
+  const shifts = await chargerShiftsComplet("date, shift_type, doctor_id, poste", b.debut, b.fin);
   const { data: prefs } = await sb.from("preferences")
     .select("doctor_id, start_date, end_date, pref_type, date_compensation").eq("status", "approuve")
     .lte("start_date", b.fin).gte("end_date", b.debut);
@@ -6127,13 +6131,17 @@ function construireSemainesSheet(shifts, prefs, periodes) {
       return estWeekendOuFerieISO(iso) ? GS.enteteWE : GS.entete;
     })));
     // Stations (jour + garde 24h qui tient l'unité) — « Fermé » comme l'Excel.
-    // Types qui TIENNENT une unité (mêmes règles que la vue Semaine de l'app) :
-    // journée, garde 24 h, journée PG, tour week-end, tour PG week-end.
-    const TIENT_UNITE = ["jour", "garde_24h", "pg_jour", "twe", "pg_twe"];
+    // Types qui TIENNENT une unité (mêmes règles que la vue Semaine de l'app).
+    // Dans la cellule : le TITULAIRE (résident/AS — jour, garde 24 h, tour WE)
+    // en HAUT, le PG (pg_jour, pg_twe) EN DESSOUS (demande Dr Dehout 2026-07-03).
+    const TITULAIRE_UNITE = ["jour", "garde_24h", "twe"];
+    const PG_UNITE = ["pg_jour", "pg_twe"];
     stations.forEach(([lib, code]) => {
       pushLigne(lib, GS.station, jours.map((iso) => {
         if ((code === "labo_choc" && estWeekendOuFerieISO(iso)) || uniteFermeeISO(code, iso, periodes)) return "Fermé";
-        return joinNoms(nomsShift(shifts, iso, (s) => s.poste === code && TIENT_UNITE.includes(s.shift_type), nomFn));
+        const tit = joinNoms(nomsShift(shifts, iso, (s) => s.poste === code && TITULAIRE_UNITE.includes(s.shift_type), nomFn));
+        const pg = joinNoms(nomsShift(shifts, iso, (s) => s.poste === code && PG_UNITE.includes(s.shift_type), nomFn));
+        return [tit, pg].filter(Boolean).join("\n");
       }));
     });
     pushLigne("Autres (saisie libre)", "", jours.map(() => ""));
@@ -6159,6 +6167,25 @@ function construireSemainesSheet(shifts, prefs, periodes) {
   return weeks;
 }
 
+/* Charge TOUS les shifts par pages de 1000 (révision 2026-07-03) : Supabase
+   limite chaque requête à 1000 lignes — sans pagination, les shifts insérés en
+   dernier (p.ex. le planning PG) manquaient aux exports au-delà de 1000 lignes. */
+async function chargerShiftsComplet(colonnes, debut, fin) {
+  const PAGE = 1000;
+  let tout = [], de = 0;
+  for (;;) {
+    let q = sb.from("shifts").select(colonnes).order("date", { ascending: true }).order("id", { ascending: true }).range(de, de + PAGE - 1);
+    if (debut) q = q.gte("date", debut);
+    if (fin) q = q.lte("date", fin);
+    const { data, error } = await q;
+    if (error) { console.warn("Chargement shifts paginé :", error.message); break; }
+    tout = tout.concat(data || []);
+    if (!data || data.length < PAGE) break;
+    de += PAGE;
+  }
+  return tout;
+}
+
 /* Pousse tout le planning PUBLIÉ vers le Google Sheet. Renvoie un statut.
    Silencieux (skip) si non configuré → utilisable en best-effort sur les hooks. */
 async function pousserVersSheet(raison) {
@@ -6167,7 +6194,8 @@ async function pousserVersSheet(raison) {
   if (!Object.keys(carteMedecins).length) await chargerCarteMedecins();
   // Lecture DIRECTE de tous les shifts générés (indépendant des lignes schedules) :
   // tout le planning présent en base part vers le Sheet (octobre + novembre + …).
-  const { data: shifts } = await sb.from("shifts").select("date, shift_type, doctor_id, poste");
+  // PAGINÉ (limite Supabase 1000) — sinon les PG disparaissaient dès novembre.
+  const shifts = await chargerShiftsComplet("date, shift_type, doctor_id, poste");
   if (!shifts || !shifts.length) return { vide: true };
   let dmin = shifts[0].date, dmax = shifts[0].date;
   shifts.forEach((s) => { if (s.date < dmin) dmin = s.date; if (s.date > dmax) dmax = s.date; });
