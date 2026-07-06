@@ -3763,15 +3763,22 @@ function construireFeuilleSemaine(ws, jours, shifts, prefs, nomFn, periodes) {
     ["USI 1", "usi1"], ["USI 2", "usi2"], ["USI 3", "usi3"], ["USI 4", "usi4"],
     ["USI 5", "usi5"], ["USI Bordet", "bordet"], ["Labo de choc", "labo_choc"],
   ];
+  // Types qui TIENNENT une unité (révision 2026-07-03, alignée sur la vue
+  // Semaine de l'app) : journée, garde 24 h, journée PG, tour WE, tour PG WE —
+  // sinon les PG et les tenants d'unité du week-end manquaient à l'export.
+  const TIENT_UNITE_XL = ["jour", "garde_24h", "pg_jour", "twe", "pg_twe"];
   stations.forEach(([lib, code]) => {
     lignes.push({ label: lib, fill: XL.station, estLabo: code === "labo_choc", code,
-      get: (d) => nomsShift(shifts, d, (s) => s.poste === code && (s.shift_type === "jour" || s.shift_type === "garde_24h"), nomFn) });
+      get: (d) => nomsShift(shifts, d, (s) => s.poste === code && TIENT_UNITE_XL.includes(s.shift_type), nomFn) });
     // (révision 2026-06-12 : plus de ligne vide intercalée sous chaque unité)
   });
   lignes.push({ label: "Autres (saisie libre)", fill: null, get: () => [] });
   lignes.push({ label: "Garde de nuit (17h–9h)", fill: XL.garde, get: (d) => nomsShift(shifts, d, P(["garde_nuit"]), nomFn) });
   lignes.push({ label: "Garde 24h", fill: XL.garde, get: (d) => nomsShift(shifts, d, P(["garde_24h"]), nomFn) });
   lignes.push({ label: "Tour (TWE)", fill: XL.garde, get: (d) => nomsShift(shifts, d, P(["twe"]), nomFn) });
+  // Lignes PG (révision 2026-07-03) : parité avec la vue Semaine et le miroir Sheet.
+  lignes.push({ label: "Tour PG (WE)", fill: XL.garde, get: (d) => nomsShift(shifts, d, P(["pg_twe"]), nomFn) });
+  lignes.push({ label: "Garde PG (24h)", fill: XL.garde, get: (d) => nomsShift(shifts, d, P(["garde_pg"]), nomFn) });
   // Ordre (cf. grille) : Off-clinic, Récupération, Repos de garde, Non planifiés,
   // puis les Congés à part.
   lignes.push({ label: "Off-clinic", fill: XL.off, get: (d) => nomsShift(shifts, d, P(["off"]), nomFn) });
@@ -6115,10 +6122,13 @@ function construireSemainesSheet(shifts, prefs, periodes) {
       return estWeekendOuFerieISO(iso) ? GS.enteteWE : GS.entete;
     })));
     // Stations (jour + garde 24h qui tient l'unité) — « Fermé » comme l'Excel.
+    // Types qui TIENNENT une unité (mêmes règles que la vue Semaine de l'app) :
+    // journée, garde 24 h, journée PG, tour week-end, tour PG week-end.
+    const TIENT_UNITE = ["jour", "garde_24h", "pg_jour", "twe", "pg_twe"];
     stations.forEach(([lib, code]) => {
       pushLigne(lib, GS.station, jours.map((iso) => {
         if ((code === "labo_choc" && estWeekendOuFerieISO(iso)) || uniteFermeeISO(code, iso, periodes)) return "Fermé";
-        return joinNoms(nomsShift(shifts, iso, (s) => s.poste === code && (s.shift_type === "jour" || s.shift_type === "garde_24h"), nomFn));
+        return joinNoms(nomsShift(shifts, iso, (s) => s.poste === code && TIENT_UNITE.includes(s.shift_type), nomFn));
       }));
     });
     pushLigne("Autres (saisie libre)", "", jours.map(() => ""));
