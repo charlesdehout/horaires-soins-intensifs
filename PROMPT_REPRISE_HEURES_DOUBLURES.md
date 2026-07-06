@@ -50,9 +50,10 @@ Contexte : l'équipe migre de Planerio vers l'app. Audit comparatif fait (sessio
 4. ❌ Chips « heures / cible » par médecin : implémentées puis RETIRÉES à la demande du Dr Dehout (redondant avec les compteurs). Ne pas re-proposer.
 5. ✅ (2026-07-06, à valider après push) **Formulaire Médecins en 3 sections repliables** (`.form-section` : Profil & rôle ouverte par défaut, Contrat & disponibilités, Quotas de congés fermées ; Nom/Email toujours visibles ; CAP fromager déplacé dans Profil & rôle) + **Compteurs et Conflits repliables** dans l'onglet Planning (`#compteurs-details`/`#conflits-details`, classe `.bloc-details`, état mémorisé `usi_compteurs`/`usi_conflits`, sélecteur Mois/Trimestre dans le summary avec stopPropagation). Syntaxe JS vérifiée via navigateur (sandbox indisponible ce jour-là).
 
+6. ✅ (2026-07-06, à valider après push) **Passage mobile** : ≤ 900 px, tous les `.data-table` défilent horizontalement (plus de débordement de page), onglets sur UNE ligne défilante, `.vue-toggle` peut passer à la ligne ; `.modal-card` plafonnée à 92vh avec défilement interne (global) ; sur téléphone (≤ 600 px) sans préférence `usi_vue`, la vue Semaine est la vue par défaut (app.js, restauration de vue).
+
 ## À FAIRE — chantiers UI restants (à re-valider avant de lancer)
 - Phase 3 Planerio : calendrier des ABSENCES plein écran (barres par personne, filtres par type, panneau demandes à approuver).
-- Passage mobile.
 
 ## Historique utile (sessions précédentes)
 - Congrès (équipe minimale, ≤2 stations vides, 0 doublure) + compteur congrès séparé.

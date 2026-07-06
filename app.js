@@ -2059,7 +2059,10 @@ async function initCalendrier() {
     // Restaure la dernière vue du planning (Grille/Semaine) mémorisée —
     // après render() pour que le calendrier existe.
     try {
-      const vueMemo = localStorage.getItem("usi_vue");
+      let vueMemo = localStorage.getItem("usi_vue");
+      // Téléphone (≤ 600 px) : si aucune préférence mémorisée, la vue
+      // Semaine est bien plus lisible que le calendrier mensuel.
+      if (!vueMemo && window.innerWidth <= 600) vueMemo = "semaine";
       if ((vueMemo === "grille" || vueMemo === "semaine") && typeof basculerVuePlanning === "function") {
         basculerVuePlanning(vueMemo);
       }

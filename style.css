@@ -710,6 +710,9 @@ button.danger:not(.mini):hover { background: #9e2b22; }
   padding: 1.5rem;
   width: 100%;
   max-width: 460px;
+  /* Jamais plus haute que l'écran : défile à l'intérieur (mobile surtout). */
+  max-height: 92vh;
+  overflow-y: auto;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
 }
 .modal-card h3 { margin: 0 0 1rem; font-size: 1.15rem; }
@@ -839,6 +842,29 @@ button.danger:not(.mini):hover { background: #9e2b22; }
 #rotation-table-wrap { margin: 0.5rem 0; }
 #rotation-table-wrap select.rotation-select { width: auto; margin: 0; }
 #rotation-actions { margin-top: 0.4rem; }
+
+/* Sur écran ≤ 900 px (téléphone/tablette) — passage mobile 2026-07-06 :
+   1) TOUS les tableaux défilent horizontalement dans leur panneau au lieu
+      de faire déborder la page (les vues Semaine/Grille/Matrice ont déjà
+      leur propre conteneur défilant) ;
+   2) la rangée d'onglets tient sur UNE ligne qui défile au doigt ;
+   3) les boutons de bascule de vue peuvent passer à la ligne. */
+@media (max-width: 900px) {
+  .data-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
+  .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .tab { flex: none; white-space: nowrap; }
+  .vue-toggle { flex-wrap: wrap; }
+}
 
 /* Sur petit écran : formulaire en une colonne, en-tête compact. */
 @media (max-width: 600px) {
